@@ -1,0 +1,54 @@
+# Intégration continue publique : aucun secret, aucun accès en écriture.
+# Elle prouve à chaque envoi que le bytecode se reconstruit à l'identique depuis le code source
+# et que tous les tests (contrats, outil, fuzzing d'état) passent.
+name: Tests et empreintes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  outil:
+    name: Outil, fuzzing d'état et empreintes
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: ci-${{ hashFiles('cli/Cargo.lock', 'cli/rust-toolchain.toml') }}
+      - name: Compiler (dépendances figées)
+        run: cd cli && cargo build --release --locked
+      - name: Empreintes reproductibles
+        run: |
+          cd cli && ./target/release/vault-cli empreintes > /tmp/empreintes.txt
+          diff -u ../contracts/EMPREINTES.txt /tmp/empreintes.txt
+      - name: Tests de l'outil, dont fuzzing d'état (proptest)
+        run: cd cli && cargo test --release --locked
+
+  contrats:
+    name: Tests des contrats sur le compilateur SilverScript figé
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Récupérer SilverScript à la révision figée
+        run: |
+          git clone https://github.com/kaspanet/silverscript /tmp/silverscript
+          cd /tmp/silverscript && git checkout 443d519e6688fa03d24c69432763b13e6abe4486
+      - name: Lancer les tests des contrats
+        run: |
+          cp tests/*.rs contracts/*.sil /tmp/silverscript/silverscript-lang/tests/
+          cd /tmp/silverscript && cargo test --release -p silverscript-lang --test agent_budget_tests --test delivery_escrow_tests

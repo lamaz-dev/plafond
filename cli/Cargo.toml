@@ -1,0 +1,28 @@
+[package]
+name = "vault-cli"
+version = "0.2.0"
+edition = "2024"
+publish = false
+license = "ISC"
+
+[dependencies]
+silverscript-lang = { git = "https://github.com/kaspanet/silverscript", rev = "443d519e6688fa03d24c69432763b13e6abe4486" }
+silverscript-abi = { git = "https://github.com/kaspanet/silverscript", rev = "443d519e6688fa03d24c69432763b13e6abe4486" }
+kaspa-consensus-core = "2.1.0"
+kaspa-txscript = "2.1.0"
+kaspa-addresses = "2.1.0"
+kaspa-wrpc-client = "2.1.0"
+kaspa-rpc-core = "2.1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+secp256k1 = { version = "0.29", features = ["global-context", "rand-std"] }
+blake2b_simd = "1"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+borsh = "1.5.1"
+base64 = "0.22"
+tiny_http = "0.12"
+ureq = "2"
+
+[dev-dependencies]
+proptest = "1"

@@ -1,0 +1,9 @@
+# Jamais de clés dans le dépôt
+*.key
+*.pem
+*.seed
+.env
+secrets/
+wallet*/
+target/
+.env.*
