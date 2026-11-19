@@ -134,12 +134,12 @@ const client = new DirectModeClient({
 
 console.log(`Porte-monnaie du relais : ${ADRESSE} (${pieces.reduce((s, u) => s + BigInt(u.amount), 0n)} sompi)`);
 // Diagnostic sans paiement : le vendeur répond-il, et que propose-t-il ?
-for (const chemin of ["/health", "/supported", "/exact"]) {
+for (const chemin of ["/health", "/canary", "/exact"]) {
   try {
     const r = await fetch(`${ORIGINE}${chemin}`, { redirect: "manual" });
     const offre = r.headers.get("payment-required");
     console.log(`Diagnostic ${chemin} : HTTP ${r.status}${offre ? ` (offre 402 : ${Buffer.from(offre, "base64").toString().slice(0, 300)})` : ""}`);
-    if (chemin !== "/exact") console.log(`  ${(await r.text()).slice(0, 300)}`);
+    if (chemin !== "/exact") console.log(`  ${(await r.text()).slice(0, 500)}`);
   } catch (e) {
     console.log(`Diagnostic ${chemin} : ${e.message} (${e.cause?.code ?? e.cause?.message ?? "?"})`);
   }
