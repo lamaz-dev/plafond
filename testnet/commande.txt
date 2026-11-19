@@ -1,5 +1,1 @@
-etat
-deployer
-pause 30
-etat
 essai-relais

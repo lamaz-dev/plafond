@@ -107,6 +107,17 @@ const client = new DirectModeClient({
 });
 
 console.log(`Porte-monnaie du relais : ${ADRESSE} (${pieces.reduce((s, u) => s + BigInt(u.amount), 0n)} sompi)`);
+// Diagnostic sans paiement : le vendeur répond-il, et que propose-t-il ?
+for (const chemin of ["/health", "/supported", "/exact"]) {
+  try {
+    const r = await fetch(`${ORIGINE}${chemin}`, { redirect: "manual" });
+    const offre = r.headers.get("payment-required");
+    console.log(`Diagnostic ${chemin} : HTTP ${r.status}${offre ? ` (offre 402 : ${Buffer.from(offre, "base64").toString().slice(0, 300)})` : ""}`);
+    if (chemin !== "/exact") console.log(`  ${(await r.text()).slice(0, 300)}`);
+  } catch (e) {
+    console.log(`Diagnostic ${chemin} : ${e.message} (${e.cause?.code ?? e.cause?.message ?? "?"})`);
+  }
+}
 console.log(`GET ${RESSOURCE}`);
 let code = 1;
 try {
@@ -122,7 +133,9 @@ try {
   }
   code = r.response.status === 200 && s?.success ? 0 : 1;
 } catch (e) {
-  console.log(`Échec : ${e.message}`);
+  let c = e, chaine = [];
+  while (c) { chaine.push(`${c.code ? c.code + " " : ""}${c.message}`); c = c.cause; }
+  console.log(`Échec : ${chaine.join(" ← ")}`);
 } finally {
   await transport.close?.();
 }
