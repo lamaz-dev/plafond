@@ -24,6 +24,9 @@ const ORIGINE = "https://demo.kaspa-x402.org";
 const RESSOURCE = `${ORIGINE}/exact`;
 const PRIX_MAX = 20_000_000n; // prix publié de la démo : 0,2 TKAS
 const RESEAU = "kaspa:testnet-10";
+// Destinataire épinglé : adresse du vendeur de démonstration, dérivée de son payToScriptPublicKey publié
+// (000020bee817…edf9ac, lu le 19 novembre 2026). Toute autre adresse est refusée avant signature.
+const VENDEUR = "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh";
 
 function vaultCli(args) {
   return new Promise((resolve, reject) => {
@@ -88,7 +91,7 @@ const fournisseur = new FournisseurCoffre({
   coffre,
   plafond: 50_000_000n,
   maxParPaiement: 50_000_000n,
-  signer: signataireRust({ binaire: VAULT_CLI, args: ["relais-payer"], env: { RELAIS_ORIGINES: ORIGINE, RELAIS_MAX: PRIX_MAX.toString() } }),
+  signer: signataireRust({ binaire: VAULT_CLI, args: ["relais-payer"], env: { RELAIS_ORIGINES: ORIGINE, RELAIS_DESTINATAIRES: VENDEUR, RELAIS_MAX: PRIX_MAX.toString() } }),
 });
 
 // Les runners GitHub reçoivent aussi des adresses IPv6, que le transport borné refuse par principe.
@@ -107,6 +110,7 @@ const client = new DirectModeClient({
     requiredSource: "vault-treasury",
     allowedOrigins: [ORIGINE],
     allowedExactProfiles: ["standard-native"],
+    allowedPayTo: [VENDEUR],
     maximumExactAmountSompi: PRIX_MAX.toString(),
   },
   fetch: transport.fetch,

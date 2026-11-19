@@ -1,2 +1,2 @@
-# essai 2 (resolveur IPv4)
+# essai 3 (destinataire epingle)
 essai-relais
