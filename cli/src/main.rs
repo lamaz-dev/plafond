@@ -39,6 +39,8 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 #[cfg(test)]
 mod fuzz;
 mod masse;
+#[cfg_attr(not(test), allow(dead_code))]
+mod relais;
 mod sequestre;
 mod x402;
 
@@ -377,6 +379,37 @@ async fn main() -> Res<()> {
 
     if cmd == "masse" {
         print!("{}", masse::rapport(FEE));
+        return Ok(());
+    }
+
+    if cmd == "relais-exemple" {
+        // Hors ligne, clés de démonstration publiques : produit une réponse 402 et le paiement exact
+        // correspondant, pour les faire vérifier par le code de kaspa-x402 (`tests/juge-kaspa-x402`).
+        print!("{}", serde_json::to_string_pretty(&relais::exemple()?)?);
+        return Ok(());
+    }
+
+    if cmd == "relais-payer" {
+        // Fournisseur de fonds du client @kaspa-x402/client : lit {"request", "utxos"} sur l'entrée
+        // standard, écrit un ExactTransactionPaymentResult. Clé : PORTE_MONNAIE_SK (testnet),
+        // ou `--demo` pour la clé de démonstration publique [2;32]. Rien n'est diffusé.
+        let porte_monnaie = if args.iter().any(|a| a == "--demo") {
+            Keypair::from_seckey_slice(secp256k1::SECP256K1, &[2u8; 32])?
+        } else {
+            keypair_from_env("PORTE_MONNAIE_SK")?
+        };
+        let liste = |var: &str| -> Vec<String> {
+            env::var(var).map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default()
+        };
+        let pol = relais::Politique {
+            montant_max: env::var("RELAIS_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(MAX_PER_PAYMENT as u64),
+            destinataires: liste("RELAIS_DESTINATAIRES"),
+            origines: liste("RELAIS_ORIGINES"),
+        };
+        let entree: serde_json::Value = serde_json::from_reader(std::io::stdin())?;
+        let pieces = relais::pieces_du_client(entree.get("utxos").ok_or("champ « utxos » absent")?)?;
+        let req = entree.get("request").ok_or("champ « request » absent")?;
+        print!("{}", relais::payer_pour_le_client(&porte_monnaie, &pieces, req, &pol)?);
         return Ok(());
     }
 

@@ -1,0 +1,18 @@
+{
+  "name": "juge-kaspa-x402",
+  "private": true,
+  "type": "module",
+  "description": "Branche le coffre sur le client kaspa-x402 et fait v\u00e9rifier ses paiements par leur code publi\u00e9.",
+  "license": "ISC",
+  "scripts": {
+    "juge": "../../cli/target/debug/vault-cli relais-exemple | node juge.mjs",
+    "bout-en-bout": "node bout-en-bout.mjs"
+  },
+  "dependencies": {
+    "@kaspa-x402/core": "1.0.1",
+    "@kaspa-x402/covenant": "1.0.1",
+    "@noble/curves": "1.9.7",
+    "@kaspa-x402/client": "1.0.1",
+    "@kaspa-x402/server": "1.0.1"
+  }
+}
