@@ -100,6 +100,22 @@ const transport = createNodeBoundedFetch({
   allowedOrigins: [ORIGINE],
   lookup: async (hote) => (await dns.resolve4(hote)).map((address) => ({ address, family: 4 })),
 });
+// Journal de la tentative payée : statut, en-têtes x402 et corps de la réponse du vendeur.
+const fetchJournalise = async (input, init = {}) => {
+  const r = await transport.fetch(input, init);
+  const h = init.headers ?? {};
+  const paye = typeof h.get === "function" ? h.get("payment-signature") : Object.entries(h).find(([k]) => k.toLowerCase() === "payment-signature")?.[1];
+  if (paye) {
+    let corps = "";
+    try { corps = await r.clone().text(); } catch {}
+    console.log(`Réponse à la tentative payée : HTTP ${r.status}`);
+    for (const [k, v] of r.headers.entries()) if (/payment|x402|retry|content-type/i.test(k)) console.log(`  ${k}: ${k === "payment-required" ? Buffer.from(v, "base64").toString().slice(0, 600) : v.slice(0, 300)}`);
+    console.log(`  corps : ${corps.slice(0, 800)}`);
+  }
+  return r;
+};
+Object.defineProperty(fetchJournalise, Symbol.for("kaspa-x402:bound-paid-fetch:v1"), { value: true });
+
 const client = new DirectModeClient({
   addressCodec: codec,
   confirmationThreshold: core.TESTNET_10_CONFIRMATION_THRESHOLD,
@@ -113,7 +129,7 @@ const client = new DirectModeClient({
     allowedPayTo: [VENDEUR],
     maximumExactAmountSompi: PRIX_MAX.toString(),
   },
-  fetch: transport.fetch,
+  fetch: fetchJournalise,
 });
 
 console.log(`Porte-monnaie du relais : ${ADRESSE} (${pieces.reduce((s, u) => s + BigInt(u.amount), 0n)} sompi)`);

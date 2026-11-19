@@ -1,2 +1,3 @@
-# essai 3 (destinataire epingle)
+# essai 4 (journal de la reponse du vendeur)
+pieces-porte-monnaie
 essai-relais
