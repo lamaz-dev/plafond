@@ -484,6 +484,23 @@ async fn main() -> Res<()> {
             print!("{}", serde_json::Value::Array(liste));
             c.disconnect().await?;
         }
+        "relais-test-diffusion" => {
+            // Diagnostic : même forme qu'un paiement exact (v0, P2PK), mais vers le propriétaire, diffusée
+            // directement pour lire la réponse exacte du nœud.
+            let pm = keypair_from_env("PORTE_MONNAIE_SK")?;
+            let c = connect().await?;
+            let utxos = c.get_utxos_by_addresses(vec![address(&pm)]).await?;
+            let pieces: Vec<(TransactionOutpoint, UtxoEntry)> = utxos.into_iter().map(|u| (u.outpoint.into(), u.utxo_entry.into())).collect();
+            let (tx, entries) = relais::construire_tx(&pm, &pieces, 20_000_000, pay_to_address_script(&address(&owner)))?;
+            if let Some(m) = masse::masses(&tx, &entries) {
+                println!("Masses : calcul {} g, transitoire {} g, stockage {} g (engagée {})", m.compute, m.transient, m.storage, tx.storage_mass());
+            }
+            match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                Ok(txid) => println!("Transaction v0 acceptée : {}", explorer(&txid.to_string())),
+                Err(err) => println!("Transaction v0 REFUSÉE par le nœud : {err}"),
+            }
+            c.disconnect().await?;
+        }
         "recharger-porte-monnaie" => {
             // Le coffre paie le porte-monnaie du relais, avec les règles du covenant (entrée `pay`).
             let amount: i64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
