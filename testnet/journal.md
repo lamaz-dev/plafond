@@ -127,3 +127,16 @@ VERDICT : ÉCHEC
 (code de sortie 1)
 
 ```
+
+## 2026-11-19 04:47 UTC
+
+```
+$ vault-cli relais-test-diffusion
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Masses : calcul 2036 g, transitoire 1264 g, stockage 63670 g (engagée 63670)
+Transaction v0 acceptée : https://tn10.kaspa.stream/transactions/b137fd8ecbd66b00e6df107876bf6e0385e00bc0521ae681a98e5f9ebbf45f93
+
+$ vault-cli pieces-porte-monnaie
+Connecté au testnet-10 : wss://quark-10.kaspa.red/kaspa/testnet-10/wrpc/borsh
+[{"address":"kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4","amount":"29700000","outpoint":{"index":1,"txid":"b137fd8ecbd66b00e6df107876bf6e0385e00bc0521ae681a98e5f9ebbf45f93"},"scriptPublicKey":"000020a3b905fef9f2f28872125d8b0c4fc703ce1ebdcf9fb0439e84f5c9626ceb80eeac"}]
+```
