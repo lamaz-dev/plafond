@@ -12,7 +12,8 @@ Base: public repository `lamaz-dev/Kaspa-agent-vault` at v0.1.0 (commit dc005d8)
    - [x] `cli/src/relais.rs` and `vault-cli relais-payer`, checked against the official vectors.
    - [x] Judge with the published validators (`tests/juge-kaspa-x402/juge.mjs`).
    - [x] End to end with the unmodified Kaspa x402 client and server (`tests/juge-kaspa-x402/bout-en-bout.mjs`).
-   - [ ] Testnet-10: refill from the deployed vault, pay a Kaspa x402 demo vendor.
+   - [x] Testnet-10: lab vault deployed; vault refilled the relay wallet under the covenant rules (tx 4abbbbab…4426).
+   - [ ] Pay https://demo.kaspa-x402.org/exact: payment verified, settlement fails with 503 on their side (reported: elldeeone/kaspa-x402#40).
    - [ ] Proposal to Kaspa x402: a covenant payer profile (vault pays the vendor directly).
 1. **v0.5 micropayments** (on hold: Kaspa x402 already ships additive `exact`; reuse it through the relay): payments added to a vendor's KIP-10 additive UTXO (KIP-9 mutual transaction),
    see `spec/research/micropayments-additive.md`.
