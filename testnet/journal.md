@@ -42,3 +42,21 @@ VERDICT : ÉCHEC
 (code de sortie 1)
 
 ```
+
+## 2026-11-19 04:25 UTC
+
+```
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Porte-monnaie du relais : kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4 (0 sompi)
+Diagnostic /health : HTTP 200
+  {"ok":true,"enabled":true,"gateway":"kaspa-x402-testnet","releaseVersion":"1.0.1","hostedExactSettlementEnabled":true,"exactProfile":"standard-native","chainBroadcastMode":"pnn","chainEvidenceSource":"pnn","chainTrustMode":"trusted-single-source","chainEvidenceAuthorities":1}
+Diagnostic /supported : HTTP 200
+  {"ok":true,"enabled":true,"kinds":[{"x402Version":2,"scheme":"exact","network":"kaspa:testnet-10","extra":{"asset":"KAS","binding":"kaspa-exact-v2","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2.0.0","modes":["verify","settle"]}},{"x402Version":2,"scheme":"batch-settlement
+Diagnostic /exact : HTTP 402 (offre 402 : {"accepts":[{"amount":"20000000","asset":"KAS","extra":{"binding":"kaspa-exact-v2","finality":"accepted","payToScriptPublicKey":"000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac","paymentFlow":"upfront","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2)
+GET https://demo.kaspa-x402.org/exact
+Échec : fetch failed ← bounded fetch DNS answer contains a private or reserved address
+VERDICT : ÉCHEC
+(code de sortie 1)
+
+```
