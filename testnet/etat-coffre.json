@@ -1,8 +1,8 @@
 {
-  "txid": "2c1777009e5c3ee913523e5dd5507185f291e0650a750f25581eec0c8d65cf1d",
-  "index": 0,
-  "valeur": 500000000,
-  "tokens": 200000000,
-  "last_daa": 627272597,
+  "txid": "4abbbbabc8aa384a315f74dfac7a37825938db648b828c08885233c3cebf4426",
+  "index": 1,
+  "valeur": 448500000,
+  "tokens": 148500000,
+  "last_daa": 627284577,
   "cov_id": "605a11382264b13adf2c53e2e135258805cbc4ca21e3e14fa06632af2f66524e"
 }
