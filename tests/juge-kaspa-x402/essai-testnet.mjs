@@ -12,6 +12,7 @@
 // Usage : node essai-testnet.mjs <chemin vers vault-cli>
 
 import { spawn } from "node:child_process";
+import { promises as dns } from "node:dns";
 import { DirectModeClient, MemoryChannelStore } from "@kaspa-x402/client";
 import { createNodeBoundedFetch } from "@kaspa-x402/client/node";
 import * as core from "@kaspa-x402/core";
@@ -90,7 +91,12 @@ const fournisseur = new FournisseurCoffre({
   signer: signataireRust({ binaire: VAULT_CLI, args: ["relais-payer"], env: { RELAIS_ORIGINES: ORIGINE, RELAIS_MAX: PRIX_MAX.toString() } }),
 });
 
-const transport = createNodeBoundedFetch({ allowedOrigins: [ORIGINE] });
+// Les runners GitHub reçoivent aussi des adresses IPv6, que le transport borné refuse par principe.
+// On ne lui transmet que les adresses IPv4 ; il vérifie toujours qu'elles sont publiques.
+const transport = createNodeBoundedFetch({
+  allowedOrigins: [ORIGINE],
+  lookup: async (hote) => (await dns.resolve4(hote)).map((address) => ({ address, family: 4 })),
+});
 const client = new DirectModeClient({
   addressCodec: codec,
   confirmationThreshold: core.TESTNET_10_CONFIRMATION_THRESHOLD,
