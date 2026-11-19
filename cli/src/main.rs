@@ -359,6 +359,21 @@ pub async fn connect() -> Res<KaspaRpcClient> {
     Ok(client)
 }
 
+/// Connexion sans message sur la sortie standard (les commandes du relais y écrivent du JSON).
+pub async fn connect_silencieux() -> Res<KaspaRpcClient> {
+    let net = NetworkId::with_suffix(NetworkType::Testnet, 10);
+    let client = KaspaRpcClient::new_with_args(WrpcEncoding::Borsh, None, Some(Resolver::default()), Some(net), None)?;
+    let opts = ConnectOptions {
+        block_async_connect: true,
+        strategy: ConnectStrategy::Fallback,
+        connect_timeout: Some(Duration::from_secs(30)),
+        ..Default::default()
+    };
+    client.connect(Some(opts)).await?;
+    eprintln!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
+    Ok(client)
+}
+
 pub async fn virtual_daa(c: &KaspaRpcClient) -> Res<u64> {
     Ok(c.get_block_dag_info().await?.virtual_daa_score)
 }
@@ -443,6 +458,58 @@ async fn main() -> Res<()> {
             println!("Propriétaire (à alimenter au faucet) : {}", address(&owner));
             println!("Agent                                : {}", address(&agent));
             println!("Service payé par l'agent             : {}", address(&service));
+            println!("Porte-monnaie du relais (Kaspa x402) : {}", address(&keypair_from_env("PORTE_MONNAIE_SK")?));
+        }
+        "pieces-porte-monnaie" => {
+            // Pièces du porte-monnaie du relais, au format FundingProviderUtxo de @kaspa-x402/client.
+            let pm = address(&keypair_from_env("PORTE_MONNAIE_SK")?);
+            let c = connect_silencieux().await?;
+            let utxos = c.get_utxos_by_addresses(vec![pm.clone()]).await?;
+            let liste: Vec<serde_json::Value> = utxos
+                .into_iter()
+                .map(|u| {
+                    let e: UtxoEntry = u.utxo_entry.into();
+                    let mut v = serde_json::json!({
+                        "outpoint": { "txid": u.outpoint.transaction_id.to_string(), "index": u.outpoint.index },
+                        "amount": e.amount.to_string(),
+                        "scriptPublicKey": relais::spk_hex(&e.script_public_key),
+                        "address": pm.to_string(),
+                    });
+                    if let Some(cov) = e.covenant_id {
+                        v["covenantId"] = serde_json::Value::String(cov.to_string());
+                    }
+                    v
+                })
+                .collect();
+            print!("{}", serde_json::Value::Array(liste));
+            c.disconnect().await?;
+        }
+        "recharger-porte-monnaie" => {
+            // Le coffre paie le porte-monnaie du relais, avec les règles du covenant (entrée `pay`).
+            let amount: i64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
+            let pm = keypair_from_env("PORTE_MONNAIE_SK")?;
+            let e = load_state()?;
+            let c = connect_silencieux().await?;
+            let now = ((virtual_daa(&c).await? - DAA_MARGIN) as i64).max(e.last_daa);
+            let elapsed = (now - e.last_daa).min(REFILL);
+            let available = (e.tokens + elapsed * CAPACITY / REFILL).min(CAPACITY);
+            if amount + FEE as i64 > available || amount > MAX_PER_PAYMENT {
+                return Err(format!("coffre : budget épuisé ou plafond dépassé ({available} sompi disponibles)").into());
+            }
+            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&pm)), now)?;
+            let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
+            eprintln!("Coffre → porte-monnaie : {} TKAS : {}", amount as f64 / 1e8, explorer(&txid.to_string()));
+            save_state(&next_state)?;
+            // Attendre que la pièce soit visible dans l'ensemble des UTXO du nœud.
+            for _ in 0..40 {
+                let u = c.get_utxos_by_addresses(vec![address(&pm)]).await?;
+                if u.iter().any(|x| x.outpoint.transaction_id == txid) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            print!("{}", serde_json::json!({ "transactionId": txid.to_string(), "amount": amount.to_string() }));
+            c.disconnect().await?;
         }
         "etat" => {
             let c = connect().await?;

@@ -1,0 +1,77 @@
+name: testnet-10
+
+# Exécute les commandes listées dans testnet/commande.txt sur le testnet-10 de Kaspa,
+# puis enregistre le résultat dans testnet/journal.md (et l'état public du coffre).
+# Dépôt lab : mêmes règles que le dépôt public, plus l'essai du relais vers Kaspa x402.
+on:
+  push:
+    branches: [main]
+    paths: [testnet/commande.txt]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: testnet
+  cancel-in-progress: false
+
+jobs:
+  run:
+    # Seul le propriétaire du dépôt peut déclencher une exécution qui a accès au secret.
+    if: github.actor == github.repository_owner && github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: cli-${{ hashFiles('cli/Cargo.toml', 'cli/Cargo.lock') }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compiler l'outil
+        run: cd cli && cargo build --release --locked
+      - name: Installer les bibliothèques Kaspa x402 (versions figées)
+        run: cd tests/juge-kaspa-x402 && npm ci --ignore-scripts
+      - name: Exécuter les commandes
+        env:
+          VAULT_PHRASE: ${{ secrets.VAULT_PHRASE }}
+        run: |
+          {
+            echo ""
+            echo "## $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo '```'
+            while IFS= read -r line || [ -n "$line" ]; do
+              line="$(echo "$line" | sed 's/#.*//' | xargs)"
+              [ -z "$line" ] && continue
+              cmd="${line%% *}"
+              case "$cmd" in
+                essai-relais)
+                  echo "\$ node tests/juge-kaspa-x402/essai-testnet.mjs"
+                  node tests/juge-kaspa-x402/essai-testnet.mjs "$PWD/cli/target/release/vault-cli" 2>&1 || echo "(code de sortie $?)"
+                  echo ""
+                  continue ;;
+                adresses|etat|deployer|payer|recharger|recuperer|pause|masse|pieces-porte-monnaie|recharger-porte-monnaie) ;;
+                *) echo "commande refusée (hors liste blanche) : $cmd"; continue ;;
+              esac
+              echo "\$ vault-cli $line"
+              ./cli/target/release/vault-cli $line 2>&1 || echo "(code de sortie $?)"
+              echo ""
+            done < testnet/commande.txt
+            echo '```'
+          } | tee -a testnet/journal.md
+      - name: Enregistrer le journal
+        run: |
+          git config user.name "vault-bot"
+          git config user.email "vault-bot@users.noreply.github.com"
+          git add -A testnet/
+          git commit -m "Journal testnet [skip ci]" || echo "rien à enregistrer"
+          git push

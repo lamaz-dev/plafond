@@ -35,6 +35,14 @@ jobs:
           diff -u ../contracts/EMPREINTES.txt /tmp/empreintes.txt
       - name: Tests de l'outil, dont fuzzing d'état (proptest)
         run: cd cli && cargo test --release --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Relais vers Kaspa x402 (juge et bout en bout, hors ligne)
+        run: |
+          cd tests/juge-kaspa-x402 && npm ci --ignore-scripts
+          ../../cli/target/release/vault-cli relais-exemple | node juge.mjs
+          node bout-en-bout.mjs ../../cli/target/release/vault-cli
 
   contrats:
     name: Tests des contrats sur le compilateur SilverScript figé
