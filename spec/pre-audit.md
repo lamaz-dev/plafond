@@ -120,6 +120,25 @@ Signalements reçus sur l'activité récente de l'écosystème, vérifiés à la
 
 Référence : guide officiel Toccata, https://docs.kaspa.org/toccata (tarification des scripts, identifiants de covenant).
 
+## 6 bis. Relecture ligne à ligne d'AgentBudget v0.5 (20 novembre 2026)
+
+| Ligne(s) | Règle | Constat |
+|---|---|---|
+| 55 | signature de l'agent | requise pour `pay` ; `ownerControl` exige celle du propriétaire (test `mauvaise_cle_refusee_pour_payer`) |
+| 57-58 | `0 < amount ≤ maxPerPayment` | borne par achat ; `maxPerPayment ≤ capacity` vérifié hors chaîne (H4) |
+| 61-63 | une entrée, deux sorties, aucune donnée | pas de sortie cachée ni d'instruction de bridge (tests `sortie_supplementaire_refusee`, `instructions_de_bridge_refusees`) |
+| 66-67 | `lastDaa ≤ nowDaa ≤ verrou` | verrou forcé en score DAA par la garde `OpWithin` du compilateur, jamais lu comme une date (test `verrou_en_date_refuse`) ; non neutralisable par une séquence maximale (une seule entrée, `OpCheckLockTimeVerify`) |
+| 71-72 | inscription réelle ≥ `lastDaa` | refuse un coffre non confirmé (−1) ; un `initLastDaa` posé après l'inscription bloque l'agent, jamais le propriétaire |
+| 75-85 | recharge ramenée à `[0, refillPeriod]`, plafond `capacity` | arrondis en faveur du propriétaire ; `capacity × refillPeriod` sur 63 bits (H4), sinon le script échoue (`NumberTooBig`) sans danger ; `refillPeriod = 0` : division refusée, l'agent est bloqué, le propriétaire récupère (R33) |
+| 87-90 | liste blanche optionnelle | empreinte blake2b du script de sortie complet |
+| 91-98 | montant exact, frais ≤ `maxFee`, dépense ≤ disponible | les frais sont décomptés du budget (test `vidage_par_les_frais_refuse`) |
+| 101-103 | une seule continuation, même lignée, mêmes règles, état recalculé | l'agent ne peut changer ni le propriétaire, ni les plafonds, ni la liste, ni l'état (tests `agent_ne_peut_pas_changer_les_regles`, `agent_ne_peut_pas_detourner_le_reste`, fuzz : 10 tricheries) |
+| 107-109 | `ownerControl` | le propriétaire peut tout, par construction (gel, rapatriement, recharge) |
+
+Constats : aucune faille nouvelle. Une piste (verrou temporel lu comme une date) a été vérifiée
+et écartée grâce à la garde du compilateur ; elle reste en non-régression. Limites connues et
+documentées : réorganisation du DAG et poussière KIP-9 (`borne-de-perte.md`, section 4).
+
 ## 7. Questions ouvertes pour l'auditeur
 
 1. Le calcul `elapsed * capacity / refillPeriod` arrondit à l'inférieur : la perte d'arrondi peut-elle être exploitée en paiements très rapprochés ? (le budget ne peut que perdre, jamais gagner, selon nos tests)

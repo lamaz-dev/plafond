@@ -85,11 +85,22 @@ durée `D` vérifient `t_j − t_i ≤ D`, d'où `dépense ≤ C + C × D / R`. 
 
 | # | Hypothèse | Où elle est vérifiée |
 |---|---|---|
-| H1 | `now_k ≤ t_k` : le verrou est testé contre le score DAA du bloc qui contient la transaction (`lock_time < daa_score` strict), lequel est ≤ au score d'acceptation `t_k` (point de vue de la chaîne qui l'accepte) inscrit sur les sorties ; le verrou ne peut pas être neutralisé par une séquence maximale, car `OpCheckLockTimeVerify` échoue dans ce cas et le contrat exige une entrée unique | lu dans `kaspa-consensus 2.1.0` (`body_validation_in_context.rs`, `tx_validation_in_header_context.rs`, `utxo_validation.rs` : sorties créées au `pov_daa_score`) et `kaspa-txscript 2.1.0` (`OpCheckLockTimeVerify`) ; **à relire par l'auditeur** |
+| H1 | `now_k ≤ t_k` : le verrou est testé contre le score DAA du bloc qui contient la transaction (`lock_time < daa_score` strict), lequel est ≤ au score d'acceptation `t_k` (point de vue de la chaîne qui l'accepte) inscrit sur les sorties ; le verrou ne peut pas être neutralisé par une séquence maximale, car `OpCheckLockTimeVerify` échoue dans ce cas et le contrat exige une entrée unique ; le verrou ne peut pas non plus être lu comme une **date** (au-delà de 500 000 000 000, une date déjà passée rendrait la transaction acceptable aussitôt) : SilverScript compile `require(tx.daa >= x)` avec une garde `OpWithin(0, 500 000 000 000)` avant `OpCheckLockTimeVerify` (test `verrou_en_date_refuse`) | lu dans `kaspa-consensus 2.1.0` (`body_validation_in_context.rs`, `tx_validation_in_header_context.rs`, `utxo_validation.rs` : sorties créées au `pov_daa_score`) et `kaspa-txscript 2.1.0` (`OpCheckLockTimeVerify`) ; **à relire par l'auditeur** |
 | H2 | `OpTxInputDaaScore` renvoie ce score ; pour une sortie non confirmée il vaut `u64::MAX`, vu −1 par le script, donc refusé par `inputDaa ≥ lastDaa` | `kaspa-txscript 2.1.0`, `opcodes/mod.rs` ; test `coffre_non_confirme_refuse` |
 | H3 | Une seule continuation par paiement, pas d'autre entrée, pas de sortie cachée | règles de forme du contrat ; fuzz `coffre_moteur_egal_modele` |
 | H4 | Paramètres sains (`R > 0`, `maxPerPayment ≤ C`, `C × R` sur 63 bits, `T_0 ≤ C`, `initLastDaa ≤` inscription) | `check_params` (outil et vendeur) ; R33 |
 | H5 | La clé du propriétaire n'est pas compromise (elle peut tout faire, par construction) | hors du modèle : clé chiffrée sur l'appareil du propriétaire |
+
+**Réorganisation du DAG.** Si un paiement est retiré puis accepté de nouveau plus tard, son
+score d'acceptation `t_k` change, et sa continuation est inscrite au nouveau score. La
+démonstration ne porte que sur les paiements **finalement** acceptés et sur leurs scores
+finaux : la borne vaut pour l'historique final, quel qu'il soit. Un paiement ne peut pas être
+compté deux fois : la lignée n'a qu'une continuation, et une sortie ne se dépense qu'une fois.
+
+**Poussière (KIP-9).** Un reste minuscule dans le coffre rend la transaction trop lourde pour le
+réseau (masse de stockage) : elle est refusée. L'agent peut ainsi bloquer ses propres paiements,
+jamais prendre davantage ; l'outil refuse ce cas avant l'envoi, et le propriétaire récupère
+toujours un couloir presque vide (R19, tests `masse::*`).
 
 **Unité de temps.** Le réseau mesure des scores DAA, pas des heures. La cible est de 10 par seconde,
 soit environ 864 000 par 24 h ; l'ajustement de difficulté fait varier légèrement la durée réelle.

@@ -430,6 +430,23 @@ fn faille_v04_demontree() {
     assert!(total >= 3 * CAPACITY, "la faille v0.4 n'est plus reproduite : vérifier le banc de test");
 }
 
+/// Relecture ligne à ligne (20 nov. 2026), piste écartée mais gardée en non-régression : au-delà
+/// de 500 000 000 000, le réseau lit un verrou temporel comme une DATE (millisecondes), déjà passée ;
+/// un agent pourrait annoncer un instant DAA gigantesque et obtenir une recharge complète. Ce n'est
+/// pas possible : SilverScript compile `require(tx.daa >= x)` avec une garde OpWithin(0, seuil)
+/// avant OpCheckLockTimeVerify. Ce test vérifie que la garde reste présente.
+#[test]
+fn verrou_en_date_refuse() {
+    let mut m = Model::neuf(1_000_000_000, 0, 1_000, 1_100); // réserve vide, 100 DAA réels écoulés
+    m.chain = 500_000_000_000; // verrou de la transaction = instant annoncé = seuil « date »
+    // témoin : au vrai instant, la réserve vide ne permet pas ce paiement
+    let mut vrai = m.clone();
+    vrai.chain = 1_100;
+    assert!(!try_pay(&vrai, MAX_PER_PAYMENT, MAX_FEE, 0, &Cheat::None).0);
+    let (ok, _, _) = try_pay(&m, MAX_PER_PAYMENT, MAX_FEE, 0, &Cheat::None);
+    assert!(!ok, "le moteur accepte une recharge complète obtenue par un verrou en date");
+}
+
 /// Coffre non encore confirmé (score DAA inconnu, u64::MAX dans le mempool) : paiement refusé.
 #[test]
 fn coffre_non_confirme_refuse() {

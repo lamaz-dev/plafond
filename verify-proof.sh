@@ -30,6 +30,7 @@ etape "5. Théorème : agent avide et tricheur sous la borne" teste fuzz::agent_
 etape "6. Moteur = modèle de référence (10 tricheries)" teste fuzz::coffre_moteur_egal_modele
 etape "7. Seul le propriétaire ouvre ownerControl (gel)" teste fuzz::seul_le_proprietaire_ouvre_owner_control
 etape "8. Paramètres aberrants : aucun fonds en danger" teste fuzz::parametres_aberrants_sans_danger_pour_les_fonds
+etape "8b. Verrou lu comme une date : refusé (garde du compilateur)" teste fuzz::verrou_en_date_refuse
 etape "9. Suite complète (routeur, clé chiffrée, relais, séquestre)" cargo test -q --release
 
 echo
