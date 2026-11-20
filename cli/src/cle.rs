@@ -12,6 +12,7 @@ use secp256k1::Keypair;
 use serde::{Deserialize, Serialize};
 
 use crate::Res;
+use zeroize::Zeroizing;
 
 /// Paramètres Argon2id (recommandation OWASP 2025 : 19 Mio, 2 passes, 1 voie ; ici 64 Mio, 3 passes).
 const M_KIO: u32 = 64 * 1024;
@@ -33,10 +34,12 @@ pub struct Fichier {
     pub publique: String,
 }
 
-fn deriver(mot_de_passe: &str, sel: &[u8], m: u32, t: u32, p: u32) -> Res<[u8; 32]> {
+/// Clé dérivée du mot de passe : effacée de la mémoire à la sortie de portée (y compris en cas
+/// d'erreur ou de panique), grâce à `Zeroizing`.
+fn deriver(mot_de_passe: &str, sel: &[u8], m: u32, t: u32, p: u32) -> Res<Zeroizing<[u8; 32]>> {
     let params = Params::new(m, t, p, Some(32)).map_err(|e| format!("Argon2 : {e}"))?;
-    let mut k = [0u8; 32];
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params).hash_password_into(mot_de_passe.as_bytes(), sel, &mut k).map_err(|e| format!("Argon2 : {e}"))?;
+    let mut k = Zeroizing::new([0u8; 32]);
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params).hash_password_into(mot_de_passe.as_bytes(), sel, &mut *k).map_err(|e| format!("Argon2 : {e}"))?;
     Ok(k)
 }
 
@@ -55,8 +58,8 @@ pub fn chiffrer(k: &Keypair, mot_de_passe: &str) -> Res<Fichier> {
     getrandom::getrandom(&mut nonce).map_err(|e| format!("aléa : {e}"))?;
     let publique = hex::encode(k.x_only_public_key().0.serialize());
     let cle = deriver(mot_de_passe, &sel, M_KIO, T, P)?;
-    let c = XChaCha20Poly1305::new((&cle).into())
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: &k.secret_bytes(), aad: &aad(&publique) })
+    let c = XChaCha20Poly1305::new((&*cle).into())
+        .encrypt(XNonce::from_slice(&nonce), Payload { msg: &*Zeroizing::new(k.secret_bytes()), aad: &aad(&publique) })
         .map_err(|_| "chiffrement impossible")?;
     Ok(Fichier { version: 1, kdf: "argon2id".into(), m_kio: M_KIO, t: T, p: P, sel: hex::encode(sel), nonce: hex::encode(nonce), chiffre: hex::encode(c), publique })
 }
@@ -73,9 +76,10 @@ pub fn dechiffrer(f: &Fichier, mot_de_passe: &str) -> Res<Keypair> {
     if nonce.len() != 24 {
         return Err("nonce invalide".into());
     }
-    let secret = XChaCha20Poly1305::new((&cle).into())
+    let secret: Zeroizing<Vec<u8>> = XChaCha20Poly1305::new((&*cle).into())
         .decrypt(XNonce::from_slice(&nonce), Payload { msg: &hex::decode(&f.chiffre)?, aad: &aad(&f.publique) })
-        .map_err(|_| "mot de passe incorrect ou fichier modifié")?;
+        .map_err(|_| "mot de passe incorrect ou fichier modifié")?
+        .into();
     let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &secret)?;
     if hex::encode(k.x_only_public_key().0.serialize()) != f.publique {
         return Err("clé publique incohérente : fichier modifié".into());
@@ -86,9 +90,9 @@ pub fn dechiffrer(f: &Fichier, mot_de_passe: &str) -> Res<Keypair> {
 /// Nouvelle clé tirée par le système d'exploitation.
 pub fn nouvelle() -> Res<Keypair> {
     loop {
-        let mut s = [0u8; 32];
-        getrandom::getrandom(&mut s).map_err(|e| format!("aléa : {e}"))?;
-        if let Ok(k) = Keypair::from_seckey_slice(secp256k1::SECP256K1, &s) {
+        let mut s = Zeroizing::new([0u8; 32]);
+        getrandom::getrandom(&mut *s).map_err(|e| format!("aléa : {e}"))?;
+        if let Ok(k) = Keypair::from_seckey_slice(secp256k1::SECP256K1, &*s) {
             return Ok(k);
         }
     }
@@ -124,7 +128,7 @@ mod tests {
         let mut f = chiffrer(k, mdp).unwrap();
         let sel = hex::decode(&f.sel).unwrap();
         let cle = deriver(mdp, &sel, 19 * 1024, 2, 1).unwrap();
-        let c = XChaCha20Poly1305::new((&cle).into())
+        let c = XChaCha20Poly1305::new((&*cle).into())
             .encrypt(XNonce::from_slice(&hex::decode(&f.nonce).unwrap()), Payload { msg: &k.secret_bytes(), aad: &aad(&f.publique) })
             .unwrap();
         f.m_kio = 19 * 1024;
@@ -178,4 +182,33 @@ mod tests {
         }
         std::fs::remove_file(chemin).unwrap();
     }
+}
+
+/// Mot de passe du propriétaire : saisi au clavier (jamais affiché), ou PROPRIETAIRE_MDP pour un
+/// usage automatisé (testnet uniquement). Effacé de la mémoire après usage.
+pub fn mot_de_passe(invite: &str) -> Res<Zeroizing<String>> {
+    if let Ok(m) = std::env::var("PROPRIETAIRE_MDP") {
+        return Ok(Zeroizing::new(m));
+    }
+    Ok(Zeroizing::new(rpassword::prompt_password(invite)?))
+}
+
+/// Ouvre le fichier de clé du propriétaire.
+pub fn ouvrir(chemin: &str) -> Res<Keypair> {
+    let f = lire(chemin)?;
+    dechiffrer(&f, &mot_de_passe("Mot de passe du coffre propriétaire : ")?)
+}
+
+/// Crée un fichier de clé neuf (mot de passe demandé deux fois).
+pub fn creer(chemin: &str) -> Res<Keypair> {
+    let m1 = mot_de_passe("Nouveau mot de passe (12 caractères minimum) : ")?;
+    if std::env::var("PROPRIETAIRE_MDP").is_err() {
+        let m2 = mot_de_passe("Confirmer le mot de passe : ")?;
+        if *m1 != *m2 {
+            return Err("les deux mots de passe diffèrent".into());
+        }
+    }
+    let k = nouvelle()?;
+    ecrire(chemin, &chiffrer(&k, &m1)?)?;
+    Ok(k)
 }

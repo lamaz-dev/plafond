@@ -104,6 +104,15 @@ pub fn keypair_from_env(var: &str) -> Res<Keypair> {
     Ok(Keypair::from_seckey_slice(secp256k1::SECP256K1, &bytes)?)
 }
 
+/// Clé du propriétaire : fichier chiffré (PROPRIETAIRE_CLE, mot de passe demandé), sinon clés de
+/// test (VAULT_PHRASE ou OWNER_SK). Le fichier chiffré est le mode prévu pour un vrai propriétaire.
+pub fn charger_proprietaire() -> Res<Keypair> {
+    if let Ok(chemin) = env::var("PROPRIETAIRE_CLE") {
+        return cle::ouvrir(&chemin);
+    }
+    keypair_from_env("OWNER_SK")
+}
+
 pub fn xonly(k: &Keypair) -> Vec<u8> {
     k.x_only_public_key().0.serialize().to_vec()
 }
@@ -509,6 +518,21 @@ async fn main() -> Res<()> {
         masse::FORCER.store(true, std::sync::atomic::Ordering::Relaxed);
         println!("(refus local KIP-9 désactivé : le réseau tranchera)");
     }
+    if cmd == "cle-creer" || cmd == "cle-info" {
+        // Clé du propriétaire chiffrée sur son appareil (option A, non-custodial).
+        let chemin = args.get(2).ok_or("chemin du fichier de clé manquant")?;
+        let publique = if cmd == "cle-creer" {
+            let k = cle::creer(chemin)?;
+            println!("Fichier de clé créé : {chemin}");
+            println!("Gardez-en une sauvegarde : sans ce fichier ET son mot de passe, le coffre ne peut plus être gelé.");
+            xonly(&k)
+        } else {
+            hex::decode(cle::lire(chemin)?.publique)? // aucun mot de passe : la clé publique est en clair
+        };
+        println!("Clé publique x-only : {}", hex::encode(&publique));
+        println!("Adresse du propriétaire (à alimenter depuis KasWare ou Kastle) : {}", Address::new(Prefix::Testnet, Version::PubKey, &publique));
+        return Ok(());
+    }
     if cmd == "routeur" {
         // API des agents (voir routeur.rs). Hors démo, le routeur ne charge JAMAIS la clé secrète du
         // propriétaire : seulement sa clé publique (PROPRIETAIRE_PUB) et la clé de l'agent.
@@ -534,7 +558,7 @@ async fn main() -> Res<()> {
         return Ok(());
     }
 
-    let owner = keypair_from_env("OWNER_SK")?;
+    let owner = charger_proprietaire()?;
     let agent = keypair_from_env("AGENT_SK")?;
     let service = payee(&owner);
 
