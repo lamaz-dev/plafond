@@ -1,2 +1,17 @@
-# essai : routeur + agent Python
-essai-routeur
+# Une commande par ligne. Pousser ce fichier lance l exécution sur le testnet-10.
+# Essai du mode survie (20 nov. 2026)
+# 0. rapatrier l ancien coffre v0.4 du lab, créer un coffre v0.5
+recuperer-v04
+pause 15
+deployer
+pause 20
+# 1. l agent paie deux fois : le coffre change deux fois d adresse
+payer 20000000
+pause 15
+payer 30000000
+pause 15
+etat
+# 2. mode survie : gel SANS l état local (routeur et fichier perdus), à partir de l origine seule
+recuperer --sans-etat
+pause 10
+etat

@@ -41,6 +41,7 @@ mod fuzz;
 mod masse;
 #[cfg_attr(not(test), allow(dead_code))]
 mod cle;
+mod retrouver;
 mod relais;
 mod routeur;
 mod sequestre;
@@ -64,7 +65,7 @@ const LANE: i64 = 0;
 const USE_ALLOWLIST: i64 = 0;
 const DAA_MARGIN: u64 = 100; // marge sous le score DAA du réseau (~10 s)
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Etat {
     pub txid: String,
     pub index: u32,
@@ -380,6 +381,29 @@ fn state_path() -> String {
 
 pub fn load_state() -> Res<Etat> {
     Ok(serde_json::from_str(&fs::read_to_string(state_path()).map_err(|_| "aucun coffre déployé (fichier d'état absent)")?)?)
+}
+
+/// Origine du coffre (état à sa création) : seule donnée que le propriétaire doit garder pour
+/// retrouver le coffre courant sans fichier d'état ni routeur (`retrouver`).
+fn origine_path() -> String {
+    state_path().replace(".json", "-origine.json")
+}
+
+/// Mode survie : retrouve le coffre courant depuis son origine, via l'indexeur public, en
+/// vérifiant chaque saut, puis confirme auprès du nœud que la sortie existe bien.
+pub async fn retrouver_coffre(c: &KaspaRpcClient, owner: &Keypair, agent: &Keypair) -> Res<Etat> {
+    let origine: Etat = serde_json::from_str(&fs::read_to_string(origine_path()).map_err(|_| "origine du coffre absente : impossible de le retrouver")?)?;
+    let (pk, ag) = (xonly(owner), agent.clone());
+    let (issue, sauts) = tokio::task::spawn_blocking(move || retrouver::retrouver(&retrouver::Rest::depuis_env(), &pk, &ag, &origine).map_err(|e| e.to_string())).await??;
+    match issue {
+        retrouver::Issue::Ferme { txid } => Err(format!("coffre déjà fermé par le propriétaire (transaction {txid})").into()),
+        retrouver::Issue::Courant(e) => {
+            creation_coffre(c, &xonly(owner), agent, &e).await.map_err(|_| "l'indexeur indique un coffre que le nœud ne connaît pas (non confirmé ou indexeur en retard) : réessayer")?;
+            println!("Coffre retrouvé après {sauts} paiement(s), chaque saut vérifié : sortie {}:{}, {} TKAS", e.txid, e.index, e.valeur as f64 / 1e8);
+            save_state(&e)?;
+            Ok(e)
+        }
+    }
 }
 
 pub fn save_state(e: &Etat) -> Res<()> {
@@ -704,7 +728,9 @@ async fn main() -> Res<()> {
             let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
             println!("Coffre déployé : {} TKAS, budget {} TKAS, lignée {}", FUND as f64 / 1e8, CAPACITY as f64 / 1e8, cov);
             println!("Transaction : {}", explorer(&txid.to_string()));
-            save_state(&Etat { txid: txid.to_string(), index: 0, valeur: FUND, tokens: CAPACITY, last_daa: now, cov_id: cov.to_string() })?;
+            let e0 = Etat { txid: txid.to_string(), index: 0, valeur: FUND, tokens: CAPACITY, last_daa: now, cov_id: cov.to_string() };
+            save_state(&e0)?;
+            fs::write(origine_path(), serde_json::to_string_pretty(&e0)?)?; // à garder par le propriétaire
             c.disconnect().await?;
         }
         "payer" => {
@@ -804,12 +830,26 @@ async fn main() -> Res<()> {
             }
             c.disconnect().await?;
         }
+        "retrouver" => {
+            let c = connect().await?;
+            retrouver_coffre(&c, &owner, &agent).await?;
+            c.disconnect().await?;
+        }
         "recuperer" | "recuperer-v04" => {
             if cmd == "recuperer-v04" {
                 SOURCE_ANCIENNE.store(true, std::sync::atomic::Ordering::Relaxed);
             }
-            let e = load_state()?;
             let c = connect().await?;
+            // Gel en une commande : si l'état local manque, est périmé (l'agent a payé depuis) ou si
+            // --sans-etat est demandé (mode survie), le coffre courant est d'abord retrouvé.
+            let local = if args.iter().any(|a| a == "--sans-etat") { None } else { load_state().ok() };
+            let e = match local {
+                Some(e) if cmd == "recuperer-v04" || creation_coffre(&c, &xonly(&owner), &agent, &e).await.is_ok() => e,
+                _ => {
+                    println!("État local absent ou périmé : recherche du coffre courant (mode survie)…");
+                    retrouver_coffre(&c, &owner, &agent).await?
+                }
+            };
             let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
             let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, e.covenant().ok());
             let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);

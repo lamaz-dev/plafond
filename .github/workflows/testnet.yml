@@ -70,7 +70,7 @@ jobs:
                   node tests/juge-kaspa-x402/essai-testnet.mjs "$PWD/cli/target/release/vault-cli" 2>&1 || echo "(code de sortie $?)"
                   echo ""
                   continue ;;
-                adresses|etat|deployer|payer|recharger|recuperer|recuperer-v04|pause|masse|pieces-porte-monnaie|recharger-porte-monnaie|relais-test-diffusion) ;;
+                adresses|etat|deployer|payer|recharger|recuperer|recuperer-v04|retrouver|pause|masse|pieces-porte-monnaie|recharger-porte-monnaie|relais-test-diffusion) ;;
                 *) echo "commande refusée (hors liste blanche) : $cmd"; continue ;;
               esac
               echo "\$ vault-cli $line"
