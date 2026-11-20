@@ -458,3 +458,129 @@ Solde du propriétaire : 995.79 TKAS (7 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-20 13:06 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre déployé : 5 TKAS, budget 2 TKAS, lignée 39f8db380f7984143e80adaeef122e3f90334ee964ba832d20740d69dfa54f5c
+Transaction : https://tn10.kaspa.stream/transactions/98fee03c839e70ab57309ebb575210fd45064df056d89dc0c2a852b7d751ca27
+
+$ vault-cli pause 20
+(pause de 20 s)
+
+$ vault-cli payer 20000000
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Budget disponible : 2 TKAS, paiement demandé : 0.2 TKAS
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/8f1df8f70ea029a15d29a37e91b685e4d54d8dbc0b8232d61ec43b5eb62e021d
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli payer 30000000
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Budget disponible : 1.78805555 TKAS, paiement demandé : 0.3 TKAS
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/e85503772a2ae8358896ecd94a62595c7299e7a16ab079e8a328f90658f4354f
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli tableau
+Connecté au testnet-10 : wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+{
+  "adresse_proprietaire": "kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz",
+  "cours": null,
+  "depense_periode_sompi": 53000000,
+  "exposition_immediate_sompi": 148638888,
+  "historique": [
+    {
+      "destinataire": "203969c8eb54dcf9e166422364e009138202f25464a0dad468607f19e41db367b7ac",
+      "frais_sompi": 1500000,
+      "genre": "achat",
+      "instant_daa": 628448454,
+      "montant_sompi": 30000000,
+      "txid": "e85503772a2ae8358896ecd94a62595c7299e7a16ab079e8a328f90658f4354f"
+    },
+    {
+      "destinataire": "203969c8eb54dcf9e166422364e009138202f25464a0dad468607f19e41db367b7ac",
+      "frais_sompi": 1500000,
+      "genre": "achat",
+      "instant_daa": 628448288,
+      "montant_sompi": 20000000,
+      "txid": "8f1df8f70ea029a15d29a37e91b685e4d54d8dbc0b8232d61ec43b5eb62e021d"
+    }
+  ],
+  "regles": {
+    "budget_garanti_par_periode_sompi": 400000000,
+    "frais_max_par_achat_sompi": 3000000,
+    "periode_daa": 36000,
+    "periode_secondes": 3600,
+    "plafond_par_achat_sompi": 50000000,
+    "reserve_sompi": 200000000
+  },
+  "sante": "normal",
+  "solde_coffre_sompi": 447000000,
+  "solde_proprietaire_sompi": 99076000000,
+  "technique": {
+    "contrat": "AgentBudget v0.5.1 (covenant SilverScript)",
+    "empreinte_source_contrat": "849ca5814d6fd359c806e522fa06479ac2ee43298f1a66e97a7e9b30ec0f8223",
+    "explorateur": "https://tn10.kaspa.stream/transactions/e85503772a2ae8358896ecd94a62595c7299e7a16ab079e8a328f90658f4354f",
+    "lignee": "39f8db380f7984143e80adaeef122e3f90334ee964ba832d20740d69dfa54f5c",
+    "reseau": "Kaspa testnet-10",
+    "sortie_courante": "e85503772a2ae8358896ecd94a62595c7299e7a16ab079e8a328f90658f4354f:1"
+  }
+}
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre récupéré par le propriétaire : https://tn10.kaspa.stream/transactions/cb6ed00ff0e3dad0afca0d36f2eb8c7053c34748f9feb03835905251fd84c6ba (frais 0.06 TKAS, tentative 1)
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli tableau
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+{
+  "adresse_proprietaire": "kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz",
+  "cours": null,
+  "gel": "cb6ed00ff0e3dad0afca0d36f2eb8c7053c34748f9feb03835905251fd84c6ba",
+  "historique": [
+    {
+      "destinataire": "203969c8eb54dcf9e166422364e009138202f25464a0dad468607f19e41db367b7ac",
+      "frais_sompi": 1500000,
+      "genre": "achat",
+      "instant_daa": 628448288,
+      "montant_sompi": 20000000,
+      "txid": "8f1df8f70ea029a15d29a37e91b685e4d54d8dbc0b8232d61ec43b5eb62e021d"
+    },
+    {
+      "destinataire": "203969c8eb54dcf9e166422364e009138202f25464a0dad468607f19e41db367b7ac",
+      "frais_sompi": 1500000,
+      "genre": "achat",
+      "instant_daa": 628448454,
+      "montant_sompi": 30000000,
+      "txid": "e85503772a2ae8358896ecd94a62595c7299e7a16ab079e8a328f90658f4354f"
+    },
+    {
+      "destinataire": null,
+      "frais_sompi": 6000000,
+      "genre": "gel",
+      "instant_daa": null,
+      "montant_sompi": 441000000,
+      "txid": "cb6ed00ff0e3dad0afca0d36f2eb8c7053c34748f9feb03835905251fd84c6ba"
+    }
+  ],
+  "regles": {
+    "budget_garanti_par_periode_sompi": 400000000,
+    "frais_max_par_achat_sompi": 3000000,
+    "periode_daa": 36000,
+    "periode_secondes": 3600,
+    "plafond_par_achat_sompi": 50000000,
+    "reserve_sompi": 200000000
+  },
+  "sante": "gele",
+  "solde_proprietaire_sompi": 99517000000
+}
+
+```
