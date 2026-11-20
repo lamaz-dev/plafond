@@ -621,8 +621,11 @@ async fn main() -> Res<()> {
             println!("Solde du propriétaire : {} TKAS ({} UTXO)", bal as f64 / 1e8, utxos.len());
             match load_state() {
                 Ok(e) => {
-                    let elapsed = (daa.saturating_sub(DAA_MARGIN) as i64 - e.last_daa).clamp(0, REFILL);
-                    let avail = (e.tokens + elapsed * CAPACITY / REFILL).min(CAPACITY);
+                    // v0.5 : recharge comptée depuis l'inscription réelle du coffre (0 s'il n'est pas confirmé).
+                    let avail = match creation_coffre(&c, &xonly(&owner), &agent, &e).await {
+                        Ok(cr) => VaultParams::ours(&owner, &agent, e.tokens, e.last_daa).available(daa.saturating_sub(DAA_MARGIN) as i64, cr),
+                        Err(_) => 0,
+                    };
                     println!(
                         "Coffre : {} TKAS, budget disponible ~{} TKAS (sortie {}:{})",
                         e.valeur as f64 / 1e8,
