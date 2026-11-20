@@ -355,6 +355,13 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 // Vérification de lignée : le coffre courant porte-t-il bien la lignée de son origine ?
                 // Tunnel carte / virement / autres cryptos : aucun prestataire de paiement n'est branché.
                 // La console réelle ne crédite jamais un solde fictif ; seul l'aperçu de démonstration simule l'encaissement.
+                // Dépôt crypto : adresse + QR. Seul Kaspa est réellement encaissable aujourd'hui ;
+                // les autres monnaies demandent un prestataire (phase 2) : refus explicite, jamais d'adresse inventée.
+                ("POST", "/api/depot") => match v["monnaie"].as_str() {
+                    Some("kas") => { let adresse = address(&owner).to_string(); json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "demo": false })) }
+                    Some(m) => json_rep(501, json!({ "erreur": format!("Paiement en {} : disponible en phase 2. Utilisez Kaspa.", m.to_uppercase()) })),
+                    None => json_rep(400, json!({ "erreur": "monnaie manquante" })),
+                },
                 ("POST", "/api/paiement") => json_rep(501, json!({ "erreur": "Paiement par carte, virement ou autres cryptos : disponible en phase 2. Utilisez Kaspa ou les fonds de test." })),
                 ("GET", "/api/verifier-lignee") => {
                     let pk = xonly(&owner);
@@ -452,9 +459,9 @@ mod tests {
             assert!(!PAGE.contains(motif), "ressource externe dans la page : {motif}");
         }
         // choix produit : l'unité du réseau n'apparaît jamais à l'écran (requêtes et devises)
-        // seule exception : le montant à envoyer, dans le mode de dépôt crypto choisi explicitement
+        // seule exception : la liste des cryptos proposées au paiement (Kaspa y figure comme les autres)
         for ligne in PAGE.lines().filter(|l| l.contains("KAS")) {
-            assert!(ligne.contains("a_envoyer"), "unité du réseau hors du mode de dépôt crypto : {ligne}");
+            assert!(ligne.contains("const CRYPTOS"), "unité du réseau hors de la liste des cryptos : {ligne}");
         }
         assert_eq!(PAGE.matches("KAS").count(), 1);
     }
