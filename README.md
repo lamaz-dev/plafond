@@ -4,7 +4,16 @@ Covenant-enforced spending budgets for AI agents on Kaspa L1, written in SilverS
 
 *English · [Français](README.fr.md)*
 
-**Status:** unaudited prototype, testnet-10 only. Do not use with mainnet funds.
+**Status**
+
+- ✅ testnet-10
+- ✅ loss bound proven on paper and verified by automated tests against the real Kaspa script engine ([proof](spec/borne-de-perte.md))
+- ✅ reproducible in one command: `./verify-proof.sh`
+- ✅ automated CI on every push, long fuzzing campaign every week
+- ⚠️ not independently reviewed, not audited
+- ⚠️ no mainnet deployment; do not use with real funds
+
+Security advisory: [v0.4 rate-limit flaw, fixed in v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md).
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Overview
@@ -15,8 +24,8 @@ and software are compromised.
 
 The repository contains two contracts and a demo tool:
 
-- [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.4): a token-bucket budget
-  refilled over DAA score, a per-payment cap, fees counted inside the budget, an optional payee allowlist,
+- [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5): a token-bucket budget
+  refilled from the DAA score at which the network recorded the vault, a per-payment cap, fees counted inside the budget, an optional payee allowlist,
   one KIP-20 lineage per vault, single-input spends with an empty payload, and an owner override.
 - [`contracts/delivery_escrow.sil`](contracts/delivery_escrow.sil) (DeliveryEscrow v0.2): pay on delivery.
   The vendor claims with a verifier's Schnorr signature over `blake2b(requestHash ‖ resultHash)`; without

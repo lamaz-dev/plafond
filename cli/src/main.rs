@@ -40,12 +40,16 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 mod fuzz;
 mod masse;
 #[cfg_attr(not(test), allow(dead_code))]
+mod cle;
 mod relais;
 mod routeur;
 mod sequestre;
 mod x402;
 
 const SOURCE: &str = include_str!("../../contracts/agent_budget.sil");
+/// v0.4, conservée uniquement pour rapatrier les coffres créés avant la v0.5 (R34).
+const SOURCE_V04: &str = include_str!("../../contracts/archive/agent_budget_v0.4.sil");
+pub static SOURCE_ANCIENNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Révision exacte du compilateur SilverScript (doit correspondre à Cargo.toml).
 const SILVERSCRIPT_REV: &str = "443d519e6688fa03d24c69432763b13e6abe4486";
 
@@ -161,9 +165,13 @@ impl VaultParams {
             last_daa,
         }
     }
-    /// Budget disponible à l'instant `now` (même calcul que le contrat).
-    pub fn available(&self, now: i64) -> i64 {
-        let elapsed = (now - self.last_daa).clamp(0, self.refill_period);
+    /// Budget disponible à l'instant `now` (même calcul que le contrat v0.5) : la recharge court
+    /// depuis `creation`, le score DAA du bloc qui a réellement inscrit ce coffre.
+    pub fn available(&self, now: i64, creation: i64) -> i64 {
+        if creation < self.last_daa {
+            return 0; // le contrat refuse tout paiement (coffre non confirmé ou état incohérent)
+        }
+        let elapsed = (now - creation).clamp(0, self.refill_period);
         (self.tokens + elapsed * self.capacity / self.refill_period).min(self.capacity)
     }
 }
@@ -195,6 +203,12 @@ pub fn compile_params(p: &VaultParams) -> Res<SilAbiArtifact> {
 /// Compilation sans garde-fous : ce qu'un attaquant peut toujours faire de son côté.
 /// Réservée aux tests antagonistes ; l'outil et le vendeur passent par `compile_params`.
 pub fn compile_unchecked(p: &VaultParams) -> Res<SilAbiArtifact> {
+    let source = if SOURCE_ANCIENNE.load(std::sync::atomic::Ordering::Relaxed) { SOURCE_V04 } else { SOURCE };
+    compile_source(p, source)
+}
+
+/// Compile les paramètres avec une source donnée (v0.4 archivée pour la démonstration de R34).
+pub fn compile_source(p: &VaultParams, source: &str) -> Res<SilAbiArtifact> {
     match p.asset.as_str() {
         ASSET_KAS => {}
         ASSET_KSD => return Err("monnaie KSD réservée : en attente du standard Kaspa Dollar".into()),
@@ -216,7 +230,7 @@ pub fn compile_unchecked(p: &VaultParams) -> Res<SilAbiArtifact> {
         p.tokens.into(),
         p.last_daa.into(),
     ];
-    Ok(compile_to_sil_abi_artifact_with_options(SOURCE, &args, CompileOptions::default())?)
+    Ok(compile_to_sil_abi_artifact_with_options(source, &args, CompileOptions::default())?)
 }
 
 fn compile(owner: &Keypair, agent: &Keypair, tokens: i64, last_daa: i64) -> Res<SilAbiArtifact> {
@@ -236,8 +250,9 @@ pub fn build_pay(
     amount: i64,
     payee_spk: ScriptPublicKey,
     now: i64,
+    creation: i64,
 ) -> Res<(Transaction, Etat)> {
-    build_pay_pk(&xonly(owner), agent, e, amount, payee_spk, now)
+    build_pay_pk(&xonly(owner), agent, e, amount, payee_spk, now, creation)
 }
 
 /// Paiement de l'agent depuis le coffre, avec la seule clé publique du propriétaire.
@@ -248,14 +263,15 @@ pub fn build_pay_pk(
     amount: i64,
     payee_spk: ScriptPublicKey,
     now: i64,
+    creation: i64,
 ) -> Res<(Transaction, Etat)> {
     let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
-    let available = p.available(now);
+    let available = p.available(now, creation);
     let vault = compile_params(&p)?;
     let cov = e.covenant()?;
     let next_tokens = available - amount - FEE as i64; // les frais sont décomptés du budget
     let next = compile_pk(owner_pk, agent, next_tokens, now)?;
-    let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, Some(cov));
+    let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), creation as u64, false, Some(cov));
     let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
     let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT);
     let rest = e.valeur - amount as u64 - FEE;
@@ -393,6 +409,29 @@ pub async fn connect_silencieux() -> Res<KaspaRpcClient> {
     client.connect(Some(opts)).await?;
     eprintln!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
     Ok(client)
+}
+
+/// v0.5 : score DAA du bloc qui a réellement inscrit le coffre courant (le contrat fait courir
+/// la recharge depuis lui). Erreur si le coffre n'est pas encore confirmé : réessayer.
+pub async fn creation_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<i64> {
+    let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
+    let spk = vault_spk(&compile_params(&p)?);
+    let addr = kaspa_txscript::extract_script_pub_key_address(&spk, Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?;
+    let utxos = c.get_utxos_by_addresses(vec![addr]).await?;
+    utxos
+        .iter()
+        .find(|u| u.outpoint.transaction_id.to_string() == e.txid && u.outpoint.index == e.index)
+        .map(|u| u.utxo_entry.block_daa_score)
+        .filter(|d| *d != u64::MAX)
+        .map(|d| d as i64)
+        .ok_or_else(|| "coffre pas encore confirmé sur la chaîne : réessayer dans quelques secondes".into())
+}
+
+/// Instant et inscription pour un paiement : (now, creation).
+pub async fn instants(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<(i64, i64)> {
+    let creation = creation_coffre(c, owner_pk, agent, e).await?;
+    let now = ((virtual_daa(c).await? - DAA_MARGIN) as i64).max(e.last_daa);
+    Ok((now, creation))
 }
 
 pub async fn virtual_daa(c: &KaspaRpcClient) -> Res<u64> {
@@ -553,13 +592,12 @@ async fn main() -> Res<()> {
             let pm = keypair_from_env("PORTE_MONNAIE_SK")?;
             let e = load_state()?;
             let c = connect_silencieux().await?;
-            let now = ((virtual_daa(&c).await? - DAA_MARGIN) as i64).max(e.last_daa);
-            let elapsed = (now - e.last_daa).min(REFILL);
-            let available = (e.tokens + elapsed * CAPACITY / REFILL).min(CAPACITY);
+            let (now, creation) = instants(&c, &xonly(&owner), &agent, &e).await?;
+            let available = VaultParams::ours(&owner, &agent, e.tokens, e.last_daa).available(now, creation);
             if amount + FEE as i64 > available || amount > MAX_PER_PAYMENT {
                 return Err(format!("coffre : budget épuisé ou plafond dépassé ({available} sompi disponibles)").into());
             }
-            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&pm)), now)?;
+            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&pm)), now, creation)?;
             let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
             eprintln!("Coffre → porte-monnaie : {} TKAS : {}", amount as f64 / 1e8, explorer(&txid.to_string()));
             save_state(&next_state)?;
@@ -647,14 +685,13 @@ async fn main() -> Res<()> {
             let no_check = args.iter().any(|a| a == "--sans-verif");
             let e = load_state()?;
             let c = connect().await?;
-            let now = ((virtual_daa(&c).await? - DAA_MARGIN) as i64).max(e.last_daa);
-            let elapsed = (now - e.last_daa).min(REFILL);
-            let available = (e.tokens + elapsed * CAPACITY / REFILL).min(CAPACITY);
+            let (now, creation) = instants(&c, &xonly(&owner), &agent, &e).await?;
+            let available = VaultParams::ours(&owner, &agent, e.tokens, e.last_daa).available(now, creation);
             println!("Budget disponible : {} TKAS, paiement demandé : {} TKAS", available as f64 / 1e8, amount as f64 / 1e8);
             if !no_check && (amount + FEE as i64 > available || amount > MAX_PER_PAYMENT) {
                 return Err("refusé localement : dépasse le budget ou le plafond par paiement (--sans-verif pour laisser le réseau trancher)".into());
             }
-            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&service)), now)?;
+            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&service)), now, creation)?;
             match c.submit_transaction(garde_diffusion(&tx)?, false).await {
                 Ok(txid) => {
                     println!("Paiement accepté par le réseau : {}", explorer(&txid.to_string()));
@@ -681,10 +718,10 @@ async fn main() -> Res<()> {
             let escrow_spk = pay_to_script_hash_script(&bytecode(&art));
             let e = load_state()?;
             let c = connect().await?;
-            let now = ((virtual_daa(&c).await? - DAA_MARGIN) as i64).max(e.last_daa);
+            let (now, creation) = instants(&c, &xonly(&owner), &agent, &e).await?;
             println!("Commande « {requete} » : {} TKAS mis en séquestre, délai {timeout} blocs (~{} s), contrat de {} octets",
                 amount as f64 / 1e8, timeout / 10, sequestre::script_size(&art));
-            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, escrow_spk, now)?;
+            let (tx, next_state) = build_pay(&owner, &agent, &e, amount, escrow_spk, now, creation)?;
             match c.submit_transaction(garde_diffusion(&tx)?, false).await {
                 Ok(txid) => {
                     println!("Séquestre ouvert depuis le coffre : {}", explorer(&txid.to_string()));
@@ -740,7 +777,10 @@ async fn main() -> Res<()> {
             }
             c.disconnect().await?;
         }
-        "recuperer" => {
+        "recuperer" | "recuperer-v04" => {
+            if cmd == "recuperer-v04" {
+                SOURCE_ANCIENNE.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let e = load_state()?;
             let c = connect().await?;
             let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;

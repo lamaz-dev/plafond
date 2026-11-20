@@ -61,11 +61,25 @@ struct Model {
     tokens: i64,
     last: i64,
     chain: i64,
+    /// score DAA du bloc qui a inscrit le coffre courant (fixé par le réseau, pas par l'agent)
+    created: i64,
+    /// true : contrat v0.4 archivé (démonstration historique de R34)
+    v04: bool,
 }
 
 impl Model {
+    fn neuf(value: u64, tokens: i64, last: i64, chain: i64) -> Self {
+        Model { value, tokens, last, chain, created: last, v04: false }
+    }
     fn available(&self, now: i64) -> i64 {
-        let elapsed = (now - self.last).clamp(0, REFILL);
+        if self.v04 {
+            let elapsed = (now - self.last).clamp(0, REFILL);
+            return (self.tokens + elapsed * CAPACITY / REFILL).min(CAPACITY);
+        }
+        if self.created < self.last {
+            return 0;
+        }
+        let elapsed = (now - self.created).clamp(0, REFILL);
         (self.tokens + elapsed * CAPACITY / REFILL).min(CAPACITY)
     }
 }
@@ -134,6 +148,7 @@ fn model_accepts(m: &Model, amount: i64, fee: i64, now: i64) -> bool {
         && amount <= MAX_PER_PAYMENT
         && fee <= MAX_FEE
         && now >= m.last
+        && (m.v04 || m.created >= m.last)
         && amount + fee <= m.available(now)
         && ((amount + fee) as u64) < m.value
 }
@@ -141,6 +156,8 @@ fn model_accepts(m: &Model, amount: i64, fee: i64, now: i64) -> bool {
 fn vault(owner: &Keypair, agent: &Keypair, tokens: i64, last: i64) -> SilAbiArtifact {
     compile_unchecked(&VaultParams::ours(owner, agent, tokens, last)).unwrap()
 }
+
+const SOURCE_V04_TEST: &str = include_str!("../../contracts/archive/agent_budget_v0.4.sil");
 
 /// Construit le paiement décrit par l'action, l'exécute, et renvoie (accepté, état suivant prédit).
 fn try_pay(m: &Model, amount: i64, fee: i64, back: i64, cheat: &Cheat) -> (bool, bool, Model) {
@@ -150,6 +167,9 @@ fn try_pay(m: &Model, amount: i64, fee: i64, back: i64, cheat: &Cheat) -> (bool,
     let honest = model_accepts(m, amount, fee, now) && matches!(cheat, Cheat::None);
     let next_tokens = m.available(now) - amount - fee;
     let next_last = now;
+    let vault = |o: &Keypair, a: &Keypair, t: i64, l: i64| -> SilAbiArtifact {
+        if m.v04 { compile_source(&VaultParams::ours(o, a, t, l), SOURCE_V04_TEST).unwrap() } else { vault(o, a, t, l) }
+    };
     let cur = vault(&owner, &agent, m.tokens, m.last);
     let next = match cheat {
         Cheat::InflateTokens(d) => vault(&owner, &agent, next_tokens + d, next_last),
@@ -166,7 +186,7 @@ fn try_pay(m: &Model, amount: i64, fee: i64, back: i64, cheat: &Cheat) -> (bool,
         // Une sortie de valeur nulle ou négative n'est pas constructible : le modèle refuse aussi.
         return (false, honest, m.clone());
     }
-    let entry = UtxoEntry::new(m.value, vault_spk(&cur), 0, false, Some(cov));
+    let entry = UtxoEntry::new(m.value, vault_spk(&cur), m.created as u64, false, Some(cov));
     let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_VAULT);
     let binding = if matches!(cheat, Cheat::DropCovenant) { None } else { Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) };
     let pay_binding = if matches!(cheat, Cheat::BindPayment) { Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) } else { None };
@@ -184,7 +204,8 @@ fn try_pay(m: &Model, amount: i64, fee: i64, back: i64, cheat: &Cheat) -> (bool,
     let s = sign(&tx, std::slice::from_ref(&entry), 0, &signer);
     tx.inputs[0].signature_script = vault_sigscript(&cur, "pay", &[s.into(), amount.into(), now.into()]).unwrap();
     let ok = exec(&tx, vec![entry]);
-    let after = Model { value: rest as u64, tokens: next_tokens, last: next_last, chain: m.chain };
+    // Inclus au bloc courant : la continuation est inscrite à `chain`.
+    let after = Model { value: rest as u64, tokens: next_tokens, last: next_last, chain: m.chain, created: m.chain, v04: m.v04 };
     (ok, honest, after)
 }
 
@@ -202,7 +223,8 @@ fn parametres_aberrants_sans_danger_pour_les_fonds() {
         n.tokens = p.capacity.min(p.tokens) - amount - 1_000_000;
         n.last_daa = now;
         let next = compile_unchecked(&n).unwrap();
-        let entry = UtxoEntry::new(500_000_000, vault_spk(&cur), 0, false, Some(cov));
+        // coffre inscrit au moment de son dernier état (v0.5 : la recharge court depuis l'inscription)
+        let entry = UtxoEntry::new(500_000_000, vault_spk(&cur), p.last_daa as u64, false, Some(cov));
         let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_VAULT);
         let outputs = vec![
             TransactionOutput::new(amount as u64, pay_to_address_script(&address(&k(10)))),
@@ -242,7 +264,7 @@ fn parametres_aberrants_sans_danger_pour_les_fonds() {
 /// Contrôle du banc : sans ce test, un harnais qui refuserait tout passerait les propriétés.
 #[test]
 fn banc_de_test_discriminant() {
-    let m = Model { value: 500_000_000, tokens: CAPACITY, last: 1_000_000, chain: 1_000_000 };
+    let m = Model::neuf(500_000_000, CAPACITY, 1_000_000, 1_000_000);
     let (ok, predicted, _) = try_pay(&m, 10_000_000, 1_500_000, 0, &Cheat::None);
     assert!(ok && predicted, "un paiement honnête doit passer");
     for c in [
@@ -273,7 +295,7 @@ proptest! {
     /// Le moteur de script et le modèle de référence décident toujours pareil, et les invariants tiennent.
     #[test]
     fn coffre_moteur_egal_modele(actions in prop::collection::vec(action(), 1..20), value in 30_000_000u64..1_000_000_000) {
-        let mut m = Model { value, tokens: CAPACITY, last: 1_000_000, chain: 1_000_000 };
+        let mut m = Model::neuf(value, CAPACITY, 1_000_000, 1_000_000);
         for a in actions {
             match a {
                 Action::Wait(d) => m.chain += d,
@@ -309,6 +331,112 @@ proptest! {
             prop_assert_eq!(exec(&tx, vec![entry.clone()]), expected);
         }
     }
+}
+
+// ---------------------------------------------------------------- borne de perte
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: cases(256), max_shrink_iters: 500, .. ProptestConfig::default() })]
+
+    /// Théorème de la borne de perte (spec/borne-de-perte.md), éprouvé par le vrai moteur de Kaspa.
+    /// Un agent malveillant et avide (il paie le maximum possible, antidate quand ça l'arrange, et
+    /// tente aussi des tricheries) ne dépense jamais, entre les inclusions RÉELLES de deux paiements
+    /// acceptés i et j, plus que capacity + capacity × (t_j − t_i) / refillPeriod. Avec le réglage « garantie stricte »
+    /// (capacity = budget/2, refillPeriod = 1 jour), cela fait au plus le budget sur toute fenêtre d'un jour.
+    #[test]
+    fn agent_avide_ne_depasse_jamais_la_borne(
+        pas in prop::collection::vec((0i64..REFILL / 2, 0i64..500, any::<bool>(), cheat()), 1..40),
+        value in 200_000_000u64..2_000_000_000,
+    ) {
+        let mut m = Model::neuf(value, CAPACITY, 1_000_000, 1_000_000);
+        let mut acceptes: Vec<(i64, i64)> = vec![]; // (now, dépense totale montant + frais)
+        for (attente, back, avide, triche) in pas {
+            m.chain += attente;
+            let now = (m.chain - back).max(m.last);
+            let fee = MAX_FEE;
+            let dispo = m.available(now) - fee;
+            let amount = if avide { dispo.min(MAX_PER_PAYMENT) } else { (dispo / 3).min(MAX_PER_PAYMENT) };
+            if amount <= 0 {
+                continue;
+            }
+            let (ok, _, after) = try_pay(&m, amount, fee, m.chain - now, &triche);
+            if ok {
+                acceptes.push((m.chain, amount + fee)); // instant RÉEL d'inclusion
+                m = after;
+            }
+        }
+        for i in 0..acceptes.len() {
+            let mut cumul = 0i64;
+            for j in i..acceptes.len() {
+                cumul += acceptes[j].1;
+                let borne = CAPACITY + CAPACITY * (acceptes[j].0 - acceptes[i].0) / REFILL;
+                prop_assert!(cumul <= borne, "dépense {} > borne {} entre les paiements {} et {}", cumul, borne, i, j);
+            }
+        }
+    }
+}
+
+/// Non-régression de l'attaque du « temps mis de côté » (constat du 20 nov. 2026 sur v0.4) :
+/// un coffre plein et inactif. L'agent paie en annonçant nowDaa = lastDaa pour vider la réserve
+/// sans « consommer » le temps écoulé, puis réclame ce temps d'un coup. En v0.4 le moteur laissait
+/// passer 3 × capacity sur une seule période ; en v0.5 la recharge court depuis l'inscription
+/// réelle du coffre, et la dépense reste ≤ capacity + recharge de la période = 2 × capacity.
+fn drainer(m: &mut Model, now: i64) -> i64 {
+    let mut total = 0;
+    loop {
+        let amount = (m.available(now) - MAX_FEE).min(MAX_PER_PAYMENT);
+        if amount <= 0 { return total; }
+        let (ok, _, after) = try_pay(m, amount, MAX_FEE, m.chain - now, &Cheat::None);
+        if !ok { return total; }
+        total += amount + MAX_FEE;
+        *m = after;
+    }
+}
+
+#[test]
+fn attaque_temps_mis_de_cote_fermee() {
+    let l = 1_000_000;
+    let mut m = Model::neuf(10_000_000_000, CAPACITY, l, l + 5 * REFILL);
+    let debut = m.chain;
+    let t = m.last;
+    let a = drainer(&mut m, t);            // antidaté : vider la réserve sans réclamer le temps
+    let t = m.chain;
+    let b = drainer(&mut m, t);            // tenter de réclamer le temps « mis de côté »
+    m.chain += REFILL;
+    let t = m.chain;
+    let c = drainer(&mut m, t);            // une période de recharge normale
+    let total = a + b + c;
+    println!("dépensé sur {} DAA (1 période) : {total} = {:.2} × capacity (a={a}, b={b}, c={c})", m.chain - debut, total as f64 / CAPACITY as f64);
+    assert!(total <= 2 * CAPACITY, "borne glissante violée : {total} > 2 × capacity");
+    assert_eq!(b, 0, "le temps mis de côté ne doit plus rien rapporter");
+}
+
+/// R34, démonstration historique : la même attaque contre le contrat v0.4 archivé fait sortir
+/// 3 × capacity en une seule période. Ce test DOIT continuer à le montrer (preuve de la faille).
+#[test]
+fn faille_v04_demontree() {
+    let l = 1_000_000;
+    let mut m = Model::neuf(10_000_000_000, CAPACITY, l, l + 5 * REFILL);
+    m.v04 = true;
+    let t = m.last;
+    let a = drainer(&mut m, t);
+    let t = m.chain;
+    let b = drainer(&mut m, t);
+    m.chain += REFILL;
+    let t = m.chain;
+    let c = drainer(&mut m, t);
+    let total = a + b + c;
+    println!("v0.4 : dépensé sur une période : {total} = {:.2} × capacity", total as f64 / CAPACITY as f64);
+    assert!(total >= 3 * CAPACITY, "la faille v0.4 n'est plus reproduite : vérifier le banc de test");
+}
+
+/// Coffre non encore confirmé (score DAA inconnu, u64::MAX dans le mempool) : paiement refusé.
+#[test]
+fn coffre_non_confirme_refuse() {
+    let mut m = Model::neuf(1_000_000_000, CAPACITY, 1_000_000, 1_000_100);
+    m.created = u64::MAX as i64; // -1 vu par le script
+    let (ok, _, _) = try_pay(&m, 10_000_000, MAX_FEE, 0, &Cheat::None);
+    assert!(!ok);
 }
 
 // ---------------------------------------------------------------- séquestre

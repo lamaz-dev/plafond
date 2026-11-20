@@ -7,6 +7,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * 1"   # campagne longue de fuzzing, chaque lundi
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,6 +36,10 @@ jobs:
         run: |
           cd cli && ./target/release/vault-cli empreintes > /tmp/empreintes.txt
           diff -u ../contracts/EMPREINTES.txt /tmp/empreintes.txt
+      - name: Preuve de la borne de perte (verify-proof.sh)
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then export FUZZ_CASES=2000; fi
+          ./verify-proof.sh
       - name: Tests de l'outil, dont fuzzing d'état (proptest)
         run: cd cli && cargo test --release --locked
       - uses: actions/setup-node@v4

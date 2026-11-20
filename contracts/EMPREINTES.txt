@@ -1,8 +1,8 @@
 # Empreintes reproductibles (blake2b-256). Régénérer : vault-cli empreintes > contracts/EMPREINTES.txt
 compilateur silverscript : 443d519e6688fa03d24c69432763b13e6abe4486
-source agent_budget.sil : 60dd8dd3bdd2c78dbaa983da1459b9905e77e25ecc0cc10adfe5d39334ecc898
+source agent_budget.sil : 236738853ccd569afc6592f416e4245b97f9629a17f74ce6398eee226b91e9a7
 source delivery_escrow.sil : e9cdb949f1d8214aa58c436c30b3335059dc0476a60f25fb18d005250cd3191a
-AgentBudget (paramètres de référence) : 479 octets, bytecode 7a3a170ad796ba357809083b7c80358f364ff7779952b5fb16dddfc4d9247afe
-  adresse P2SH testnet : kaspatest:ppar59c267tt5dtcpyyrklyqxk8nvnlhw7v49d0mzmwal3xey3a0u5t79f6ct
+AgentBudget (paramètres de référence) : 494 octets, bytecode fe2879e12446e71793fb260c64455e0dfedb39627b09247e71c44cbcacca853b
+  adresse P2SH testnet : kaspatest:prlzs70py3rww9unlvnqcez9tcxlakeevfasjfr7w8zye09ve2znkxj3l76qc
 DeliveryEscrow (paramètres de référence) : 242 octets, bytecode 7aaacff61886eca39196be77626dc10eba0df7d7cf0a4bfc8a5b9856047dbce9
   adresse P2SH testnet : kaspatest:ppa24nlkrzrwegu3j6l8wcndcy8t5r0h6l8s5jlu3fdes4sy0k7wjnalrv7mv

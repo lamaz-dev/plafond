@@ -190,7 +190,8 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
     // e. Solvabilité, avant toute diffusion.
     let price = offer.price as i64;
     let now = (relance!(rpc.get_block_dag_info())?.virtual_daa_score - 100) as i64;
-    let available = params.available(now);
+    // v0.5 : recharge comptée depuis l'inscription réelle du coffre (comme le contrat).
+    let available = params.available(now, vault_utxo.utxo_entry.block_daa_score as i64);
     let spent = vault_utxo.utxo_entry.amount as i64 - tx.outputs[1].value as i64; // prix + frais
     if spent - price > params.max_fee || spent < price {
         return Err("frais de la transaction hors des limites du coffre".into());
@@ -313,12 +314,45 @@ enum Mode {
     FakeVault,
 }
 
+/// Activé par le routeur hors démo : le client HTTP refuse toute adresse interne AU MOMENT DE LA
+/// CONNEXION (et pas seulement lors du contrôle préalable), ce qui ferme le « DNS rebinding ».
+pub static BLOQUER_INTERNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Taille maximale d'une réponse de vendeur lue en mémoire.
+pub const REPONSE_MAX: u64 = 1024 * 1024;
+
+fn client_http() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout_connect(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
+        .resolver(|cible: &str| -> std::io::Result<Vec<std::net::SocketAddr>> {
+            use std::net::ToSocketAddrs;
+            let adresses: Vec<_> = cible.to_socket_addrs()?.collect();
+            if BLOQUER_INTERNE.load(std::sync::atomic::Ordering::Relaxed) && (adresses.is_empty() || adresses.iter().any(|a| crate::routeur::ip_interne(a.ip()))) {
+                return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "adresse interne refusée"));
+            }
+            Ok(adresses)
+        })
+        .build()
+}
+
+/// Lit une réponse en refusant tout ce qui dépasse REPONSE_MAX.
+fn lire_borne(r: ureq::Response) -> Res<String> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    r.into_reader().take(REPONSE_MAX + 1).read_to_end(&mut buf)?;
+    if buf.len() as u64 > REPONSE_MAX {
+        return Err("réponse du vendeur trop volumineuse".into());
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode: Mode, max: Option<i64>) -> Res<Achat> {
     println!("\n[AGENT] GET {url}");
-    let http = ureq::AgentBuilder::new().redirects(0).timeout(Duration::from_secs(90)).build();
+    let http = client_http();
     let challenge = match http.get(url).call() {
         Err(ureq::Error::Status(402, r)) => r.header("PAYMENT-REQUIRED").ok_or("402 sans PAYMENT-REQUIRED")?.to_string(),
-        Ok(r) => return Ok(Achat { statut: r.status(), contenu: r.into_string()?, montant: 0, txid: None, refus: None }),
+        Ok(r) => return Ok(Achat { statut: r.status(), contenu: lire_borne(r)?, montant: 0, txid: None, refus: None }),
         Err(e) => return Err(format!("requête : {e}").into()),
     };
     let pr: Value = serde_json::from_slice(&B64.decode(challenge)?)?;
@@ -329,7 +363,7 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
 
     let e = load_state()?;
     let rpc = handle.block_on(connect())?;
-    let now = (handle.block_on(virtual_daa(&rpc))? - 100) as i64;
+    let (now, creation) = handle.block_on(instants(&rpc, owner_pk, agent, &e))?;
     let mut params = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
     if let Some(m) = max {
         if amount > m {
@@ -337,11 +371,11 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
             return Ok(Achat::refus(amount, format!("prix {amount} sompi supérieur au plafond demandé ({m})")));
         }
     }
-    if mode == Mode::Normal && (amount > params.max_per_payment || amount + FEE as i64 > params.available(now)) {
+    if mode == Mode::Normal && (amount > params.max_per_payment || amount + FEE as i64 > params.available(now, creation)) {
         println!("[AGENT] je refuse moi-même : prix hors du budget de mon coffre");
         return Ok(Achat::refus(amount, "hors du budget du coffre : plafond par paiement ou budget disponible dépassé"));
     }
-    let (tx, next_state) = build_pay_pk(owner_pk, agent, &e, amount, pay_to_address_script(&pay_to), now.max(e.last_daa))?;
+    let (tx, next_state) = build_pay_pk(owner_pk, agent, &e, amount, pay_to_address_script(&pay_to), now, creation)?;
     if mode == Mode::FakeVault {
         params.capacity *= 100; // l'agent ment sur son budget
         params.max_per_payment *= 100;
@@ -368,7 +402,7 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
     match http.get(url).set("PAYMENT-SIGNATURE", &B64.encode(payload.to_string())).call() {
         Ok(r) => {
             let settlement: Value = serde_json::from_slice(&B64.decode(r.header("PAYMENT-RESPONSE").unwrap_or(""))?)?;
-            let content = r.into_string()?;
+            let content = lire_borne(r)?;
             println!("[AGENT] ✅ contenu reçu : « {content} »");
             let tx = settlement["transaction"].as_str().unwrap_or("?").to_string();
             println!("[AGENT] reçu de paiement : transaction {tx}");
@@ -376,7 +410,7 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
             Ok(Achat { statut: 200, contenu: content, montant: amount, txid: Some(tx), refus: None })
         }
         Err(ureq::Error::Status(402, r)) => {
-            let raison = r.into_string().unwrap_or_default();
+            let raison = lire_borne(r).unwrap_or_default();
             println!("[AGENT] ❌ refusé par le vendeur : {raison}");
             Ok(Achat::refus(amount, format!("refusé par le vendeur : {raison}")))
         }

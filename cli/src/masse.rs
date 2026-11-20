@@ -129,7 +129,7 @@ mod tests {
         // Coffre complet tel que déployé (liste blanche de 3 adresses comprise) : paiement de 0,2 TKAS.
         let (o, a) = keys();
         let (e, entry) = etat(FUND, CAPACITY, &o, &a);
-        let (tx, _) = build_pay(&o, &a, &e, 20_000_000, pay_to_address_script(&address(&payee(&o))), 2_000).unwrap();
+        let (tx, _) = build_pay(&o, &a, &e, 20_000_000, pay_to_address_script(&address(&payee(&o))), 2_000, e.last_daa).unwrap();
         let m = masses(&tx, &[entry]).unwrap();
         eprintln!("calcul {} g, transitoire {} g, stockage {} g", m.compute, m.transient, m.storage);
         assert!(m.compute < 20_000, "masse de calcul trop élevée : {}", m.compute);
@@ -145,7 +145,7 @@ mod tests {
         // L'outil refuse avant de signer, avec un message clair.
         let (o, a) = keys();
         let (e, _) = etat(FUND, CAPACITY, &o, &a);
-        let r = build_pay(&o, &a, &e, 100_000, pay_to_address_script(&address(&payee(&o))), 2_000);
+        let r = build_pay(&o, &a, &e, 100_000, pay_to_address_script(&address(&payee(&o))), 2_000, e.last_daa);
         let msg = r.err().expect("doit être refusé").to_string();
         eprintln!("{msg}");
         assert!(msg.contains("KIP-9"));

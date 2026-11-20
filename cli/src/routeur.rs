@@ -52,12 +52,12 @@ fn reponse(statut: u16, corps: Value) -> tiny_http::Response<std::io::Cursor<Vec
 async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
     let e = load_state()?;
     let c = connect().await?;
-    let now = ((virtual_daa(&c).await? - DAA_MARGIN) as i64).max(e.last_daa);
+    let (now, creation) = instants(&c, owner_pk, agent, &e).await?;
     c.disconnect().await?;
     let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
     Ok(json!({
         "coffre": { "txid": e.txid, "index": e.index, "valeur_sompi": e.valeur },
-        "disponible_sompi": p.available(now),
+        "disponible_sompi": p.available(now, creation),
         "capacite_sompi": p.capacity,
         "max_par_paiement_sompi": p.max_per_payment,
         "frais_par_paiement_sompi": FEE,
@@ -70,9 +70,9 @@ async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
 async fn agent_compromis(owner_pk: &[u8], agent: &Keypair, service: &Address, montant: i64) -> Res<Value> {
     let e = load_state()?;
     let c = connect().await?;
-    let now = ((virtual_daa(&c).await? - DAA_MARGIN) as i64).max(e.last_daa);
+    let (now, creation) = instants(&c, owner_pk, agent, &e).await?;
     let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
-    let (tx, next) = build_pay_pk(owner_pk, agent, &e, montant, pay_to_address_script(service), now)?;
+    let (tx, next) = build_pay_pk(owner_pk, agent, &e, montant, pay_to_address_script(service), now, creation)?;
     let r = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
         Ok(txid) => {
             save_state(&next)?;
@@ -83,7 +83,7 @@ async fn agent_compromis(owner_pk: &[u8], agent: &Keypair, service: &Address, mo
             "raison_du_noeud": err.to_string(),
             "montant_sompi": montant,
             "max_par_paiement_sompi": p.max_per_payment,
-            "disponible_sompi": p.available(now),
+            "disponible_sompi": p.available(now, creation),
         }),
     };
     c.disconnect().await?;
@@ -123,8 +123,28 @@ pub fn origine(url: &str) -> Option<(String, String)> {
 /// Adresse interne (boucle locale, réseau privé, lien local, métadonnées cloud, non spécifiée).
 pub fn ip_interne(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local() || v.is_unspecified() || v.is_broadcast() || v.octets()[0] == 0 || (v.octets()[0] == 100 && (v.octets()[1] & 0xC0) == 64),
-        IpAddr::V6(v) => v.is_loopback() || v.is_unspecified() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80 || v.to_ipv4_mapped().is_some_and(|m| ip_interne(IpAddr::V4(m))),
+        IpAddr::V4(v) => {
+            let o = v.octets();
+            v.is_loopback() || v.is_private() || v.is_link_local() || v.is_unspecified() || v.is_broadcast() || v.is_multicast() || v.is_documentation()
+                || o[0] == 0                                   // 0.0.0.0/8
+                || (o[0] == 100 && (o[1] & 0xC0) == 64)        // 100.64.0.0/10 (CGNAT)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)     // 192.0.0.0/24
+                || (o[0] == 198 && (o[1] & 0xFE) == 18)        // 198.18.0.0/15
+                || o[0] >= 240                                 // 240.0.0.0/4 réservé
+        }
+        IpAddr::V6(v) => {
+            let s = v.segments();
+            let v4_dans = |a: u16, b: u16| ip_interne(IpAddr::V4(std::net::Ipv4Addr::new((a >> 8) as u8, a as u8, (b >> 8) as u8, b as u8)));
+            v.is_loopback() || v.is_unspecified() || v.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00                   // fc00::/7 (ULA)
+                || (s[0] & 0xffc0) == 0xfe80                   // fe80::/10 (lien local)
+                || (s[0] & 0xffc0) == 0xfec0                   // fec0::/10 (site local, obsolète)
+                || (s[0] == 0x2001 && s[1] == 0x0db8)          // documentation
+                || v.to_ipv4_mapped().is_some_and(|m| ip_interne(IpAddr::V4(m)))           // ::ffff:a.b.c.d
+                || (s[..6] == [0; 6] && v4_dans(s[6], s[7]))                                // ::a.b.c.d (compatible)
+                || (s[0] == 0x0064 && s[1] == 0xff9b && v4_dans(s[6], s[7]))                 // 64:ff9b::/96 (NAT64)
+                || (s[0] == 0x2002 && v4_dans(s[1], s[2]))                                  // 2002::/16 (6to4)
+        }
     }
 }
 
@@ -232,6 +252,7 @@ pub fn lancer(handle: Handle, cfg: Config) -> Res<()> {
         max_requete: env::var("ROUTEUR_MAX_REQUETE").ok().and_then(|v| v.parse().ok()).unwrap_or(p0.max_per_payment).min(p0.max_per_payment),
         demo,
     };
+    x402::BLOQUER_INTERNE.store(!demo, std::sync::atomic::Ordering::Relaxed);
     if !demo && politique.origines.is_empty() {
         eprintln!("[ROUTEUR] attention : aucun vendeur autorisé configuré (ROUTEUR_ORIGINES) ; seules les adresses publiques en https sont acceptées");
     }
@@ -359,6 +380,17 @@ mod tests {
         }
         for ip in ["8.8.8.8", "104.16.0.1", "2606:4700::1"] {
             assert!(!ip_interne(ip.parse().unwrap()), "{ip} est publique");
+        }
+    }
+
+    #[test]
+    fn adresses_internes_toutes_familles() {
+        for a in ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "198.18.0.1", "240.0.0.1",
+                  "::1", "::", "fc00::1", "fd12::1", "fe80::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:169.254.169.254", "::127.0.0.1", "64:ff9b::a9fe:a9fe", "2002:7f00:1::"] {
+            assert!(ip_interne(a.parse().unwrap()), "{a} devrait être interne");
+        }
+        for a in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "64:ff9b::808:808", "2002:808:808::"] {
+            assert!(!ip_interne(a.parse().unwrap()), "{a} devrait être public");
         }
     }
 

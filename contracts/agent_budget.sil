@@ -1,6 +1,6 @@
 pragma silverscript ^0.1.0;
 
-// AgentBudget v0.4 — coffre-fort de dépenses pour agent IA.
+// AgentBudget v0.5 — coffre-fort de dépenses pour agent IA.
 //
 // Règles garanties par le réseau Kaspa :
 //  - l'agent paie seul, dans la limite :
@@ -9,6 +9,12 @@ pragma silverscript ^0.1.0;
 //          capacity     = budget maximal disponible d'un coup (en sompi)
 //          refillPeriod = durée (en unités DAA, ~10 par seconde) pour recharger tout le budget
 //        Un budget non utilisé ne s'accumule jamais au-delà de `capacity`.
+//        v0.5 : la recharge court depuis l'inscription RÉELLE du coffre sur la chaîne (score DAA
+//        du bloc qui l'a créé, lu par OpTxInputDaaScore, motif repris de SompiVault), et non
+//        depuis l'instant annoncé par l'agent. Cela ferme l'attaque du « temps mis de côté »
+//        (v0.4 : jusqu'à 3 × capacity sur une seule période de recharge).
+//        Borne démontrée (spec/borne-de-perte.md) : sur toute durée réelle D, l'agent dépense au
+//        plus capacity + capacity × D / refillPeriod, et jamais plus que le solde du couloir.
 //      * d'une liste blanche de destinataires, OPTIONNELLE (useAllowlist = 0 : tout destinataire).
 //    Les frais de transaction sont décomptés du budget (impossible de vider le coffre par les frais).
 //  - le coffre est une lignée unique suivie par le réseau (identifiant de covenant, KIP-20) :
@@ -60,8 +66,16 @@ contract AgentBudget(
         require(nowDaa >= lastDaa);
         require(tx.daa >= nowDaa);
 
-        // Recharge du budget, plafonnée.
-        int elapsed = nowDaa - lastDaa;
+        // Inscription réelle de ce coffre (le paiement précédent) : fixée par le réseau, l'agent
+        // ne peut pas la choisir. Un coffre non encore confirmé (score inconnu) est refusé.
+        int inputDaa = OpTxInputDaaScore(this.activeInputIndex);
+        require(inputDaa >= lastDaa);
+
+        // Recharge du budget, plafonnée, pour le seul temps écoulé depuis cette inscription.
+        int elapsed = nowDaa - inputDaa;
+        if (elapsed < 0) {
+            elapsed = 0;
+        }
         if (elapsed > refillPeriod) {
             elapsed = refillPeriod;
         }
