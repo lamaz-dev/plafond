@@ -25,6 +25,12 @@ const MAX_FEE: i64 = 100_000;
 const VAULT_VALUE: u64 = 10_000_000_000; // 100 KAS dans le coffre
 const FEE_T: i64 = 50_000; // frais utilisés dans les tests (décomptés du budget)
 
+thread_local! {
+    /// v0.5 : score DAA auquel le réseau a inscrit le coffre dépensé (la recharge court depuis lui).
+    /// Par défaut 1 000, l'instant `lastDaa` utilisé par la plupart des tests.
+    static INSCRIPTION: std::cell::Cell<u64> = const { std::cell::Cell::new(1_000) };
+}
+
 fn kp(seed: u8) -> Keypair {
     Keypair::from_seckey_slice(secp256k1::SECP256K1, &[seed; 32]).unwrap()
 }
@@ -129,7 +135,7 @@ fn run_full(
         1000,
     );
     let mut tx = Transaction::new(1, vec![input], outputs, lock_time, Default::default(), 0, payload);
-    let utxo = UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(vault)), 0, false, utxo_cov);
+    let utxo = UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(vault)), INSCRIPTION.replace(1_000), false, utxo_cov);
 
     let reused = SigHashReusedValuesUnsync::new();
     let populated = PopulatedTransaction::new(&tx, vec![utxo.clone()]);
@@ -157,6 +163,7 @@ fn cont(value: u64, spk: ScriptPublicKey) -> TransactionOutput {
 
 /// Paiement standard : `amount` vers `payee`, reste au coffre avec l'état attendu.
 fn pay(c: &Ctx, tokens: i64, last: i64, amount: i64, now: i64, next_tokens: i64) -> Result<(), TxScriptError> {
+    INSCRIPTION.set(last as u64); // coffre inscrit à l'instant de son dernier état
     let vault = compile(c, tokens, last);
     let next = compile(c, next_tokens - FEE_T, now); // les frais sont décomptés du budget
     let change = VAULT_VALUE - amount as u64 - FEE_T as u64;
@@ -391,8 +398,8 @@ fn impossible_de_combiner_deux_couloirs() {
         vec![],
     );
     let utxos = vec![
-        UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&lane0)), 0, false, Some(COV_A)),
-        UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&lane1)), 0, false, Some(COV_B)),
+        UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&lane0)), 1_000, false, Some(COV_A)),
+        UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&lane1)), 1_000, false, Some(COV_B)),
     ];
     let reused = SigHashReusedValuesUnsync::new();
     let populated = PopulatedTransaction::new(&tx, utxos.clone());
@@ -504,7 +511,7 @@ fn mesure_budget_de_calcul() {
     let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([7; 32]), 0), vec![], 0, 1000);
     let outputs = vec![out(100_000_000, c.payee.clone()), cont(VAULT_VALUE - 100_000_000 - FEE_T as u64, pay_to_script_hash_script(&bytecode(&next)))];
     let mut tx = Transaction::new(1, vec![input], outputs, 1_000, Default::default(), 0, vec![]);
-    let utxo = UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&vault)), 0, false, Some(COV_A));
+    let utxo = UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&vault)), 1_000, false, Some(COV_A));
     let reused = SigHashReusedValuesUnsync::new();
     let populated = PopulatedTransaction::new(&tx, vec![utxo.clone()]);
     let sighash = calc_schnorr_signature_hash(&populated, 0, SIG_HASH_ALL, &reused);
@@ -589,7 +596,7 @@ fn proprietaire_peut_ajouter_une_entree_pour_payer_les_frais() {
     let mk = |b: u8| TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([b; 32]), 0), vec![], 0, 1000);
     let mut tx = Transaction::new(1, vec![mk(7), mk(8)], vec![out(VAULT_VALUE + 1_000_000, p2pk(&kp(42)))], 0, Default::default(), 0, vec![]);
     let utxos = vec![
-        UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&vault)), 0, false, Some(COV_A)),
+        UtxoEntry::new(VAULT_VALUE, pay_to_script_hash_script(&bytecode(&vault)), 1_000, false, Some(COV_A)),
         UtxoEntry::new(2_000_000, p2pk(&c.owner), 0, false, None),
     ];
     let sighash = {
@@ -604,4 +611,42 @@ fn proprietaire_peut_ajouter_une_entree_pour_payer_les_frais() {
     tx.inputs[0].signature_script = ss;
     let r = execute_input_with_covenants(tx, utxos, 0);
     assert!(r.is_ok(), "{r:?}");
+}
+
+/// v0.5 (R34) : la recharge court depuis l'inscription réelle, pas depuis l'instant annoncé.
+/// Coffre vidé (jetons 0, lastDaa 1 000) mais inscrit bien plus tard : le temps écoulé entre
+/// lastDaa et l'inscription ne rapporte rien.
+#[test]
+fn temps_mis_de_cote_ne_rapporte_rien() {
+    let c = ctx();
+    let inscription = 1_000 + 5 * REFILL;
+    let vault = compile(&c, 0, 1_000);
+    let essai = |amount: i64, now: i64| {
+        INSCRIPTION.set(inscription as u64);
+        let next = compile(&c, 0, now);
+        let change = VAULT_VALUE - amount as u64 - FEE_T as u64;
+        run(&vault, vec![out(amount as u64, c.payee.clone()), cont(change, pay_to_script_hash_script(&bytecode(&next)))], now as u64, &c.agent, "pay", vec![amount.into(), now.into()])
+    };
+    assert!(essai(10_000_000, inscription).is_err(), "aucune recharge au moment de l'inscription");
+    // une période après l'inscription, la recharge complète est à nouveau disponible
+    let now = inscription + REFILL;
+    INSCRIPTION.set(inscription as u64);
+    let next = compile(&c, CAPACITY - 10_000_000 - FEE_T, now);
+    let change = VAULT_VALUE - 10_000_000 - FEE_T as u64;
+    assert!(run(&vault, vec![out(10_000_000, c.payee.clone()), cont(change, pay_to_script_hash_script(&bytecode(&next)))], now as u64, &c.agent, "pay", vec![10_000_000i64.into(), now.into()]).is_ok());
+}
+
+/// v0.5 : coffre non confirmé (score inconnu, u64::MAX dans le mempool) : paiement refusé.
+#[test]
+fn coffre_non_confirme_refuse() {
+    let c = ctx();
+    INSCRIPTION.set(u64::MAX);
+    let r = {
+        let vault = compile(&c, CAPACITY, 1_000);
+        let next = compile(&c, CAPACITY - 10_000_000 - FEE_T, 2_000);
+        let change = VAULT_VALUE - 10_000_000 - FEE_T as u64;
+        run(&vault, vec![out(10_000_000, c.payee.clone()), cont(change, pay_to_script_hash_script(&bytecode(&next)))], 2_000, &c.agent, "pay", vec![10_000_000i64.into(), 2_000i64.into()])
+    };
+    INSCRIPTION.set(1_000);
+    assert!(r.is_err());
 }
