@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trésorerie des agents</title>
+<style>
+:root{
+  --fond:#0E1116;--carte:#161B22;--carte2:#1C232D;--ligne:#2A323D;--texte:#E6EAF0;--doux:#9AA4B2;
+  --accent:#3DDBB8;--ambre:#F0B44C;--danger:#FF7A66;--glace:#8EC9FF;
+  --r:14px;--ombre:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fond);color:var(--texte);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+header{display:flex;align-items:center;gap:16px;padding:18px 28px;border-bottom:1px solid var(--ligne);position:sticky;top:0;background:rgba(14,17,22,.92);backdrop-filter:blur(8px);z-index:5}
+.logo{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:.2px}
+.logo i{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#1C8E78);display:inline-block}
+.sante{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-weight:600;font-size:13px;border:1px solid var(--ligne)}
+.sante b{width:9px;height:9px;border-radius:50%;display:inline-block}
+.s-normal{color:var(--accent)}.s-normal b{background:var(--accent);box-shadow:0 0 0 4px rgba(61,219,184,.15)}
+.s-alerte{color:var(--ambre)}.s-alerte b{background:var(--ambre)}
+.s-epuise{color:var(--danger)}.s-epuise b{background:var(--danger)}
+.s-gele{color:var(--glace)}.s-gele b{background:var(--glace)}
+.s-aucun{color:var(--doux)}.s-aucun b{background:var(--doux)}
+.esp{flex:1}
+select,button,input{font:inherit;color:inherit}
+.sel{background:var(--carte);border:1px solid var(--ligne);border-radius:10px;padding:6px 10px}
+nav{display:flex;gap:4px;padding:12px 28px 0}
+nav button{background:none;border:0;border-bottom:2px solid transparent;padding:10px 14px;color:var(--doux);cursor:pointer;font-weight:550}
+nav button[aria-selected=true]{color:var(--texte);border-color:var(--accent)}
+nav button.urgence{color:var(--danger)}
+main{padding:22px 28px 60px;max-width:1180px}
+.grille{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.carte{background:var(--carte);border:1px solid var(--ligne);border-radius:var(--r);padding:18px;box-shadow:var(--ombre)}
+.etiq{color:var(--doux);font-size:13px;margin-bottom:6px}
+.val{font-size:26px;font-weight:650}
+.sous{color:var(--doux);font-size:13px;margin-top:4px}
+.jauge{height:10px;background:var(--carte2);border-radius:999px;overflow:hidden;margin:12px 0 6px}
+.jauge span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .4s}
+h2{font-size:17px;margin:26px 0 12px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--ligne);font-size:14px}
+th{color:var(--doux);font-weight:550}
+td.n{text-align:right}
+a{color:var(--accent)}
+.vide{color:var(--doux);padding:16px 0}
+.btn{background:var(--accent);color:#06231C;border:0;border-radius:10px;padding:11px 18px;font-weight:650;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:wait}
+.btn.sec{background:var(--carte2);color:var(--texte);border:1px solid var(--ligne)}
+.btn.rouge{background:var(--danger);color:#2A0A05}
+.grand{font-size:18px;padding:18px 28px;border-radius:14px}
+.champ{display:flex;gap:10px;align-items:center;margin:12px 0}
+.champ input{background:var(--carte2);border:1px solid var(--ligne);border-radius:10px;padding:10px 12px;width:200px}
+.note{color:var(--doux);font-size:13px}
+.msg{margin-top:12px;padding:12px 14px;border-radius:10px;font-size:14px}
+.ok{background:rgba(61,219,184,.1);border:1px solid rgba(61,219,184,.35)}
+.err{background:rgba(255,122,102,.1);border:1px solid rgba(255,122,102,.4)}
+details{margin-top:28px}
+summary{cursor:pointer;color:var(--doux)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;font-size:13px}
+dt{color:var(--doux)}dd{margin:0;word-break:break-all}
+.modale{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10}
+.modale.ouverte{display:flex}
+.modale .carte{max-width:460px;width:92%}
+[hidden]{display:none!important}
+@media (max-width:640px){header,nav,main{padding-left:16px;padding-right:16px}.val{font-size:22px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><i aria-hidden="true"></i><span data-t="titre">Trésorerie des agents</span></div>
+  <span id="sante" class="sante s-aucun" role="status"><b></b><span id="sante-txt">…</span></span>
+  <span class="esp"></span>
+  <select id="devise" class="sel" aria-label="Devise">
+    <option value="kas">KAS</option><option value="eur">EUR</option><option value="usd">USD</option>
+  </select>
+  <select id="langue" class="sel" aria-label="Langue">
+    <option value="fr">Français</option><option value="en">English</option>
+  </select>
+</header>
+<nav role="tablist">
+  <button role="tab" data-p="tableau" aria-selected="true" data-t="t_tableau">Tableau de bord</button>
+  <button role="tab" data-p="alimenter" aria-selected="false" data-t="t_alimenter">Alimenter</button>
+  <button role="tab" data-p="historique" aria-selected="false" data-t="t_historique">Historique</button>
+  <button role="tab" data-p="urgence" aria-selected="false" class="urgence" data-t="t_urgence">Arrêt d'urgence</button>
+</nav>
+<main>
+  <div id="erreur" class="msg err" hidden></div>
+
+  <section id="p-tableau">
+    <div id="sans-coffre" class="carte" hidden>
+      <div class="val" data-t="aucun_titre">Aucun budget d'agent actif</div>
+      <p class="note" data-t="aucun_txt">Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.</p>
+      <div id="regles-creer" class="note mono"></div>
+      <p><button id="b-creer" class="btn" data-t="creer">Créer le coffre</button></p>
+      <div id="m-creer"></div>
+    </div>
+    <div id="avec-coffre">
+      <div class="grille">
+        <div class="carte">
+          <div class="etiq" data-t="budget">Budget garanti par période</div>
+          <div class="val mono" id="v-budget">–</div>
+          <div class="jauge" aria-hidden="true"><span id="jauge" style="width:0"></span></div>
+          <div class="sous"><span data-t="depense">Dépensé sur la période</span> : <span class="mono" id="v-depense">–</span></div>
+        </div>
+        <div class="carte">
+          <div class="etiq" data-t="exposition">Exposition maximale immédiate</div>
+          <div class="val mono" id="v-expo">–</div>
+          <div class="sous" data-t="exposition_txt">Ce qu'un agent compromis pourrait dépenser à l'instant, au plus.</div>
+        </div>
+        <div class="carte">
+          <div class="etiq" data-t="solde">Fonds dans le coffre</div>
+          <div class="val mono" id="v-solde">–</div>
+          <div class="sous" data-t="solde_txt">Jamais plus ne peut être perdu.</div>
+        </div>
+        <div class="carte">
+          <div class="etiq" data-t="plafond">Plafond par achat</div>
+          <div class="val mono" id="v-plafond">–</div>
+          <div class="sous"><span data-t="periode">Période</span> : <span id="v-periode">–</span></div>
+        </div>
+      </div>
+      <h2 data-t="derniers">Derniers achats de l'agent</h2>
+      <div class="carte" id="derniers"></div>
+    </div>
+    <p id="cours" class="note"></p>
+  </section>
+
+  <section id="p-alimenter" hidden>
+    <div class="carte">
+      <div class="etiq" data-t="alim_titre">Ajouter des fonds au coffre</div>
+      <p class="note" data-t="alim_txt">Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.</p>
+      <div class="note"><span data-t="votre_solde">Disponible sur votre adresse</span> : <span class="mono" id="v-proprio">–</span></div>
+      <div class="champ"><input id="montant" type="number" min="0.1" step="0.1" inputmode="decimal" aria-label="Montant en KAS"><span>KAS</span>
+        <button id="b-alim" class="btn" data-t="alimenter">Alimenter</button></div>
+      <div class="note"><span data-t="adresse">Adresse à approvisionner (portefeuille KasWare, Kastle…)</span> : <span class="mono" id="v-adresse">–</span></div>
+      <div id="m-alim"></div>
+    </div>
+  </section>
+
+  <section id="p-historique" hidden>
+    <div class="carte"><table>
+      <thead><tr><th data-t="h_type">Opération</th><th class="n" data-t="h_montant">Montant</th><th class="n" data-t="h_frais">Frais</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
+      <tbody id="histo"></tbody>
+    </table></div>
+    <p class="note" data-t="histo_txt">Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.</p>
+  </section>
+
+  <section id="p-urgence" hidden>
+    <div class="carte">
+      <div class="val" data-t="urg_titre">Arrêter immédiatement toutes les dépenses</div>
+      <p class="note" data-t="urg_txt">Tous les fonds du coffre reviennent sur votre adresse de propriétaire. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.</p>
+      <button id="b-geler" class="btn rouge grand" data-t="geler">Geler maintenant</button>
+      <div id="m-geler"></div>
+    </div>
+  </section>
+
+  <details>
+    <summary data-t="archi">Architecture et conformité</summary>
+    <div class="carte" style="margin-top:12px">
+      <p class="note" data-t="archi_txt">La règle de dépense est exécutée hors de votre infrastructure, par le consensus d'un réseau public : ni l'agent, ni son serveur, ni l'éditeur de ce logiciel ne peuvent la contourner. La clé du propriétaire reste chiffrée sur cet ordinateur.</p>
+      <dl id="tech"></dl>
+    </div>
+  </details>
+</main>
+
+<div id="modale" class="modale" role="dialog" aria-modal="true" aria-labelledby="mod-titre">
+  <div class="carte">
+    <div class="val" id="mod-titre"></div>
+    <p class="note" id="mod-txt"></p>
+    <div class="champ"><input id="mod-saisie" autocomplete="off" aria-label="Confirmation"></div>
+    <p><button id="mod-ok" class="btn rouge"></button> <button id="mod-annuler" class="btn sec" data-t="annuler">Annuler</button></p>
+  </div>
+</div>
+
+<script>
+"use strict";
+const T={
+ fr:{titre:"Trésorerie des agents",t_tableau:"Tableau de bord",t_alimenter:"Alimenter",t_historique:"Historique",t_urgence:"Arrêt d'urgence",
+  normal:"Sous contrôle",alerte:"Réserve à plus de 80 % consommée",epuise:"Réserve épuisée : l'agent attend la recharge",gele:"Gelé : dépenses arrêtées",aucun:"Aucun coffre",
+  aucun_titre:"Aucun budget d'agent actif",aucun_txt:"Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.",creer:"Créer le coffre",
+  budget:"Budget garanti par période",depense:"Dépensé sur la période",exposition:"Exposition maximale immédiate",exposition_txt:"Ce qu'un agent compromis pourrait dépenser à l'instant, au plus.",
+  solde:"Fonds dans le coffre",solde_txt:"Jamais plus ne peut être perdu.",plafond:"Plafond par achat",periode:"Période",derniers:"Derniers achats de l'agent",
+  alim_titre:"Ajouter des fonds au coffre",alim_txt:"Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.",
+  votre_solde:"Disponible sur votre adresse",alimenter:"Alimenter",adresse:"Adresse à approvisionner (portefeuille KasWare, Kastle…)",
+  h_type:"Opération",h_montant:"Montant",h_frais:"Frais",h_dest:"Bénéficiaire",h_preuve:"Preuve",histo_txt:"Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.",
+  achat:"Achat de l'agent",ajout:"Ajout de fonds",gel:"Gel",voir:"voir",aucun_achat:"Aucun achat pour l'instant.",
+  urg_titre:"Arrêter immédiatement toutes les dépenses",urg_txt:"Tous les fonds du coffre reviennent sur votre adresse de propriétaire. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.",
+  geler:"Geler maintenant",annuler:"Annuler",archi:"Architecture et conformité",
+  archi_txt:"La règle de dépense est exécutée hors de votre infrastructure, par le consensus d'un réseau public : ni l'agent, ni son serveur, ni l'éditeur de ce logiciel ne peuvent la contourner. La clé du propriétaire reste chiffrée sur cet ordinateur.",
+  conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_creer:"Confirmer la création",conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",
+  en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Lien de session invalide : rouvrez le lien affiché dans le terminal.",
+  cours_note:"Équivalents en devises indicatifs, au cours du KAS ({src}). Sur le réseau de test, les jetons n'ont pas de valeur.",cours_absent:"Cours indisponible : montants affichés en KAS.",
+  regles:"Règles : budget garanti {b} par période de {p}, réserve {r}, plafond par achat {m}.",reseau:"Réseau",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat",heure:"heure",heures:"heures",minutes:"minutes"},
+ en:{titre:"Agent treasury",t_tableau:"Dashboard",t_alimenter:"Fund",t_historique:"History",t_urgence:"Emergency stop",
+  normal:"Under control",alerte:"Over 80% of the reserve used",epuise:"Reserve exhausted: the agent waits for the refill",gele:"Frozen: spending stopped",aucun:"No vault",
+  aucun_titre:"No active agent budget",aucun_txt:"Create a vault: the agent will pay on its own, within the limits below, enforced outside your infrastructure.",creer:"Create the vault",
+  budget:"Guaranteed budget per period",depense:"Spent this period",exposition:"Maximum immediate exposure",exposition_txt:"The most a compromised agent could spend right now.",
+  solde:"Funds in the vault",solde_txt:"Never more can be lost.",plafond:"Cap per purchase",periode:"Period",derniers:"Latest agent purchases",
+  alim_titre:"Add funds to the vault",alim_txt:"Funds come from your owner address. The guaranteed budget per period does not change; only the total reserve grows.",
+  votre_solde:"Available on your address",alimenter:"Fund",adresse:"Address to top up (KasWare, Kastle wallet…)",
+  h_type:"Operation",h_montant:"Amount",h_frais:"Fee",h_dest:"Payee",h_preuve:"Proof",histo_txt:"Each line is rebuilt from the public ledger and verified; it cannot be altered afterwards.",
+  achat:"Agent purchase",ajout:"Funds added",gel:"Freeze",voir:"view",aucun_achat:"No purchase yet.",
+  urg_titre:"Stop all spending immediately",urg_txt:"All vault funds return to your owner address. The agent can no longer spend anything. This does not depend on the agent's server or on any provider.",
+  geler:"Freeze now",annuler:"Cancel",archi:"Architecture and compliance",
+  archi_txt:"The spending rule is enforced outside your infrastructure, by the consensus of a public network: neither the agent, nor its server, nor the publisher of this software can bypass it. The owner key stays encrypted on this computer.",
+  conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_creer:"Confirm creation",conf_creer_txt:"Type CREER to create the vault with these rules.",
+  en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Invalid session link: reopen the link shown in the terminal.",
+  cours_note:"Currency equivalents are indicative, at the KAS rate ({src}). On the test network, tokens have no value.",cours_absent:"Rate unavailable: amounts shown in KAS.",
+  regles:"Rules: guaranteed budget {b} per period of {p}, reserve {r}, cap per purchase {m}.",reseau:"Network",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint",heure:"hour",heures:"hours",minutes:"minutes"}
+};
+const etat={jeton:null,donnees:null,langue:"fr",devise:"kas",page:"tableau"};
+const $=id=>document.getElementById(id);
+const t=k=>(T[etat.langue]||T.fr)[k]??k;
+// Le jeton arrive dans le fragment de l'URL (jamais envoyé au serveur) ; on l'efface de la barre d'adresse.
+(()=>{const m=location.hash.match(/jeton=([0-9a-f]{64})/);if(m){etat.jeton=m[1];history.replaceState(null,"",location.pathname)}})();
+try{etat.langue=localStorage.getItem("langue")||(navigator.language||"fr").slice(0,2);etat.devise=localStorage.getItem("devise")||"kas"}catch(e){}
+if(!T[etat.langue])etat.langue="en";
+
+function montant(sompi){
+  if(sompi==null)return "–";
+  const kas=sompi/1e8,c=etat.donnees&&etat.donnees.cours,loc=etat.langue==="fr"?"fr-FR":"en-US";
+  if(etat.devise!=="kas"&&c){const v=kas*c[etat.devise];return new Intl.NumberFormat(loc,{style:"currency",currency:etat.devise.toUpperCase(),maximumFractionDigits:v<10?4:2}).format(v)}
+  return new Intl.NumberFormat(loc,{maximumFractionDigits:kas<10?4:2}).format(kas)+" KAS";
+}
+function duree(s){if(s>=3600){const h=s/3600;return new Intl.NumberFormat(etat.langue).format(h)+" "+(h>1?t("heures"):t("heure"))}return Math.round(s/60)+" "+t("minutes")}
+function court(h){return h&&h.length>18?h.slice(0,8)+"…"+h.slice(-6):(h||"–")}
+function lien(url,txt){const a=document.createElement("a");a.href=url;a.textContent=txt;a.target="_blank";a.rel="noopener noreferrer";return a}
+function message(cible,ok,texte,url){const d=document.createElement("div");d.className="msg "+(ok?"ok":"err");d.textContent=texte;if(url){d.append(" ",lien(url,t("preuve")))}$(cible).replaceChildren(d)}
+
+async function api(chemin,corps){
+  const r=await fetch(chemin,{method:corps?"POST":"GET",headers:{"X-Jeton":etat.jeton||"","Content-Type":"application/json"},body:corps?JSON.stringify(corps):undefined});
+  const j=await r.json().catch(()=>({erreur:"réponse illisible"}));
+  if(r.status===401)throw new Error(t("jeton"));
+  if(!r.ok)throw new Error(j.erreur||("HTTP "+r.status));
+  return j;
+}
+
+function traduire(){
+  document.documentElement.lang=etat.langue;
+  document.querySelectorAll("[data-t]").forEach(e=>{e.textContent=t(e.dataset.t)});
+  $("langue").value=etat.langue;$("devise").value=etat.devise;
+  if(etat.donnees)afficher();
+}
+
+function afficher(){
+  const d=etat.donnees,r=d.regles;
+  const s=$("sante");s.className="sante s-"+d.sante;$("sante-txt").textContent=t(d.sante);
+  const sans=d.sante==="aucun"||d.sante==="gele";
+  $("sans-coffre").hidden=!sans;$("avec-coffre").hidden=sans;
+  $("regles-creer").textContent=t("regles").replace("{b}",montant(r.budget_garanti_par_periode_sompi)).replace("{p}",duree(r.periode_secondes)).replace("{r}",montant(r.reserve_sompi)).replace("{m}",montant(r.plafond_par_achat_sompi));
+  $("v-budget").textContent=montant(r.budget_garanti_par_periode_sompi);
+  $("v-depense").textContent=montant(d.depense_periode_sompi??0);
+  const pct=Math.min(100,100*(d.depense_periode_sompi||0)/r.budget_garanti_par_periode_sompi);
+  $("jauge").style.width=pct+"%";$("jauge").style.background=pct>80?"var(--ambre)":"var(--accent)";
+  $("v-expo").textContent=montant(d.exposition_immediate_sompi);
+  $("v-solde").textContent=montant(d.solde_coffre_sompi);
+  $("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
+  $("v-periode").textContent=duree(r.periode_secondes);
+  $("v-proprio").textContent=montant(d.solde_proprietaire_sompi);
+  $("v-adresse").textContent=d.adresse_proprietaire||"–";
+  const achats=(d.historique||[]).filter(m=>m.genre==="achat").slice(0,5);
+  const der=$("derniers");der.replaceChildren();
+  if(!achats.length){const p=document.createElement("div");p.className="vide";p.textContent=t("aucun_achat");der.append(p)}
+  else{const tb=document.createElement("table");for(const m of achats){const tr=tb.insertRow();tr.insertCell().textContent=court(m.destinataire);const c=tr.insertCell();c.className="n mono";c.textContent=montant(m.montant_sompi)}der.append(tb)}
+  const h=$("histo");h.replaceChildren();
+  for(const m of d.historique||[]){const tr=h.insertRow();tr.insertCell().textContent=t(m.genre);
+    const a=tr.insertCell();a.className="n mono";a.textContent=montant(m.montant_sompi);
+    const f=tr.insertCell();f.className="n mono";f.textContent=m.frais_sompi?montant(m.frais_sompi):"–";
+    tr.insertCell().textContent=m.destinataire?court(m.destinataire):"–";
+    tr.insertCell().append(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("voir")))}
+  $("cours").textContent=d.cours?t("cours_note").replace("{src}",d.cours.source):t("cours_absent");
+  const tech=$("tech");tech.replaceChildren();
+  const k=d.technique;if(k){for(const [cle,val] of [["reseau",k.reseau],["contrat",k.contrat],["lignee",k.lignee],["sortie",k.sortie_courante],["empreinte",k.empreinte_source_contrat]]){const dt=document.createElement("dt");dt.textContent=t(cle);const dd=document.createElement("dd");dd.className="mono";dd.textContent=val;tech.append(dt,dd)}}
+}
+
+async function charger(){
+  try{etat.donnees=await api("/api/tableau");$("erreur").hidden=true;afficher()}
+  catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}
+}
+
+function confirmer(titre,texte,mot,action){
+  return new Promise(res=>{
+    $("mod-titre").textContent=titre;$("mod-txt").textContent=texte;$("mod-ok").textContent=action;$("mod-saisie").value="";
+    $("modale").classList.add("ouverte");$("mod-saisie").focus();
+    const fin=v=>{$("modale").classList.remove("ouverte");$("mod-ok").onclick=$("mod-annuler").onclick=null;res(v)};
+    $("mod-ok").onclick=()=>fin($("mod-saisie").value.trim().toUpperCase()===mot);
+    $("mod-annuler").onclick=()=>fin(false);
+  });
+}
+
+async function agir(bouton,cible,chemin,corps){
+  bouton.disabled=true;message(cible,true,t("en_cours"));
+  try{const r=await api(chemin,corps);message(cible,true,t("fait"),r.explorateur);await charger()}
+  catch(e){message(cible,false,e.message)}
+  finally{bouton.disabled=false}
+}
+
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
+  etat.page=b.dataset.p;
+  document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",String(x===b)));
+  for(const p of ["tableau","alimenter","historique","urgence"])$("p-"+p).hidden=p!==etat.page;
+});
+$("langue").onchange=e=>{etat.langue=e.target.value;try{localStorage.setItem("langue",etat.langue)}catch(x){}traduire()};
+$("devise").onchange=e=>{etat.devise=e.target.value;try{localStorage.setItem("devise",etat.devise)}catch(x){}if(etat.donnees)afficher()};
+$("b-geler").onclick=async()=>{if(await confirmer(t("conf_gel"),t("conf_gel_txt"),"GELER",t("geler")))agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER"})};
+$("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer")))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
+$("b-alim").onclick=()=>{const v=Math.round(parseFloat($("montant").value.replace(",","."))*1e8);if(!(v>0)){message("m-alim",false,t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("modale").classList.contains("ouverte"))$("mod-annuler").click()});
+
+traduire();
+if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t("jeton")}else{charger();setInterval(charger,20000)}
+</script>
+</body>
+</html>

@@ -1,11 +1,12 @@
 # Une commande par ligne. Pousser ce fichier lance l exécution sur le testnet-10.
-# v0.5.1 après la seconde passe du relecteur (20 nov. 2026)
+# Console du propriétaire : données du tableau de bord sur le vrai réseau (20 nov. 2026)
 deployer
 pause 20
 payer 20000000
 pause 15
 payer 30000000
 pause 15
-recuperer --sans-etat
-pause 10
-etat
+tableau
+recuperer
+pause 15
+tableau

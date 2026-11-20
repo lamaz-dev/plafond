@@ -87,8 +87,28 @@ fn adresse_coffre(owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<(String, Ve
     Ok((addr.to_string(), spk.script().to_vec(), bytecode(&art)))
 }
 
+/// Un mouvement vérifié de la lignée (historique de la console du propriétaire).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Mouvement {
+    pub txid: String,
+    /// « achat » (paiement de l'agent), « ajout » (recharge du propriétaire) ou « gel »
+    pub genre: &'static str,
+    pub montant_sompi: i64,
+    pub frais_sompi: i64,
+    /// instant annoncé (score DAA) pour un achat
+    pub instant_daa: Option<i64>,
+    /// script du destinataire (hex) pour un achat
+    pub destinataire: Option<String>,
+}
+
 /// Suit la lignée depuis l'origine jusqu'au coffre courant. Chaque saut est vérifié.
 pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &Etat) -> Res<(Issue, usize)> {
+    retrouver_avec_historique(src, owner_pk, agent, origine).map(|(i, n, _)| (i, n))
+}
+
+/// Comme `retrouver`, en renvoyant aussi l'historique vérifié des mouvements.
+pub fn retrouver_avec_historique(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &Etat) -> Res<(Issue, usize, Vec<Mouvement>)> {
+    let mut historique = vec![];
     let mut cur = origine.clone();
     for sauts in 0..20_000 {
         let (addr, spk, redeem) = adresse_coffre(owner_pk, agent, &cur)?;
@@ -101,7 +121,7 @@ pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &E
                 Some((t, e.2))
             });
         let Some((tx, sigscript)) = depense else {
-            return Ok((Issue::Courant(cur), sauts));
+            return Ok((Issue::Courant(cur), sauts, historique));
         };
         let p = pousses(&sigscript).ok_or("script de dépense illisible : chaîne non vérifiable")?;
         if p.last().map(|r| r.as_slice()) != Some(redeem.as_slice()) {
@@ -113,6 +133,7 @@ pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &E
         // script) ou recharge du propriétaire (état inchangé). Seul celui qui retombe EXACTEMENT
         // sur un script de sortie est retenu.
         let mut candidats: Vec<(i64, i64)> = vec![(cur.tokens, cur.last_daa)];
+        let mut achat: Option<(i64, i64)> = None;
         if p.len() == 5 {
             let amount = nombre(&p[1]).ok_or("montant illisible")?;
             let now = nombre(&p[2]).ok_or("instant illisible")?;
@@ -120,6 +141,7 @@ pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &E
             let creation = src.daa_bloc(&bloc)?;
             let dispo = VaultParams::pour(owner_pk, agent, cur.tokens, cur.last_daa).available(now, creation);
             candidats.insert(0, (dispo - amount - frais, now));
+            achat = Some((amount, now));
         }
         let mut suivant = None;
         for (tokens, last) in candidats {
@@ -144,9 +166,22 @@ pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &E
                 break;
             }
         }
+        let destinataire = tx.sorties.iter().find(|s| s.0 == 0).map(|s| hex::encode(&s.2));
         match suivant {
-            Some(e) => cur = e,
-            None if p.len() == 3 => return Ok((Issue::Ferme { txid: tx.txid }, sauts + 1)),
+            Some(e) => {
+                historique.push(match achat {
+                    // un paiement de l'agent (5 poussées : signature, montant, instant, aiguillage, script)
+                    Some((m, now)) => {
+                        Mouvement { txid: tx.txid.clone(), genre: "achat", montant_sompi: m, frais_sompi: frais, instant_daa: Some(now), destinataire }
+                    }
+                    _ => Mouvement { txid: tx.txid.clone(), genre: "ajout", montant_sompi: e.valeur as i64 - cur.valeur as i64, frais_sompi: 0, instant_daa: None, destinataire: None },
+                });
+                cur = e
+            }
+            None if p.len() == 3 => {
+                historique.push(Mouvement { txid: tx.txid.clone(), genre: "gel", montant_sompi: total_sorties as i64, frais_sompi: frais, instant_daa: None, destinataire: None });
+                return Ok((Issue::Ferme { txid: tx.txid }, sauts + 1, historique));
+            }
             None => return Err(format!("aucune sortie de {} ne correspond à l'état recalculé : chaîne non vérifiable", tx.txid).into()),
         }
         let _ = spk;

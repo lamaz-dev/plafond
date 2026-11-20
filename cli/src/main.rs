@@ -42,6 +42,7 @@ mod masse;
 #[cfg_attr(not(test), allow(dead_code))]
 mod attaques;
 mod cle;
+mod console;
 mod retrouver;
 mod relais;
 mod routeur;
@@ -526,6 +527,194 @@ pub fn explorer(txid: &str) -> String {
     format!("https://tn10.kaspa.stream/transactions/{txid}")
 }
 
+/// Crée un coffre (paramètres de test actuels) ; renvoie l'identifiant de transaction.
+pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
+        if load_state().is_ok() {
+            return Err("un coffre est déjà déployé".into());
+        }
+        let c = connect().await?;
+        let now = (virtual_daa(&c).await? - DAA_MARGIN) as i64;
+        let utxos = c.get_utxos_by_addresses(vec![address(&owner)]).await?;
+        let mut picked = vec![];
+        let mut total = 0u64;
+        for u in utxos.into_iter().take(20) {
+            total += u.utxo_entry.amount;
+            picked.push(u);
+            if total >= FUND + 2 * FEE + 100_000_000 {
+                break;
+            }
+        }
+        if total < FUND + FEE {
+            return Err(format!("solde insuffisant : {} TKAS, il en faut {}", total as f64 / 1e8, (FUND + FEE) as f64 / 1e8).into());
+        }
+        let vault = compile(&owner, &agent, CAPACITY, now)?;
+        let entries: Vec<UtxoEntry> = picked.iter().map(|u| u.utxo_entry.clone().into()).collect();
+        let inputs: Vec<TransactionInput> =
+            picked.iter().map(|u| TransactionInput::new_with_compute_budget(u.outpoint.clone().into(), vec![], 0, CB_P2PK)).collect();
+        let fee = FEE * picked.len() as u64;
+        // Genèse de la lignée (KIP-20) : identifiant calculé depuis la première entrée et la sortie du coffre.
+        let mut vault_out = TransactionOutput::new(FUND, vault_spk(&vault));
+        let cov = covenant_id(inputs[0].previous_outpoint, std::iter::once((0u32, &vault_out)));
+        vault_out.covenant = Some(CovenantBinding { authorizing_input: 0, covenant_id: cov });
+        let mut outputs = vec![vault_out];
+        let change = total - FUND - fee;
+        if change > 0 {
+            outputs.push(TransactionOutput::new(change, pay_to_address_script(&address(&owner))));
+        }
+        let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+        for i in 0..tx.inputs.len() {
+            let s = sign(&tx, &entries, i, &owner);
+            tx.inputs[i].signature_script = ScriptBuilder::new().add_data(&s)?.drain();
+        }
+        tx.finalize();
+        let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
+        println!("Coffre déployé : {} TKAS, budget {} TKAS, lignée {}", FUND as f64 / 1e8, CAPACITY as f64 / 1e8, cov);
+        println!("Transaction : {}", explorer(&txid.to_string()));
+        let e0 = Etat { txid: txid.to_string(), index: 0, valeur: FUND, tokens: CAPACITY, last_daa: now, cov_id: cov.to_string() };
+        save_state(&e0)?;
+        fs::write(origine_path(), serde_json::to_string_pretty(&e0)?)?; // à garder par le propriétaire
+        c.disconnect().await?;
+        Ok(txid.to_string())
+}
+
+/// Ajoute des fonds au coffre (même lignée, état inchangé).
+pub async fn recharger(owner: &Keypair, agent: &Keypair, add: u64) -> Res<String> {
+        // Le propriétaire ajoute des fonds au coffre en restant dans la même lignée (état inchangé).
+        let e = load_state()?;
+        let cov = e.covenant()?;
+        let c = connect().await?;
+        let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
+        let utxos = c.get_utxos_by_addresses(vec![address(&owner)]).await?;
+        let mut picked = vec![];
+        let mut total = 0u64;
+        for u in utxos.into_iter().take(20) {
+            total += u.utxo_entry.amount;
+            picked.push(u);
+            if total >= add + 3 * FEE {
+                break;
+            }
+        }
+        let fee = FEE * (picked.len() as u64 + 1);
+        if total < add + fee {
+            return Err("solde du propriétaire insuffisant".into());
+        }
+        let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
+        let mut entries = vec![UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, Some(cov))];
+        let mut inputs = vec![TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT)];
+        for u in &picked {
+            entries.push(u.utxo_entry.clone().into());
+            inputs.push(TransactionInput::new_with_compute_budget(u.outpoint.clone().into(), vec![], 0, CB_P2PK));
+        }
+        let new_value = e.valeur + add;
+        let mut outputs = vec![TransactionOutput {
+            value: new_value,
+            script_public_key: vault_spk(&vault),
+            covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }),
+        }];
+        let change = total - add - fee;
+        if change > 0 {
+            outputs.push(TransactionOutput::new(change, pay_to_address_script(&address(&owner))));
+        }
+        let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+        let s0 = sign(&tx, &entries, 0, &owner);
+        let ss0 = vault_sigscript(&vault, "ownerControl", &[s0.into()])?;
+        let mut sigs = vec![ss0];
+        for i in 1..tx.inputs.len() {
+            let s = sign(&tx, &entries, i, &owner);
+            sigs.push(ScriptBuilder::new().add_data(&s)?.drain());
+        }
+        for (i, ss) in sigs.into_iter().enumerate() {
+            tx.inputs[i].signature_script = ss;
+        }
+        tx.finalize();
+        let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
+        println!("Coffre rechargé de {} TKAS (même lignée) : {}", add as f64 / 1e8, explorer(&txid.to_string()));
+        save_state(&Etat { txid: txid.to_string(), index: 0, valeur: new_value, ..e })?;
+        c.disconnect().await?;
+        Ok(txid.to_string())
+}
+
+/// Gel prioritaire du coffre par le propriétaire (voir la commande `recuperer`).
+pub async fn geler(owner: &Keypair, agent: &Keypair, sans_etat: bool, version: u8) -> Res<String> {
+        if version == 4 || version == 5 {
+            SOURCE_ANCIENNE.store(version, std::sync::atomic::Ordering::Relaxed);
+        }
+        let c = connect().await?;
+        // Gel prioritaire : frais toujours au-dessus du plafond de frais de l'agent (maxFee), en
+        // escalade ; si un paiement de l'agent occupe déjà la sortie dans la file d'attente, le gel
+        // le REMPLACE ; si le paiement de l'agent passe quand même, le coffre a bougé : on le
+        // retrouve et on recommence. Avant chaque tentative, le coffre courant est (re)localisé :
+        // état local, sinon mode survie (--sans-etat pour forcer).
+        let frais_gel = (2 * MAX_FEE as u64).max(FEE);
+        let adresse_proprio = address(&owner);
+        let mut gele = false;
+        let mut id_gel = String::new();
+        for tentative in 1..=6u64 {
+            let local = if tentative == 1 && sans_etat { None } else { load_state().ok() };
+            let e = match local {
+                Some(e) if version == 4 || creation_coffre(&c, &xonly(&owner), &agent, &e).await.is_ok() => e,
+                _ => {
+                    println!("État local absent ou périmé : recherche du coffre courant (mode survie)…");
+                    match retrouver_coffre(&c, &xonly(&owner), &agent).await {
+                        Ok(e) => e,
+                        Err(err) if tentative > 1 => {
+                            println!("tentative {tentative} : {err} ; nouvel essai dans 3 s");
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            continue;
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+            };
+            // escalade plafonnée : on garde au moins 0,05 TKAS de sortie (sinon trop lourde, KIP-9)
+            let frais = (frais_gel * tentative).min(e.valeur.saturating_sub(5_000_000)).max(FEE);
+            let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
+            let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, e.covenant().ok());
+            let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
+            let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT);
+            let outputs = vec![TransactionOutput::new(e.valeur.checked_sub(frais).ok_or("coffre trop petit pour les frais du gel")?, pay_to_address_script(&adresse_proprio))];
+            let mut tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
+            let s = sign(&tx, &[entry], 0, &owner);
+            tx.inputs[0].signature_script = vault_sigscript(&vault, "ownerControl", &[s.into()])?;
+            tx.finalize();
+            let id = tx.id();
+            let envoi = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                Ok(_) => Ok(()),
+                Err(err) => {
+                    // sortie déjà prise par un paiement en attente : remplacement (frais plus élevés)
+                    println!("tentative {tentative} : {err} ; remplacement du paiement en attente");
+                    c.submit_transaction_replacement(garde_diffusion(&tx)?).await.map(|_| ()).map_err(|e| e.to_string())
+                }
+            };
+            if let Err(err) = envoi {
+                println!("tentative {tentative} refusée : {err}");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            // confirmation : la sortie du gel apparaît sur l'adresse du propriétaire
+            for _ in 0..20 {
+                let u = c.get_utxos_by_addresses(vec![adresse_proprio.clone()]).await?;
+                if u.iter().any(|x| x.outpoint.transaction_id == id) {
+                    gele = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            if gele {
+                id_gel = id.to_string();
+                println!("Coffre récupéré par le propriétaire : {} (frais {} TKAS, tentative {tentative})", explorer(&id.to_string()), frais as f64 / 1e8);
+                break;
+            }
+            println!("tentative {tentative} : gel non confirmé (l'agent a peut-être payé avant) ; on relocalise le coffre");
+        }
+        if !gele {
+            return Err("gel non confirmé après 6 tentatives : relancer recuperer".into());
+        }
+        let _ = fs::remove_file(state_path());
+        c.disconnect().await?;
+        Ok(id_gel)
+}
+
 #[tokio::main]
 async fn main() -> Res<()> {
     let args: Vec<String> = env::args().collect();
@@ -738,51 +927,7 @@ async fn main() -> Res<()> {
             c.disconnect().await?;
         }
         "deployer" => {
-            if load_state().is_ok() {
-                return Err("un coffre est déjà déployé".into());
-            }
-            let c = connect().await?;
-            let now = (virtual_daa(&c).await? - DAA_MARGIN) as i64;
-            let utxos = c.get_utxos_by_addresses(vec![address(&owner)]).await?;
-            let mut picked = vec![];
-            let mut total = 0u64;
-            for u in utxos.into_iter().take(20) {
-                total += u.utxo_entry.amount;
-                picked.push(u);
-                if total >= FUND + 2 * FEE + 100_000_000 {
-                    break;
-                }
-            }
-            if total < FUND + FEE {
-                return Err(format!("solde insuffisant : {} TKAS, il en faut {}", total as f64 / 1e8, (FUND + FEE) as f64 / 1e8).into());
-            }
-            let vault = compile(&owner, &agent, CAPACITY, now)?;
-            let entries: Vec<UtxoEntry> = picked.iter().map(|u| u.utxo_entry.clone().into()).collect();
-            let inputs: Vec<TransactionInput> =
-                picked.iter().map(|u| TransactionInput::new_with_compute_budget(u.outpoint.clone().into(), vec![], 0, CB_P2PK)).collect();
-            let fee = FEE * picked.len() as u64;
-            // Genèse de la lignée (KIP-20) : identifiant calculé depuis la première entrée et la sortie du coffre.
-            let mut vault_out = TransactionOutput::new(FUND, vault_spk(&vault));
-            let cov = covenant_id(inputs[0].previous_outpoint, std::iter::once((0u32, &vault_out)));
-            vault_out.covenant = Some(CovenantBinding { authorizing_input: 0, covenant_id: cov });
-            let mut outputs = vec![vault_out];
-            let change = total - FUND - fee;
-            if change > 0 {
-                outputs.push(TransactionOutput::new(change, pay_to_address_script(&address(&owner))));
-            }
-            let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
-            for i in 0..tx.inputs.len() {
-                let s = sign(&tx, &entries, i, &owner);
-                tx.inputs[i].signature_script = ScriptBuilder::new().add_data(&s)?.drain();
-            }
-            tx.finalize();
-            let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
-            println!("Coffre déployé : {} TKAS, budget {} TKAS, lignée {}", FUND as f64 / 1e8, CAPACITY as f64 / 1e8, cov);
-            println!("Transaction : {}", explorer(&txid.to_string()));
-            let e0 = Etat { txid: txid.to_string(), index: 0, valeur: FUND, tokens: CAPACITY, last_daa: now, cov_id: cov.to_string() };
-            save_state(&e0)?;
-            fs::write(origine_path(), serde_json::to_string_pretty(&e0)?)?; // à garder par le propriétaire
-            c.disconnect().await?;
+            deployer(&owner, &agent).await?;
         }
         "payer" => {
             let amount: i64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
@@ -889,143 +1034,27 @@ async fn main() -> Res<()> {
                 return Err("au moins une attaque n'a pas eu le résultat attendu".into());
             }
         }
+        "tableau" => {
+            println!("{}", serde_json::to_string_pretty(&console::tableau_json(&owner, &agent).await?)?);
+        }
+        "console" => {
+            // Console du propriétaire, sur SON ordinateur (127.0.0.1) ; la clé est déjà déverrouillée.
+            let h = tokio::runtime::Handle::current();
+            let (o, a) = (owner, agent);
+            tokio::task::spawn_blocking(move || console::lancer(h, o, a).map_err(|e| e.to_string())).await??;
+        }
         "retrouver" => {
             let c = connect().await?;
             retrouver_coffre(&c, &xonly(&owner), &agent).await?;
             c.disconnect().await?;
         }
         "recuperer" | "recuperer-v04" | "recuperer-v05" => {
-            match cmd {
-                "recuperer-v04" => SOURCE_ANCIENNE.store(4, std::sync::atomic::Ordering::Relaxed),
-                "recuperer-v05" => SOURCE_ANCIENNE.store(5, std::sync::atomic::Ordering::Relaxed),
-                _ => {}
-            }
-            let c = connect().await?;
-            // Gel prioritaire : frais toujours au-dessus du plafond de frais de l'agent (maxFee), en
-            // escalade ; si un paiement de l'agent occupe déjà la sortie dans la file d'attente, le gel
-            // le REMPLACE ; si le paiement de l'agent passe quand même, le coffre a bougé : on le
-            // retrouve et on recommence. Avant chaque tentative, le coffre courant est (re)localisé :
-            // état local, sinon mode survie (--sans-etat pour forcer).
-            let frais_gel = (2 * MAX_FEE as u64).max(FEE);
-            let adresse_proprio = address(&owner);
-            let mut gele = false;
-            for tentative in 1..=6u64 {
-                let local = if tentative == 1 && args.iter().any(|a| a == "--sans-etat") { None } else { load_state().ok() };
-                let e = match local {
-                    Some(e) if cmd == "recuperer-v04" || creation_coffre(&c, &xonly(&owner), &agent, &e).await.is_ok() => e,
-                    _ => {
-                        println!("État local absent ou périmé : recherche du coffre courant (mode survie)…");
-                        match retrouver_coffre(&c, &xonly(&owner), &agent).await {
-                            Ok(e) => e,
-                            Err(err) if tentative > 1 => {
-                                println!("tentative {tentative} : {err} ; nouvel essai dans 3 s");
-                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                                continue;
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-                };
-                // escalade plafonnée : on garde au moins 0,05 TKAS de sortie (sinon trop lourde, KIP-9)
-                let frais = (frais_gel * tentative).min(e.valeur.saturating_sub(5_000_000)).max(FEE);
-                let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
-                let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, e.covenant().ok());
-                let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
-                let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT);
-                let outputs = vec![TransactionOutput::new(e.valeur.checked_sub(frais).ok_or("coffre trop petit pour les frais du gel")?, pay_to_address_script(&adresse_proprio))];
-                let mut tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
-                let s = sign(&tx, &[entry], 0, &owner);
-                tx.inputs[0].signature_script = vault_sigscript(&vault, "ownerControl", &[s.into()])?;
-                tx.finalize();
-                let id = tx.id();
-                let envoi = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
-                    Ok(_) => Ok(()),
-                    Err(err) => {
-                        // sortie déjà prise par un paiement en attente : remplacement (frais plus élevés)
-                        println!("tentative {tentative} : {err} ; remplacement du paiement en attente");
-                        c.submit_transaction_replacement(garde_diffusion(&tx)?).await.map(|_| ()).map_err(|e| e.to_string())
-                    }
-                };
-                if let Err(err) = envoi {
-                    println!("tentative {tentative} refusée : {err}");
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    continue;
-                }
-                // confirmation : la sortie du gel apparaît sur l'adresse du propriétaire
-                for _ in 0..20 {
-                    let u = c.get_utxos_by_addresses(vec![adresse_proprio.clone()]).await?;
-                    if u.iter().any(|x| x.outpoint.transaction_id == id) {
-                        gele = true;
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-                if gele {
-                    println!("Coffre récupéré par le propriétaire : {} (frais {} TKAS, tentative {tentative})", explorer(&id.to_string()), frais as f64 / 1e8);
-                    break;
-                }
-                println!("tentative {tentative} : gel non confirmé (l'agent a peut-être payé avant) ; on relocalise le coffre");
-            }
-            if !gele {
-                return Err("gel non confirmé après 6 tentatives : relancer recuperer".into());
-            }
-            let _ = fs::remove_file(state_path());
-            c.disconnect().await?;
+            let version = match cmd { "recuperer-v04" => 4, "recuperer-v05" => 5, _ => 0 };
+            geler(&owner, &agent, args.iter().any(|a| a == "--sans-etat"), version).await?;
         }
         "recharger" => {
-            // Le propriétaire ajoute des fonds au coffre en restant dans la même lignée (état inchangé).
             let add: u64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
-            let e = load_state()?;
-            let cov = e.covenant()?;
-            let c = connect().await?;
-            let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
-            let utxos = c.get_utxos_by_addresses(vec![address(&owner)]).await?;
-            let mut picked = vec![];
-            let mut total = 0u64;
-            for u in utxos.into_iter().take(20) {
-                total += u.utxo_entry.amount;
-                picked.push(u);
-                if total >= add + 3 * FEE {
-                    break;
-                }
-            }
-            let fee = FEE * (picked.len() as u64 + 1);
-            if total < add + fee {
-                return Err("solde du propriétaire insuffisant".into());
-            }
-            let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
-            let mut entries = vec![UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, Some(cov))];
-            let mut inputs = vec![TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT)];
-            for u in &picked {
-                entries.push(u.utxo_entry.clone().into());
-                inputs.push(TransactionInput::new_with_compute_budget(u.outpoint.clone().into(), vec![], 0, CB_P2PK));
-            }
-            let new_value = e.valeur + add;
-            let mut outputs = vec![TransactionOutput {
-                value: new_value,
-                script_public_key: vault_spk(&vault),
-                covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }),
-            }];
-            let change = total - add - fee;
-            if change > 0 {
-                outputs.push(TransactionOutput::new(change, pay_to_address_script(&address(&owner))));
-            }
-            let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
-            let s0 = sign(&tx, &entries, 0, &owner);
-            let ss0 = vault_sigscript(&vault, "ownerControl", &[s0.into()])?;
-            let mut sigs = vec![ss0];
-            for i in 1..tx.inputs.len() {
-                let s = sign(&tx, &entries, i, &owner);
-                sigs.push(ScriptBuilder::new().add_data(&s)?.drain());
-            }
-            for (i, ss) in sigs.into_iter().enumerate() {
-                tx.inputs[i].signature_script = ss;
-            }
-            tx.finalize();
-            let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
-            println!("Coffre rechargé de {} TKAS (même lignée) : {}", add as f64 / 1e8, explorer(&txid.to_string()));
-            save_state(&Etat { txid: txid.to_string(), index: 0, valeur: new_value, ..e })?;
-            c.disconnect().await?;
+            recharger(&owner, &agent, add).await?;
         }
         "demo-x402" => {
             x402::demo(&owner, &agent).await?;
