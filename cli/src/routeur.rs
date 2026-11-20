@@ -142,6 +142,7 @@ pub fn ip_interne(ip: IpAddr) -> bool {
                 || (s[0] == 0x2001 && s[1] == 0x0db8)          // documentation
                 || v.to_ipv4_mapped().is_some_and(|m| ip_interne(IpAddr::V4(m)))           // ::ffff:a.b.c.d
                 || (s[..6] == [0; 6] && v4_dans(s[6], s[7]))                                // ::a.b.c.d (compatible)
+                || (s[..4] == [0; 4] && s[4] == 0xffff && s[5] == 0 && v4_dans(s[6], s[7])) // ::ffff:0:a.b.c.d (SIIT)
                 || (s[0] == 0x0064 && s[1] == 0xff9b && v4_dans(s[6], s[7]))                 // 64:ff9b::/96 (NAT64)
                 || (s[0] == 0x2002 && v4_dans(s[1], s[2]))                                  // 2002::/16 (6to4)
         }
@@ -241,6 +242,11 @@ impl Idempotence {
             }
         }
     }
+}
+
+/// URL sans paramètres ni fragment pour le journal (ils peuvent contenir des secrets).
+fn url_journal(u: &str) -> String {
+    u.split(['?', '#']).next().unwrap_or("").to_string()
 }
 
 fn journaliser(chemin: &str, entree: Value) {
@@ -354,7 +360,7 @@ fn traiter_fetch(handle: &Handle, cfg: &Config, pol: &Politique, debit: &mut Deb
         return (400, json!({ "erreur": "url trop longue" }));
     }
     if let Err(e) = pol.verifier_url(&url) {
-        journaliser(journal, json!({ "evenement": "refus-politique", "url": url, "raison": e }));
+        journaliser(journal, json!({ "evenement": "refus-politique", "url": url_journal(&url), "raison": e }));
         return (403, json!({ "erreur": e }));
     }
     if !debit.autoriser(Instant::now()) {
@@ -365,12 +371,12 @@ fn traiter_fetch(handle: &Handle, cfg: &Config, pol: &Politique, debit: &mut Deb
     match x402::acheter(handle, &cfg.owner_pk, &cfg.agent, &url, Some(max)) {
         Ok(a) => {
             let paiement = a.txid.as_ref().map(|t| json!({ "montant_sompi": a.montant, "transaction": t, "explorateur": explorer(t) }));
-            journaliser(journal, json!({ "evenement": "fetch", "url": url, "statut_vendeur": a.statut, "paiement": paiement.clone(), "refus": a.refus.clone() }));
+            journaliser(journal, json!({ "evenement": "fetch", "url": url_journal(&url), "statut_vendeur": a.statut, "paiement": paiement.clone(), "refus": a.refus.clone() }));
             let statut = if a.refus.is_some() { 402 } else { 200 };
             (statut, json!({ "statut_vendeur": a.statut, "contenu": a.contenu, "paiement": paiement, "refus": a.refus }))
         }
         Err(e) => {
-            journaliser(journal, json!({ "evenement": "erreur", "url": url, "erreur": e.to_string() }));
+            journaliser(journal, json!({ "evenement": "erreur", "url": url_journal(&url), "erreur": e.to_string() }));
             (502, json!({ "erreur": e.to_string() }))
         }
     }
@@ -415,7 +421,7 @@ mod tests {
     #[test]
     fn adresses_internes_toutes_familles() {
         for a in ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "198.18.0.1", "240.0.0.1",
-                  "::1", "::", "fc00::1", "fd12::1", "fe80::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:169.254.169.254", "::127.0.0.1", "64:ff9b::a9fe:a9fe", "2002:7f00:1::"] {
+                  "::1", "::", "fc00::1", "fd12::1", "fe80::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:169.254.169.254", "::ffff:0:127.0.0.1", "::ffff:0:a9fe:a9fe", "::127.0.0.1", "64:ff9b::a9fe:a9fe", "2002:7f00:1::"] {
             assert!(ip_interne(a.parse().unwrap()), "{a} devrait être interne");
         }
         for a in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "64:ff9b::808:808", "2002:808:808::"] {

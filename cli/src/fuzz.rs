@@ -345,17 +345,23 @@ proptest! {
     /// (capacity = budget/2, refillPeriod = 1 jour), cela fait au plus le budget sur toute fenêtre d'un jour.
     #[test]
     fn agent_avide_ne_depasse_jamais_la_borne(
-        pas in prop::collection::vec((0i64..REFILL / 2, 0i64..500, any::<bool>(), cheat()), 1..40),
+        pas in prop::collection::vec((0i64..REFILL / 2, 0i64..500, 0u8..3, cheat(), 1i64..MAX_PER_PAYMENT), 1..40),
         value in 200_000_000u64..2_000_000_000,
     ) {
         let mut m = Model::neuf(value, CAPACITY, 1_000_000, 1_000_000);
         let mut acceptes: Vec<(i64, i64)> = vec![]; // (now, dépense totale montant + frais)
-        for (attente, back, avide, triche) in pas {
+        for (attente, back, mode, triche, exces) in pas {
             m.chain += attente;
             let now = (m.chain - back).max(m.last);
             let fee = MAX_FEE;
             let dispo = m.available(now) - fee;
-            let amount = if avide { dispo.min(MAX_PER_PAYMENT) } else { (dispo / 3).min(MAX_PER_PAYMENT) };
+            // mode 0 : avide ; 1 : modéré ; 2 : au-delà de ce que le modèle autorise (le moteur doit
+            // refuser ; s'il acceptait, la borne ci-dessous le détecterait)
+            let amount = match mode {
+                0 => dispo.min(MAX_PER_PAYMENT),
+                1 => (dispo / 3).min(MAX_PER_PAYMENT),
+                _ => (dispo + exces).min(MAX_PER_PAYMENT + exces),
+            };
             if amount <= 0 {
                 continue;
             }

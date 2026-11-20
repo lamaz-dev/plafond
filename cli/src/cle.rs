@@ -71,6 +71,9 @@ pub fn dechiffrer(f: &Fichier, mot_de_passe: &str) -> Res<Keypair> {
     if f.m_kio < 19 * 1024 || f.t < 2 {
         return Err("paramètres de dérivation trop faibles : fichier refusé".into());
     }
+    if f.m_kio > 1024 * 1024 || f.t > 10 || f.p == 0 || f.p > 8 {
+        return Err("paramètres de dérivation démesurés : fichier refusé (protection mémoire)".into());
+    }
     let cle = deriver(mot_de_passe, &hex::decode(&f.sel)?, f.m_kio, f.t, f.p)?;
     let nonce = hex::decode(&f.nonce)?;
     if nonce.len() != 24 {
@@ -161,6 +164,8 @@ mod tests {
         assert!(dechiffrer(&f, mdp).is_err());
         let mut f = rapide(&k, mdp);
         f.m_kio = 1024; // affaiblissement des paramètres refusé
+        assert!(dechiffrer(&f, mdp).is_err());
+        f.m_kio = 64 * 1024 * 1024; // 64 Gio : refusé avant toute allocation
         assert!(dechiffrer(&f, mdp).is_err());
     }
 

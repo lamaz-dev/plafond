@@ -16,7 +16,8 @@ etape() {
   printf '%-66s ' "$titre"
   if out=$("$@" 2>&1); then echo "PASS"; else echo "FAIL"; echo "$out" | tail -25; echec=1; fi
 }
-teste() { cargo test -q --release "$1" -- --exact "$1"; }
+# Un test introuvable (renommé, supprimé) ne doit JAMAIS passer : on exige « 1 passed ».
+teste() { local out; out=$(cargo test --release "$1" -- --exact "$1" 2>&1) || { echo "$out"; return 1; }; echo "$out" | grep -q "test result: ok. 1 passed" || { echo "$out"; echo "test introuvable ou non exécuté : $1"; return 1; }; }
 
 echo "AgentBudget v0.5 : vérification de la borne de perte (FUZZ_CASES=$FUZZ_CASES)"
 echo

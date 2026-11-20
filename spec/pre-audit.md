@@ -6,7 +6,7 @@
 
 | Élément | Fichier | Taille | Statut |
 |---|---|---|---|
-| Coffre AgentBudget v0.4 | `contracts/agent_budget.sil` | 479 octets (paramètres de référence) | dans le périmètre |
+| Coffre AgentBudget v0.5 | `contracts/agent_budget.sil` | 479 octets (paramètres de référence) | dans le périmètre |
 | Séquestre DeliveryEscrow v0.2 | `contracts/delivery_escrow.sil` | 242 octets | dans le périmètre |
 | Vérification côté vendeur (profil x402) | `cli/src/x402.rs`, fonction `verify_and_settle` | — | dans le périmètre (logiciel hors chaîne) |
 | Outil de démonstration | `cli/src/main.rs` | — | hors périmètre, sauf construction des transactions |

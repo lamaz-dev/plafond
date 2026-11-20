@@ -392,14 +392,14 @@ fn origine_path() -> String {
 
 /// Mode survie : retrouve le coffre courant depuis son origine, via l'indexeur public, en
 /// vérifiant chaque saut, puis confirme auprès du nœud que la sortie existe bien.
-pub async fn retrouver_coffre(c: &KaspaRpcClient, owner: &Keypair, agent: &Keypair) -> Res<Etat> {
+pub async fn retrouver_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair) -> Res<Etat> {
     let origine: Etat = serde_json::from_str(&fs::read_to_string(origine_path()).map_err(|_| "origine du coffre absente : impossible de le retrouver")?)?;
-    let (pk, ag) = (xonly(owner), agent.clone());
+    let (pk, ag) = (owner_pk.to_vec(), agent.clone());
     let (issue, sauts) = tokio::task::spawn_blocking(move || retrouver::retrouver(&retrouver::Rest::depuis_env(), &pk, &ag, &origine).map_err(|e| e.to_string())).await??;
     match issue {
         retrouver::Issue::Ferme { txid } => Err(format!("coffre déjà fermé par le propriétaire (transaction {txid})").into()),
         retrouver::Issue::Courant(e) => {
-            creation_coffre(c, &xonly(owner), agent, &e).await.map_err(|_| "l'indexeur indique un coffre que le nœud ne connaît pas (non confirmé ou indexeur en retard) : réessayer")?;
+            creation_coffre(c, owner_pk, agent, &e).await.map_err(|_| "l'indexeur indique un coffre que le nœud ne connaît pas (non confirmé ou indexeur en retard) : réessayer")?;
             println!("Coffre retrouvé après {sauts} paiement(s), chaque saut vérifié : sortie {}:{}, {} TKAS", e.txid, e.index, e.valeur as f64 / 1e8);
             save_state(&e)?;
             Ok(e)
@@ -452,18 +452,36 @@ pub async fn creation_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypai
     let spk = vault_spk(&compile_params(&p)?);
     let addr = kaspa_txscript::extract_script_pub_key_address(&spk, Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?;
     let utxos = c.get_utxos_by_addresses(vec![addr]).await?;
-    utxos
+    let u = utxos
         .iter()
         .find(|u| u.outpoint.transaction_id.to_string() == e.txid && u.outpoint.index == e.index)
-        .map(|u| u.utxo_entry.block_daa_score)
-        .filter(|d| *d != u64::MAX)
-        .map(|d| d as i64)
-        .ok_or_else(|| "coffre pas encore confirmé sur la chaîne : réessayer dans quelques secondes".into())
+        .ok_or("coffre pas encore confirmé sur la chaîne : réessayer dans quelques secondes")?;
+    // La sortie doit porter la LIGNÉE du coffre (identifiant de covenant attribué par le réseau,
+    // infalsifiable) : un leurre au même script, ou une sortie inventée par un indexeur, ne l'a pas.
+    if u.utxo_entry.covenant_id != Some(e.covenant()?) {
+        return Err("sortie sans la lignée du coffre (leurre ou indexeur menteur) : refusée".into());
+    }
+    if u.utxo_entry.block_daa_score == u64::MAX {
+        return Err("coffre pas encore confirmé sur la chaîne : réessayer dans quelques secondes".into());
+    }
+    Ok(u.utxo_entry.block_daa_score as i64)
 }
 
 /// Instant et inscription pour un paiement : (now, creation).
+/// Si l'état local est périmé (un vendeur a diffusé le paiement sans confirmer, ou l'a retenu), le
+/// coffre courant est retrouvé depuis son origine avant d'abandonner (constat n° 5 du relecteur).
 pub async fn instants(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<(i64, i64)> {
-    let creation = creation_coffre(c, owner_pk, agent, e).await?;
+    let creation = match creation_coffre(c, owner_pk, agent, e).await {
+        Ok(cr) => cr,
+        Err(err) if std::path::Path::new(&origine_path()).exists() => {
+            let courant = retrouver_coffre(c, owner_pk, agent).await.map_err(|e2| format!("{err} ; mode survie : {e2}"))?;
+            if courant != *e {
+                return Err(format!("état local périmé : coffre courant retrouvé ({}:{}) et enregistré, relancer l'opération", courant.txid, courant.index).into());
+            }
+            return Err(err);
+        }
+        Err(err) => return Err(err),
+    };
     let now = ((virtual_daa(c).await? - DAA_MARGIN) as i64).max(e.last_daa);
     Ok((now, creation))
 }
@@ -841,7 +859,7 @@ async fn main() -> Res<()> {
         }
         "retrouver" => {
             let c = connect().await?;
-            retrouver_coffre(&c, &owner, &agent).await?;
+            retrouver_coffre(&c, &xonly(&owner), &agent).await?;
             c.disconnect().await?;
         }
         "recuperer" | "recuperer-v04" => {
@@ -849,28 +867,74 @@ async fn main() -> Res<()> {
                 SOURCE_ANCIENNE.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             let c = connect().await?;
-            // Gel en une commande : si l'état local manque, est périmé (l'agent a payé depuis) ou si
-            // --sans-etat est demandé (mode survie), le coffre courant est d'abord retrouvé.
-            let local = if args.iter().any(|a| a == "--sans-etat") { None } else { load_state().ok() };
-            let e = match local {
-                Some(e) if cmd == "recuperer-v04" || creation_coffre(&c, &xonly(&owner), &agent, &e).await.is_ok() => e,
-                _ => {
-                    println!("État local absent ou périmé : recherche du coffre courant (mode survie)…");
-                    retrouver_coffre(&c, &owner, &agent).await?
+            // Gel prioritaire : frais toujours au-dessus du plafond de frais de l'agent (maxFee), en
+            // escalade ; si un paiement de l'agent occupe déjà la sortie dans la file d'attente, le gel
+            // le REMPLACE ; si le paiement de l'agent passe quand même, le coffre a bougé : on le
+            // retrouve et on recommence. Avant chaque tentative, le coffre courant est (re)localisé :
+            // état local, sinon mode survie (--sans-etat pour forcer).
+            let frais_gel = (2 * MAX_FEE as u64).max(FEE);
+            let adresse_proprio = address(&owner);
+            let mut gele = false;
+            for tentative in 1..=6u64 {
+                let local = if tentative == 1 && args.iter().any(|a| a == "--sans-etat") { None } else { load_state().ok() };
+                let e = match local {
+                    Some(e) if cmd == "recuperer-v04" || creation_coffre(&c, &xonly(&owner), &agent, &e).await.is_ok() => e,
+                    _ => {
+                        println!("État local absent ou périmé : recherche du coffre courant (mode survie)…");
+                        match retrouver_coffre(&c, &xonly(&owner), &agent).await {
+                            Ok(e) => e,
+                            Err(err) if tentative > 1 => {
+                                println!("tentative {tentative} : {err} ; nouvel essai dans 3 s");
+                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                continue;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                };
+                let frais = frais_gel * tentative;
+                let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
+                let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, e.covenant().ok());
+                let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
+                let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT);
+                let outputs = vec![TransactionOutput::new(e.valeur.checked_sub(frais).ok_or("coffre trop petit pour les frais du gel")?, pay_to_address_script(&adresse_proprio))];
+                let mut tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
+                let s = sign(&tx, &[entry], 0, &owner);
+                tx.inputs[0].signature_script = vault_sigscript(&vault, "ownerControl", &[s.into()])?;
+                tx.finalize();
+                let id = tx.id();
+                let envoi = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        // sortie déjà prise par un paiement en attente : remplacement (frais plus élevés)
+                        println!("tentative {tentative} : {err} ; remplacement du paiement en attente");
+                        c.submit_transaction_replacement(garde_diffusion(&tx)?).await.map(|_| ()).map_err(|e| e.to_string())
+                    }
+                };
+                if let Err(err) = envoi {
+                    println!("tentative {tentative} refusée : {err}");
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
                 }
-            };
-            let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
-            let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, e.covenant().ok());
-            let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
-            let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT);
-            let outputs = vec![TransactionOutput::new(e.valeur - FEE, pay_to_address_script(&address(&owner)))];
-            let mut tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
-            let s = sign(&tx, &[entry], 0, &owner);
-            tx.inputs[0].signature_script = vault_sigscript(&vault, "ownerControl", &[s.into()])?;
-            tx.finalize();
-            let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
-            println!("Coffre récupéré par le propriétaire : {}", explorer(&txid.to_string()));
-            fs::remove_file(state_path())?;
+                // confirmation : la sortie du gel apparaît sur l'adresse du propriétaire
+                for _ in 0..20 {
+                    let u = c.get_utxos_by_addresses(vec![adresse_proprio.clone()]).await?;
+                    if u.iter().any(|x| x.outpoint.transaction_id == id) {
+                        gele = true;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                if gele {
+                    println!("Coffre récupéré par le propriétaire : {} (frais {} TKAS, tentative {tentative})", explorer(&id.to_string()), frais as f64 / 1e8);
+                    break;
+                }
+                println!("tentative {tentative} : gel non confirmé (l'agent a peut-être payé avant) ; on relocalise le coffre");
+            }
+            if !gele {
+                return Err("gel non confirmé après 6 tentatives : relancer recuperer".into());
+            }
+            let _ = fs::remove_file(state_path());
             c.disconnect().await?;
         }
         "recharger" => {

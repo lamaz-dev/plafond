@@ -19,8 +19,9 @@ pub struct TxInfo {
     pub bloc_acceptant: Option<String>,
     /// (transaction précédente, index, script de signature)
     pub entrees: Vec<(String, u32, Vec<u8>)>,
-    /// (index, montant, script de sortie : octets du script, avec ou sans version en tête)
-    pub sorties: Vec<(u32, u64, Vec<u8>)>,
+    /// (index, montant, script de sortie : octets du script, avec ou sans version en tête,
+    /// identifiant de lignée annoncé par l'indexeur, s'il le donne)
+    pub sorties: Vec<(u32, u64, Vec<u8>, Option<String>)>,
 }
 
 pub trait Source {
@@ -89,7 +90,7 @@ fn adresse_coffre(owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<(String, Ve
 /// Suit la lignée depuis l'origine jusqu'au coffre courant. Chaque saut est vérifié.
 pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &Etat) -> Res<(Issue, usize)> {
     let mut cur = origine.clone();
-    for sauts in 0..100_000 {
+    for sauts in 0..20_000 {
         let (addr, spk, redeem) = adresse_coffre(owner_pk, agent, &cur)?;
         let depense = src
             .transactions_adresse(&addr)?
@@ -125,7 +126,15 @@ pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &E
             if tokens < 0 { continue; }
             let essai = Etat { txid: tx.txid.clone(), index: 0, valeur: 0, tokens, last_daa: last, cov_id: cur.cov_id.clone() };
             let (_, spk_suivant, _) = adresse_coffre(owner_pk, agent, &essai)?;
-            if let Some(s) = tx.sorties.iter().find(|s| meme_script(&s.2, &spk_suivant)) {
+            // Un agent peut payer un LEURRE portant le même script que la continuation : on
+            // retient la sortie qui porte la lignée du coffre (contrôlée ensuite auprès du nœud).
+            let porte = |s: &(u32, u64, Vec<u8>, Option<String>), strict: bool| match s.3.as_deref() {
+                Some(c) => c.eq_ignore_ascii_case(&cur.cov_id),
+                None => !strict,
+            };
+            let candidates: Vec<&(u32, u64, Vec<u8>, Option<String>)> = tx.sorties.iter().filter(|s| meme_script(&s.2, &spk_suivant)).collect();
+            let choisie = candidates.iter().copied().find(|s| porte(s, true)).or_else(|| candidates.iter().copied().find(|s| porte(s, false)));
+            if let Some(s) = choisie {
                 suivant = Some(Etat { index: s.0, valeur: s.1, ..essai });
                 break;
             }
@@ -174,15 +183,26 @@ fn tx_depuis_json(t: &serde_json::Value) -> TxInfo {
             (i.get("previous_outpoint_hash").and_then(|v| v.as_str()).unwrap_or("").to_string(), idx, hexa(&i["signature_script"]))
         }).collect()).unwrap_or_default(),
         sorties: t.get("outputs").and_then(|v| v.as_array()).map(|a| a.iter().map(|o| {
-            (o["index"].as_u64().unwrap_or(u64::MAX) as u32, o["amount"].as_u64().unwrap_or(0), hexa(&o["script_public_key"]))
+            (o["index"].as_u64().unwrap_or(u64::MAX) as u32, o["amount"].as_u64().unwrap_or(0), hexa(&o["script_public_key"]), o["covenant_id"].as_str().map(String::from))
         }).collect()).unwrap_or_default(),
     }
 }
 
 impl Source for Rest {
     fn transactions_adresse(&self, adresse: &str) -> Res<Vec<TxInfo>> {
-        let v = self.get(&format!("/addresses/{adresse}/full-transactions?limit=500&resolve_previous_outpoints=no"))?;
-        Ok(v.as_array().map(|a| a.iter().map(tx_depuis_json).collect()).unwrap_or_default())
+        // Pagination : quelqu'un peut envoyer de nombreuses transactions à l'adresse pour cacher la
+        // dépense du coffre ; on parcourt jusqu'à 40 pages de 500.
+        let mut tout = vec![];
+        for page in 0..40 {
+            let v = self.get(&format!("/addresses/{adresse}/full-transactions?limit=500&offset={}&resolve_previous_outpoints=no", page * 500))?;
+            let lot: Vec<TxInfo> = v.as_array().map(|a| a.iter().map(tx_depuis_json).collect()).unwrap_or_default();
+            let fin = lot.len() < 500;
+            tout.extend(lot);
+            if fin {
+                return Ok(tout);
+            }
+        }
+        Err("adresse inondée de transactions (plus de 20 000) : retrouver par un nœud".into())
     }
     fn transaction(&self, txid: &str) -> Res<TxInfo> {
         Ok(tx_depuis_json(&self.get(&format!("/transactions/{txid}?inputs=false&outputs=false"))?))
@@ -240,7 +260,7 @@ mod tests {
                 acceptee: true,
                 bloc_acceptant: Some(bloc),
                 entrees: tx.inputs.iter().map(|i| (i.previous_outpoint.transaction_id.to_string(), i.previous_outpoint.index, i.signature_script.clone())).collect(),
-                sorties: tx.outputs.iter().enumerate().map(|(n, o)| (n as u32, o.value, o.script_public_key.script().to_vec())).collect(),
+                sorties: tx.outputs.iter().enumerate().map(|(n, o)| (n as u32, o.value, o.script_public_key.script().to_vec(), o.covenant.map(|b| b.covenant_id.to_string()))).collect(),
             };
             let (addr, _, _) = adresse_coffre(&xonly(owner), agent, &cur).unwrap();
             // une tentative rejetée dans l'historique ne doit pas être suivie
@@ -285,6 +305,40 @@ mod tests {
         let (mut f, origine, _) = chaine(&owner, &agent);
         f.daa.insert("b2".into(), 999_999); // l'indexeur ment sur l'inscription
         assert!(retrouver(&f, &xonly(&owner), &agent, &origine).is_err());
+    }
+
+    /// Constat n° 1 du relecteur : l'agent paie un LEURRE portant exactement le script de la
+    /// continuation (sortie 0, sans lignée). `retrouver` doit suivre la vraie continuation.
+    #[test]
+    fn leurre_au_meme_script_ignore() {
+        let (owner, agent) = (kp(1), kp(2));
+        let mut f = Faux::default();
+        let origine = Etat { txid: "aa".repeat(32), index: 0, valeur: 500_000_000, tokens: 200_000_000, last_daa: 1_000, cov_id: "cc".repeat(32) };
+        f.daa.insert("b0".into(), 1_000);
+        f.par_id.insert(origine.txid.clone(), TxInfo { txid: origine.txid.clone(), acceptee: true, bloc_acceptant: Some("b0".into()), entrees: vec![], sorties: vec![] });
+        // paiement dont le destinataire est le script de la continuation elle-même
+        let now = 51_000;
+        let (essai, suivant) = build_pay(&owner, &agent, &origine, 10_000_000, pay_to_address_script(&address(&payee(&owner))), now, 1_000).unwrap();
+        let spk_cont = essai.outputs[1].script_public_key.clone();
+        let (tx, suivant2) = build_pay(&owner, &agent, &origine, 10_000_000, spk_cont, now, 1_000).unwrap();
+        assert_eq!(suivant.tokens, suivant2.tokens);
+        let id = tx.id().to_string();
+        let info = TxInfo {
+            txid: id.clone(),
+            acceptee: true,
+            bloc_acceptant: Some("b1".into()),
+            entrees: tx.inputs.iter().map(|i| (i.previous_outpoint.transaction_id.to_string(), i.previous_outpoint.index, i.signature_script.clone())).collect(),
+            sorties: tx.outputs.iter().enumerate().map(|(n, o)| (n as u32, o.value, o.script_public_key.script().to_vec(), o.covenant.map(|b| b.covenant_id.to_string()))).collect(),
+        };
+        assert_eq!(info.sorties[0].2, info.sorties[1].2, "le leurre a bien le même script");
+        let (addr, _, _) = adresse_coffre(&xonly(&owner), &agent, &origine).unwrap();
+        f.par_adresse.insert(addr, vec![info.clone()]);
+        f.par_id.insert(id, info);
+        f.daa.insert("b1".into(), now + 10);
+        match retrouver(&f, &xonly(&owner), &agent, &origine).unwrap().0 {
+            Issue::Courant(e) => assert_eq!(e.index, 1, "retrouver a suivi le leurre"),
+            autre => panic!("{autre:?}"),
+        }
     }
 
     #[test]
