@@ -18,7 +18,7 @@ Accusé de réception sous 7 jours. Divulgation publique : 30 jours après le si
 
 ## Scope / Périmètre
 
-Contracts `contracts/agent_budget.sil` (v0.5) and `contracts/delivery_escrow.sil` (v0.2), and the vendor-side
+Contracts `contracts/agent_budget.sil` (v0.5.1) and `contracts/delivery_escrow.sil` (v0.2), and the vendor-side
 verification of the x402 "covenant-budget" profile (`cli/src/x402.rs`). Testnet only: **this code is a
 prototype, not audited, and must not hold mainnet funds.**
 
@@ -60,3 +60,5 @@ le routeur ou le serveur sont compromis :
 
 - [2026-11-20, AgentBudget v0.4: refill time could be "set aside"](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md)
   (fixed in v0.5, found by our own loss-bound test / corrigé en v0.5, trouvé par notre propre test de borne).
+- [2026-11-20, first independent review: survival-mode decoy, owner freeze priority, parameter guards](spec/advisories/2026-11-20-v0.5-relecture-independante.md)
+  (fixed in v0.5.1 / corrigé en v0.5.1).

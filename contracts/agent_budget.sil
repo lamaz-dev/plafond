@@ -1,6 +1,6 @@
 pragma silverscript ^0.1.0;
 
-// AgentBudget v0.5 — coffre-fort de dépenses pour agent IA.
+// AgentBudget v0.5.1 — coffre-fort de dépenses pour agent IA.
 //
 // Règles garanties par le réseau Kaspa :
 //  - l'agent paie seul, dans la limite :
@@ -28,8 +28,10 @@ pragma silverscript ^0.1.0;
 // coffres (« couloirs »), chacun avec son numéro `lane` et sa part du budget. Une transaction
 // ne peut toucher qu'un seul couloir à la fois.
 //
-// Hypothèses : capacity * refillPeriod doit tenir dans un entier 64 bits ;
-// maxPerPayment <= capacity.
+// v0.5.1 (relecture indépendante du 20 nov. 2026) : les paramètres sont vérifiés DANS le script,
+// sans dépendre de l'outil ni d'un comportement non garanti du langage (dépassement arithmétique) :
+// période > 0, capacité > 0, plafond par achat <= capacité, frais >= 0, jetons <= capacité, et
+// capacity * refillPeriod sur 63 bits (vérifié par une division, sans multiplication).
 
 contract AgentBudget(
     pubkey ownerKey,
@@ -54,6 +56,16 @@ contract AgentBudget(
     entry pay(sig agentSig, int amount, int nowDaa) {
         require(checkSig(agentSig, agentKey));
         require(lane >= 0);
+
+        // Paramètres sains (v0.5.1) : une période négative rendrait toute la réserve à chaque
+        // paiement ; un produit capacity * refillPeriod hors 63 bits serait un comportement indéfini.
+        require(refillPeriod > 0);
+        require(capacity > 0);
+        require(capacity <= 9223372036854775807 / refillPeriod);
+        require(maxPerPayment <= capacity);
+        require(maxFee >= 0);
+        require(tokens >= 0);
+        require(tokens <= capacity);
         require(amount > 0);
         require(amount <= maxPerPayment);
 

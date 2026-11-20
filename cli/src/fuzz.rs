@@ -252,13 +252,26 @@ fn parametres_aberrants_sans_danger_pour_les_fonds() {
     assert!(!payer(&p, 10_000_000, 2_000));
     assert!(recuperer(&p));
 
-    // Plafond par paiement supérieur à la capacité : la capacité borne toujours la dépense.
-    let mut p = VaultParams::ours(&owner, &agent, CAPACITY, 1_000);
-    p.max_per_payment = CAPACITY * 2;
-    assert!(check_params(&p).is_err());
-    assert!(payer(&p, 10_000_000, 2_000), "témoin : un paiement normal passe");
-    assert!(!payer(&p, CAPACITY + 1, 2_000));
-    assert!(recuperer(&p));
+    // v0.5.1 : chaque paramètre aberrant est refusé PAR LE SCRIPT (plus seulement par l'outil),
+    // tout paiement échoue, et le propriétaire récupère toujours tout. Témoin : paramètres sains.
+    let sain = VaultParams::ours(&owner, &agent, CAPACITY, 1_000);
+    assert!(payer(&sain, 10_000_000, 2_000), "témoin : un paiement normal passe");
+    let aberrants: Vec<(&str, Box<dyn Fn(&mut VaultParams)>)> = vec![
+        ("plafond par achat > capacité", Box::new(|p| p.max_per_payment = CAPACITY * 2)),
+        ("période négative (relecteur, constat n° 4)", Box::new(|p| p.refill_period = -REFILL)),
+        ("capacité nulle", Box::new(|p| { p.capacity = 0; p.max_per_payment = 0; p.tokens = 0; })),
+        ("capacité × période hors 63 bits", Box::new(|p| { p.capacity = i64::MAX / 2; p.refill_period = 4; p.max_per_payment = 10_000_000; })),
+        ("jetons > capacité", Box::new(|p| p.tokens = CAPACITY * 3)),
+        ("jetons négatifs", Box::new(|p| p.tokens = -1)),
+        ("frais maximum négatifs", Box::new(|p| p.max_fee = -1)),
+    ];
+    for (nom, abimer) in aberrants {
+        let mut p = sain.clone();
+        abimer(&mut p);
+        assert!(!payer(&p, 10_000_000, 2_000), "paramètre aberrant accepté par le script : {nom}");
+        assert!(!payer(&p, 10_000_000, 1_000 + REFILL), "paramètre aberrant accepté par le script (après une période) : {nom}");
+        assert!(recuperer(&p), "le propriétaire doit toujours récupérer : {nom}");
+    }
 }
 
 /// Contrôle du banc : sans ce test, un harnais qui refuserait tout passerait les propriétés.

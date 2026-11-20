@@ -1,10 +1,11 @@
 # Une commande par ligne. Pousser ce fichier lance l exécution sur le testnet-10.
-# Étape 4 (suite) : attaque du temps mis de côté sur le vrai réseau
+# Contrat v0.5.1 et outil corrigé après la relecture indépendante (20 nov. 2026)
 deployer
-# coffre laissé inactif 6 minutes (≈ 3 600 DAA, soit 0,2 TKAS de recharge en v0.4)
-pause 360
-attaque temps
-etat
-recuperer
+pause 20
+payer 20000000
+pause 15
+attaque regles
+# gel prioritaire en mode survie (lignée vérifiée auprès du nœud)
+recuperer --sans-etat
 pause 10
 etat

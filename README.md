@@ -13,7 +13,7 @@ Covenant-enforced spending budgets for AI agents on Kaspa L1, written in SilverS
 - ⚠️ not independently reviewed, not audited
 - ⚠️ no mainnet deployment; do not use with real funds
 
-Security advisory: [v0.4 rate-limit flaw, fixed in v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md).
+Security advisories: [v0.4 rate-limit flaw, fixed in v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md) · [findings of the first independent review, fixed in v0.5.1](spec/advisories/2026-11-20-v0.5-relecture-independante.md).
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Overview
@@ -24,7 +24,7 @@ and software are compromised.
 
 The repository contains two contracts and a demo tool:
 
-- [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5): a token-bucket budget
+- [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5.1): a token-bucket budget
   refilled from the DAA score at which the network recorded the vault, a per-payment cap, fees counted inside the budget, an optional payee allowlist,
   one KIP-20 lineage per vault, single-input spends with an empty payload, and an owner override.
 - [`contracts/delivery_escrow.sil`](contracts/delivery_escrow.sil) (DeliveryEscrow v0.2): pay on delivery.

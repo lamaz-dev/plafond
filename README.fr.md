@@ -15,7 +15,7 @@
 - ⚠️ pas encore relu de façon indépendante, non audité
 - ⚠️ aucun déploiement mainnet : ne pas utiliser avec des fonds réels
 
-Avis de sécurité : [faille de la limite par période en v0.4, corrigée en v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md).
+Avis de sécurité : [faille de la limite par période en v0.4, corrigée en v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md) · [constats de la première relecture indépendante, corrigés en v0.5.1](spec/advisories/2026-11-20-v0.5-relecture-independante.md).
 >
 > ⚠️ **Unaudited prototype, testnet-10 only.** Never deposit real (mainnet) KAS into these contracts.
 > Public review before audit: report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
@@ -35,7 +35,7 @@ testnet/     commandes à exécuter (commande.txt), journal des résultats, éta
 .github/     exécution automatique sur le testnet via GitHub Actions
 ```
 
-## Le coffre AgentBudget (v0.5, prototype non audité)
+## Le coffre AgentBudget (v0.5.1, prototype non audité)
 
 - Plafond par paiement et budget rechargé en continu, plafonné (pas d'accumulation).
 - Liste blanche de destinataires optionnelle.
