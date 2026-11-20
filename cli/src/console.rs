@@ -353,6 +353,9 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     },
                 },
                 // Vérification de lignée : le coffre courant porte-t-il bien la lignée de son origine ?
+                // Tunnel carte / virement / autres cryptos : aucun prestataire de paiement n'est branché.
+                // La console réelle ne crédite jamais un solde fictif ; seul l'aperçu de démonstration simule l'encaissement.
+                ("POST", "/api/paiement") => json_rep(501, json!({ "erreur": "Paiement par carte, virement ou autres cryptos : disponible en phase 2. Utilisez Kaspa ou les fonds de test." })),
                 ("GET", "/api/verifier-lignee") => {
                     let pk = xonly(&owner);
                     match handle.block_on(async {

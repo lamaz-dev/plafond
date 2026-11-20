@@ -78,7 +78,13 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
 .modes{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 10px}
 .modes button{background:var(--carte2);border:1px solid var(--ligne);border-radius:10px;padding:9px 12px;cursor:pointer}
 .modes button[aria-selected=true]{border-color:var(--accent)}
-.modes button:disabled{opacity:.55;cursor:not-allowed}
+.demo{font-size:12px;color:var(--ambre);border:1px solid rgba(240,180,76,.4);border-radius:8px;padding:6px 10px;margin:12px 0;text-align:center}
+.cb{border-radius:14px;padding:18px;background:linear-gradient(135deg,#1F2A36,#0F3B33);border:1px solid var(--ligne);max-width:360px;margin:6px 0 10px}
+.cb-haut{display:flex;justify-content:space-between;font-size:13px;color:var(--doux)}.cb-marques{font-weight:700;letter-spacing:.5px;color:var(--texte)}
+.cb-num{font-size:20px;margin:22px 0 16px;letter-spacing:1px}
+.cb-bas{display:flex;justify-content:space-between;gap:12px;font-size:13px}.cb-bas small{color:var(--doux)}
+.bon{background:var(--carte2);border-radius:10px;padding:14px;margin:6px 0 10px}
+.coche{width:56px;height:56px;border-radius:50%;margin:8px auto 10px;background:rgba(61,219,184,.15);color:var(--accent);font-size:30px;line-height:56px}
 .qr{background:#fff;border-radius:10px;padding:6px;width:160px;height:160px}
 .adr{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:10px}
 .attente{display:inline-flex;align-items:center;gap:8px;margin-top:10px}
@@ -233,16 +239,22 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="rapides" id="f-rapides"></div>
       <div class="champ" id="f-libre-champ" hidden><input id="f-libre" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant libre"><span id="f-libre-devise" class="mono"></span></div>
       <div class="modes" role="tablist">
-        <button role="tab" data-mode="crypto" aria-selected="true" data-t="mode_crypto">Crypto (Kaspa)</button>
-        <button role="tab" data-mode="virement" aria-selected="false" disabled><span data-t="mode_virement">Virement bancaire</span> · <span data-t="bientot">Bientôt disponible (Phase 2)</span></button>
+        <button role="tab" data-mode="carte" aria-selected="true" data-t="mode_carte">Carte bancaire</button>
+        <button role="tab" data-mode="virement" aria-selected="false" data-t="mode_virement">Virement bancaire</button>
+        <button role="tab" data-mode="crypto" aria-selected="false" data-t="mode_crypto">Kaspa</button>
+        <button role="tab" data-mode="cryptos" aria-selected="false" data-t="mode_cryptos">Autres cryptos</button>
         <button role="tab" data-mode="test" aria-selected="false" data-t="mode_test">Fonds de test</button>
       </div>
       <div id="f-crypto">
         <p class="note" data-t="crypto_txt">Envoyez le montant depuis votre portefeuille vers l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.</p>
         <div class="mono note" id="f-a-envoyer"></div>
-        <div class="adr"><img id="f-qr" class="qr" alt="QR" hidden>
-          <div><div class="mono" id="f-adresse" style="word-break:break-all">–</div>
-          <p><button class="btn sec petit" data-copier="f-adresse" data-t="copier">Copier</button> <span class="note" aria-live="polite" data-retour="f-adresse"></span></p></div></div>
+        <div class="mono" id="f-adresse" style="word-break:break-all;margin-top:10px">–</div>
+        <p><button class="btn sec petit" data-copier="f-adresse" data-t="copier">Copier</button> <span class="note" aria-live="polite" data-retour="f-adresse"></span></p>
+      </div>
+      <div id="f-phase2" hidden>
+        <div class="rapides" id="f-choix-crypto" hidden></div>
+        <p class="note" id="f-phase2-txt"></p>
+        <p><button id="f-continuer" class="btn" data-t="continuer" disabled>Continuer vers le paiement →</button> <span class="note" id="f-continuer-note"></span></p>
       </div>
       <div id="f-test" hidden>
         <p class="note" data-t="test_txt">Réseau de test : obtenez des fonds sans valeur auprès du distributeur public, en collant l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.</p>
@@ -250,6 +262,55 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       </div>
       <div class="attente" id="f-attente" aria-live="polite"><span class="point" aria-hidden="true"></span><span data-t="attente">En attente du dépôt…</span></div>
       <p><button id="f-retour" class="lienbtn" data-t="retour">← Revenir à l'ajout au coffre</button></p>
+    </div>
+
+    <!-- Règlement -->
+    <div id="f-n3" hidden>
+      <div class="demo" data-t="demo">Démonstration : aucun paiement réel n'est effectué</div>
+      <div class="chiffres">
+        <div><div class="etiq" data-t="a_regler">Montant à régler</div><div class="mono val" id="p-montant">–</div></div>
+        <div><div class="etiq" data-t="moyen">Moyen de paiement</div><div class="val" id="p-moyen" style="font-size:18px">–</div></div>
+      </div>
+      <div id="p-carte" hidden>
+        <div class="cb"><div class="cb-haut"><span data-t="carte_titre">Carte bancaire</span><span class="cb-marques">VISA · Mastercard</span></div>
+          <div class="mono cb-num">4242 4242 4242 4242</div>
+          <div class="cb-bas"><span><small data-t="titulaire">Titulaire</small><br><span data-t="titulaire_demo">Entreprise de démonstration</span></span><span><small data-t="expire">Expire</small><br><span class="mono">12/29</span></span><span><small>CVC</small><br><span class="mono">•••</span></span></div></div>
+        <p class="note" data-t="carte_note">Formulaire de démonstration : aucune donnée de carte n'est saisie ni transmise.</p>
+      </div>
+      <div id="p-virement" hidden>
+        <dl class="bon">
+          <dt data-t="beneficiaire">Bénéficiaire</dt><dd data-t="benef_val">Trésorerie des agents (démonstration)</dd>
+          <dt>IBAN</dt><dd class="mono">FR76 0000 0000 0000 0000 0000 000</dd>
+          <dt>BIC</dt><dd class="mono">DEMOFRPPXXX</dd>
+          <dt data-t="reference">Référence à indiquer</dt><dd class="mono" id="p-ref">–</dd>
+          <dt data-t="montant_l">Montant</dt><dd class="mono" id="p-vir-montant">–</dd>
+        </dl>
+        <p class="note" data-t="virement_note">Bon de virement de démonstration : coordonnées fictives.</p>
+      </div>
+      <div id="p-crypto" hidden>
+        <dl class="bon">
+          <dt data-t="moyen">Moyen de paiement</dt><dd id="p-cr-moyen">–</dd>
+          <dt data-t="equivalent">Équivalent à régler</dt><dd class="mono" id="p-cr-equiv">–</dd>
+          <dt data-t="frais_l">Frais</dt><dd data-t="frais_inclus">Inclus</dd>
+          <dt data-t="credite_l">Crédité sur votre trésorerie</dt><dd class="mono" id="p-cr-credit">–</dd>
+        </dl>
+        <p class="note" data-t="crypto_recap_note">Récapitulatif de démonstration.</p>
+      </div>
+      <p><button id="f-payer" class="btn" data-t="valider_paiement">Valider le paiement</button> <button id="f-modifier" class="lienbtn" data-t="modifier_moyen">← Modifier</button></p>
+      <div id="f-msg3"></div>
+    </div>
+
+    <!-- Confirmation -->
+    <div id="f-n4" hidden style="text-align:center">
+      <div class="coche" aria-hidden="true">✓</div>
+      <div class="val" data-t="paiement_recu">Paiement reçu</div>
+      <p data-t="paiement_recu_txt">Votre portefeuille est connecté et votre trésorerie est créditée.</p>
+      <div class="chiffres" style="text-align:left">
+        <div><div class="etiq" data-t="credite_l">Crédité sur votre trésorerie</div><div class="mono val" id="c-credit">–</div></div>
+        <div><div class="etiq" data-t="solde_dispo">Solde disponible</div><div class="mono val" id="c-solde">–</div></div>
+      </div>
+      <p><button id="f-vers-coffre" class="btn" data-t="vers_coffre">Retour au coffre →</button></p>
+      <p class="note" id="c-auto"></p>
     </div>
   </div>
 </div>
@@ -282,7 +343,14 @@ const T={
   ajouter_fonds:"Ajouter des fonds",solde_dispo:"Solde disponible",manque:"Manque",ajouter_coffre:"Ajouter au coffre",approvisionner_lien:"Ajouter des fonds à votre trésorerie",
   apercu:"+ {n} ajoutées",apercu_insuffisant:"Trésorerie insuffisante pour ce montant.",mdp:"Mot de passe maître",
   tresorerie_titre:"Ajouter des fonds à votre trésorerie",raison_manque:"Il manque {m} dans votre trésorerie pour ajouter {x} au coffre.",libre:"Montant libre",
-  mode_crypto:"Crypto (Kaspa)",mode_virement:"Virement bancaire",bientot:"Bientôt disponible (Phase 2)",mode_test:"Fonds de test",
+  mode_carte:"Carte bancaire",mode_virement:"Virement bancaire",mode_crypto:"Kaspa",mode_cryptos:"Autres cryptos",
+  txt_carte:"Payez par carte Visa ou Mastercard. Votre trésorerie est créditée dès la validation.",txt_virement:"Réglez par virement SEPA ou international à partir d'un bon de virement. Votre trésorerie est créditée à réception.",txt_cryptos:"Choisissez la monnaie de règlement. Votre trésorerie est créditée dans votre devise dès réception.",
+  continuer:"Continuer vers le paiement →",choisir_montant:"Choisissez un montant ci-dessus.",choisir_crypto:"Choisissez une monnaie de règlement.",
+  reglement:"Règlement",confirmation:"Confirmation",demo:"Démonstration : aucun paiement réel n'est effectué",a_regler:"Montant à régler",moyen:"Moyen de paiement",
+  carte_titre:"Carte bancaire",titulaire:"Titulaire",titulaire_demo:"Entreprise de démonstration",expire:"Expire",carte_note:"Formulaire de démonstration : aucune donnée de carte n'est saisie ni transmise.",
+  beneficiaire:"Bénéficiaire",benef_val:"Trésorerie des agents (démonstration)",reference:"Référence à indiquer",montant_l:"Montant",virement_note:"Bon de virement de démonstration : coordonnées fictives. Les vraies coordonnées seront communiquées à l'ouverture du compte.",
+  equivalent:"Équivalent à régler",frais_l:"Frais",frais_inclus:"Inclus",credite_l:"Crédité sur votre trésorerie",crypto_recap_note:"Récapitulatif de démonstration : l'équivalent est indicatif, au cours du moment.",
+  valider_paiement:"Valider le paiement",modifier_moyen:"← Modifier",paiement_recu:"Paiement reçu",paiement_recu_txt:"Votre portefeuille est connecté et votre trésorerie est créditée.",vers_coffre:"Retour au coffre →",retour_auto:"Retour automatique au coffre dans quelques secondes…",mode_test:"Fonds de test",
   crypto_txt:"Envoyez le montant depuis votre portefeuille vers l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.",
   a_envoyer:"À envoyer : ≈ {k} (pour {m})",test_txt:"Réseau de test : obtenez des fonds sans valeur auprès du distributeur public, en collant l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.",
   copier_adresse:"Copier l'adresse",ouvrir_faucet:"Ouvrir le distributeur de test",attente:"En attente du dépôt…",recu:"Dépôt reçu : +{m}. Votre trésorerie est à jour.",retour:"← Revenir à l'ajout au coffre",
@@ -313,7 +381,14 @@ const T={
   ajouter_fonds:"Add funds",solde_dispo:"Available balance",manque:"Missing",ajouter_coffre:"Add to the vault",approvisionner_lien:"Add funds to your treasury",
   apercu:"+ {n} added",apercu_insuffisant:"Not enough in your treasury for this amount.",mdp:"Master password",
   tresorerie_titre:"Add funds to your treasury",raison_manque:"Your treasury is short of {m} to add {x} to the vault.",libre:"Custom amount",
-  mode_crypto:"Crypto (Kaspa)",mode_virement:"Bank transfer",bientot:"Coming soon (Phase 2)",mode_test:"Test funds",
+  mode_carte:"Bank card",mode_virement:"Bank transfer",mode_crypto:"Kaspa",mode_cryptos:"Other crypto",
+  txt_carte:"Pay by Visa or Mastercard. Your treasury is credited as soon as you confirm.",txt_virement:"Pay by SEPA or international transfer using a payment slip. Your treasury is credited on receipt.",txt_cryptos:"Choose the settlement currency. Your treasury is credited in your currency on receipt.",
+  continuer:"Continue to payment →",choisir_montant:"Choose an amount above.",choisir_crypto:"Choose a settlement currency.",
+  reglement:"Payment",confirmation:"Confirmation",demo:"Demo: no real payment is made",a_regler:"Amount to pay",moyen:"Payment method",
+  carte_titre:"Bank card",titulaire:"Cardholder",titulaire_demo:"Demo company",expire:"Expires",carte_note:"Demo form: no card data is entered or sent.",
+  beneficiaire:"Payee",benef_val:"Agent treasury (demo)",reference:"Reference to include",montant_l:"Amount",virement_note:"Demo payment slip: fictitious details. Real details will be provided when the account is opened.",
+  equivalent:"Equivalent to pay",frais_l:"Fees",frais_inclus:"Included",credite_l:"Credited to your treasury",crypto_recap_note:"Demo summary: the equivalent is indicative, at the current rate.",
+  valider_paiement:"Confirm payment",modifier_moyen:"← Change",paiement_recu:"Payment received",paiement_recu_txt:"Your wallet is connected and your treasury has been credited.",vers_coffre:"Back to the vault →",retour_auto:"Returning to the vault in a few seconds…",mode_test:"Test funds",
   crypto_txt:"Send the amount from your wallet to your treasury address. Arrival is detected automatically.",
   a_envoyer:"To send: ≈ {k} (for {m})",test_txt:"Test network: get valueless funds from the public faucet by pasting your treasury address. Arrival is detected automatically.",
   copier_adresse:"Copy address",ouvrir_faucet:"Open the test faucet",attente:"Waiting for the deposit…",recu:"Deposit received: +{m}. Your treasury is up to date.",retour:"← Back to adding to the vault",
@@ -344,7 +419,14 @@ const T={
   ajouter_fonds:"資金を追加",solde_dispo:"利用可能残高",manque:"不足額",ajouter_coffre:"金庫に追加",approvisionner_lien:"資金管理口座に入金",
   apercu:"+ {n} 追加",apercu_insuffisant:"この金額には資金管理口座の残高が不足しています。",mdp:"マスターパスワード",
   tresorerie_titre:"資金管理口座に入金",raison_manque:"金庫に {x} を追加するには、資金管理口座に {m} が不足しています。",libre:"任意の金額",
-  mode_crypto:"暗号資産（Kaspa）",mode_virement:"銀行振込",bientot:"近日提供（フェーズ2）",mode_test:"テスト用資金",
+  mode_carte:"クレジットカード",mode_virement:"銀行振込",mode_crypto:"Kaspa",mode_cryptos:"その他の暗号資産",
+  txt_carte:"Visa または Mastercard でお支払いください。確定後すぐに資金管理口座に入金されます。",txt_virement:"振込依頼書を使って国内・海外送金でお支払いください。着金後に資金管理口座に入金されます。",txt_cryptos:"決済に使う通貨を選んでください。受領後、お客様の通貨で資金管理口座に入金されます。",
+  continuer:"支払いへ進む →",choisir_montant:"上で金額を選んでください。",choisir_crypto:"決済通貨を選んでください。",
+  reglement:"お支払い",confirmation:"確認",demo:"デモ：実際の支払いは行われません",a_regler:"お支払い金額",moyen:"支払い方法",
+  carte_titre:"クレジットカード",titulaire:"名義人",titulaire_demo:"デモ企業",expire:"有効期限",carte_note:"デモ用フォーム：カード情報の入力・送信は一切行われません。",
+  beneficiaire:"受取人",benef_val:"エージェント資金管理（デモ）",reference:"記載する参照番号",montant_l:"金額",virement_note:"デモ用振込依頼書：架空の口座情報です。実際の情報は口座開設時にお知らせします。",
+  equivalent:"お支払い相当額",frais_l:"手数料",frais_inclus:"込み",credite_l:"資金管理口座への入金額",crypto_recap_note:"デモ用の概要：相当額は現在のレートによる参考値です。",
+  valider_paiement:"支払いを確定",modifier_moyen:"← 変更",paiement_recu:"お支払いを受領しました",paiement_recu_txt:"ウォレットが接続され、資金管理口座に入金されました。",vers_coffre:"金庫に戻る →",retour_auto:"まもなく自動的に金庫に戻ります…",mode_test:"テスト用資金",
   crypto_txt:"ウォレットから資金管理口座のアドレスへ送金してください。着金は自動で検出されます。",
   a_envoyer:"送金額：約 {k}（{m} 分）",test_txt:"テストネットワーク：資金管理口座のアドレスを貼り付けて、公開配布サービスから価値のない資金を受け取れます。着金は自動で検出されます。",
   copier_adresse:"アドレスをコピー",ouvrir_faucet:"テスト用配布サービスを開く",attente:"入金を待っています…",recu:"入金を確認しました：+{m}。資金管理口座は最新です。",retour:"← 金庫への追加に戻る",
@@ -491,11 +573,12 @@ function ouvrirFonds(){
   $("f-mdp-champ").hidden=!(etat.donnees&&etat.donnees.mot_de_passe_requis);
   niveau(1);$("m-fonds").classList.add("ouverte");$("f-montant").focus();majFonds();
 }
-function fermerFonds(){$("m-fonds").classList.remove("ouverte");$("f-mdp").value="";arreterSuivi()}
+function fermerFonds(){$("m-fonds").classList.remove("ouverte");$("f-mdp").value="";arreterSuivi();clearTimeout(etat.retourAuto)}
 function niveau(n,raison){
-  $("f-n1").hidden=n!==1;$("f-n2").hidden=n!==2;
-  $("f-titre").textContent=n===1?t("ajouter_fonds"):t("tresorerie_titre");
-  if(n===2){$("f-n2-raison").hidden=!raison;if(raison)$("f-n2-raison").textContent=raison;remplirRapides();mode("crypto");demarrerSuivi()}else arreterSuivi();
+  for(const k of [1,2,3,4])$("f-n"+k).hidden=k!==n;
+  $("f-titre").textContent=t(["","ajouter_fonds","tresorerie_titre","reglement","confirmation"][n]);
+  clearTimeout(etat.retourAuto);
+  if(n===2){$("f-n2-raison").hidden=!raison;if(raison)$("f-n2-raison").textContent=raison;etat.montantDepot=null;remplirRapides();mode(etat.mode||"carte")}else arreterSuivi();
 }
 function majFonds(){
   const d=etat.donnees||{},dv=deviseSaisie(),dispo=pos(d.solde_proprietaire_sompi);
@@ -525,25 +608,61 @@ function remplirRapides(){
   const base=dv==="jpy"?[10000,25000,50000,100000]:[100,250,500,1000];
   for(const v of base){const b=document.createElement("button");b.className="btn sec petit";b.textContent=formater(v,dv);b.onclick=()=>choisirRapide(b,v);box.append(b)}
   const l=document.createElement("button");l.className="btn sec petit";l.textContent=t("libre");l.onclick=()=>{choisirRapide(l,null);$("f-libre-champ").hidden=false;$("f-libre-devise").textContent=dv.toUpperCase();$("f-libre").focus()};box.append(l);
-  afficherAEnvoyer(etat.manque?deSompi(etat.manque.sompi,dv):null);
+  afficherAEnvoyer(etat.manque?Math.ceil(deSompi(etat.manque.sompi,dv)*100)/100:null);
 }
 function choisirRapide(btn,v){
   document.querySelectorAll("#f-rapides button").forEach(b=>b.setAttribute("aria-pressed",String(b===btn)));
   if(v!=null){$("f-libre-champ").hidden=true;afficherAEnvoyer(v)}
 }
 function afficherAEnvoyer(v){
+  etat.montantDepot=v>0?v:null;majContinuer();
   // montant à envoyer dans l'unité du réseau : affiché seulement dans le mode crypto, choisi explicitement
   const dv=deviseSaisie(),x=v>0?versSompi(v,dv):null;
   $("f-a-envoyer").textContent=x?t("a_envoyer").replace("{k}",new Intl.NumberFormat(loc(),{maximumFractionDigits:2}).format(x/1e8)+" KAS").replace("{m}",formater(v,dv)):"";
 }
 function mode(m){
   document.querySelectorAll(".modes button").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.mode===m)));
-  $("f-crypto").hidden=m!=="crypto";$("f-test").hidden=m!=="test";
+  // carte, virement, autres cryptos : tunnel d'encaissement ; Kaspa et fonds de test : dépôt direct détecté
+  const p2=["cryptos","carte","virement"].includes(m);etat.mode=m;
+  $("f-crypto").hidden=m!=="crypto";$("f-test").hidden=m!=="test";$("f-phase2").hidden=!p2;$("f-attente").hidden=p2;
+  if(p2){arreterSuivi();$("f-phase2-txt").textContent=t("txt_"+m);$("f-choix-crypto").hidden=m!=="cryptos";if(m==="cryptos")remplirCryptos();majContinuer()}
+  else if(!etat.suivi)demarrerSuivi();
 }
+const CRYPTOS=[["btc","Bitcoin"],["eth","Ethereum"],["sol","Solana"],["usdt","USDT"],["usdc","USDC"]];
+function remplirCryptos(){
+  const box=$("f-choix-crypto");box.replaceChildren();
+  for(const [c,nom] of CRYPTOS){const b=document.createElement("button");b.className="btn sec petit";b.textContent=nom;b.setAttribute("aria-pressed",String(etat.crypto===c));b.disabled=cours(c)==null;
+    b.onclick=()=>{etat.crypto=c;remplirCryptos();majContinuer()};box.append(b)}
+}
+function majContinuer(){
+  const ok=etat.montantDepot>0&&(etat.mode!=="cryptos"||!!etat.crypto);
+  $("f-continuer").disabled=!ok;
+  $("f-continuer-note").textContent=ok?formater(etat.montantDepot,deviseSaisie()):(etat.montantDepot>0?t("choisir_crypto"):t("choisir_montant"));
+}
+function nomMoyen(){return etat.mode==="cryptos"?(CRYPTOS.find(x=>x[0]===etat.crypto)||["",""])[1]:t("mode_"+etat.mode)}
+function versReglement(){
+  const dv=deviseSaisie(),v=etat.montantDepot;if(!(v>0))return;
+  niveau(3);$("f-msg3").replaceChildren();$("f-payer").disabled=false;
+  $("p-montant").textContent=formater(v,dv);$("p-moyen").textContent=nomMoyen();
+  for(const k of ["carte","virement","crypto"])$("p-"+k).hidden=k!==(etat.mode==="cryptos"?"crypto":etat.mode);
+  if(etat.mode==="virement"){$("p-ref").textContent="TDA-"+Math.random().toString(36).slice(2,8).toUpperCase();$("p-vir-montant").textContent=formater(v,dv)}
+  if(etat.mode==="cryptos"){const x=versSompi(v,dv);$("p-cr-moyen").textContent=nomMoyen();$("p-cr-equiv").textContent=x?"≈ "+montant(x,etat.crypto):"–";$("p-cr-credit").textContent=formater(v,dv)}
+}
+async function payer(){
+  const x=versSompi(etat.montantDepot,deviseSaisie());if(!x)return;
+  $("f-payer").disabled=true;message("f-msg3","ok",t("en_cours"));
+  try{
+    const r=await api("/api/paiement",{moyen:etat.mode==="cryptos"?etat.crypto:etat.mode,montant_sompi:x});
+    if(etat.donnees)etat.donnees.solde_proprietaire_sompi=r.solde_proprietaire_sompi;
+    niveau(4);$("c-credit").textContent=montant(r.credite_sompi,deviseSaisie());$("c-solde").textContent=montant(r.solde_proprietaire_sompi,deviseSaisie());
+    $("c-auto").textContent=t("retour_auto");etat.retourAuto=setTimeout(versCoffre,4000);
+  }catch(e){message("f-msg3","err",e.message);$("f-payer").disabled=false}
+}
+function versCoffre(){clearTimeout(etat.retourAuto);if($("m-fonds").classList.contains("ouverte")){niveau(1);majFonds();$("f-montant").focus()}}
 async function demarrerSuivi(){
   arreterSuivi();
   if(!etat.securite)await chargerSecurite();
-  const s=etat.securite;if(s){$("f-adresse").textContent=s.adresse;if(s.qr){$("f-qr").src=s.qr;$("f-qr").hidden=false}}
+  const s=etat.securite;if(s)$("f-adresse").textContent=s.adresse;
   etat.soldeAvant=pos(etat.donnees&&etat.donnees.solde_proprietaire_sompi);
   const p=document.createElement("span");p.className="point";const tx=document.createElement("span");tx.textContent=t("attente");$("f-attente").replaceChildren(p,tx);
   etat.suivi=setInterval(async()=>{
@@ -610,8 +729,9 @@ $("f-devise").onchange=e=>{etat.deviseSaisie=e.target.value;majFonds()};
 $("f-valider").onclick=ajouterAuCoffre;
 $("f-vers-n2").onclick=()=>niveau(2,raisonManque());
 $("f-retour").onclick=()=>{niveau(1);majFonds()};
+$("f-continuer").onclick=versReglement;$("f-payer").onclick=payer;$("f-modifier").onclick=()=>niveau(2,raisonManque());$("f-vers-coffre").onclick=versCoffre;
 $("f-libre").oninput=()=>afficherAEnvoyer(lu($("f-libre").value));
-document.querySelectorAll(".modes button").forEach(b=>b.onclick=()=>{if(!b.disabled)mode(b.dataset.mode)});
+document.querySelectorAll(".modes button").forEach(b=>b.onclick=()=>mode(b.dataset.mode));
 document.querySelectorAll("[data-copier]").forEach(b=>b.onclick=async()=>{const id=b.dataset.copier,ret=document.querySelector('[data-retour="'+id+'"]');
   try{await navigator.clipboard.writeText($(id).textContent);if(ret)ret.textContent=t("copie")}catch(e){if(ret)ret.textContent=t("copie_ko")}});
 $("b-geler").onclick=async()=>{const avec=!!(etat.donnees&&etat.donnees.mot_de_passe_requis);
