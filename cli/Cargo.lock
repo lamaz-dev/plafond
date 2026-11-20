@@ -5245,6 +5245,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "ureq",
+ "url",
  "zeroize",
 ]
 

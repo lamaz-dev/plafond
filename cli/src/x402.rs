@@ -321,10 +321,16 @@ pub static BLOQUER_INTERNE: std::sync::atomic::AtomicBool = std::sync::atomic::A
 pub const REPONSE_MAX: u64 = 1024 * 1024;
 
 fn client_http() -> ureq::Agent {
+    client_http_delai(Duration::from_secs(30))
+}
+
+/// Délai TOTAL de la requête, lecture du corps comprise : un vendeur qui répond goutte à goutte
+/// (« slowloris » inversé) ne peut pas bloquer l'agent au-delà.
+fn client_http_delai(total: Duration) -> ureq::Agent {
     ureq::AgentBuilder::new()
         .redirects(0)
         .timeout_connect(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
+        .timeout(total)
         .resolver(|cible: &str| -> std::io::Result<Vec<std::net::SocketAddr>> {
             use std::net::ToSocketAddrs;
             let adresses: Vec<_> = cible.to_socket_addrs()?.collect();
@@ -441,4 +447,71 @@ pub async fn demo(owner: &Keypair, agent: &Keypair) -> Res<()> {
     })
     .await??;
     Ok(())
+}
+
+#[cfg(test)]
+mod vendeurs_malveillants {
+    use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    /// Faux vendeur local : écrit l'en-tête puis appelle `corps` sur la connexion.
+    fn vendeur(entete: &'static str, corps: impl Fn(&mut std::net::TcpStream) + Send + 'static) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut c, _)) = l.accept() {
+                let mut tampon = [0u8; 2048];
+                let _ = std::io::Read::read(&mut c, &mut tampon);
+                let _ = c.write_all(entete.as_bytes());
+                corps(&mut c);
+            }
+        });
+        format!("http://127.0.0.1:{port}/ressource")
+    }
+
+    #[test]
+    fn flux_sans_fin_coupe_a_un_mo() {
+        let url = vendeur("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n", |c| {
+            let bloc = [b'x'; 16 * 1024];
+            while c.write_all(&bloc).is_ok() {}
+        });
+        let r = client_http_delai(Duration::from_secs(20)).get(&url).call().unwrap();
+        let e = lire_borne(r).unwrap_err().to_string();
+        assert!(e.contains("trop volumineuse"), "{e}");
+    }
+
+    #[test]
+    fn reponse_goutte_a_goutte_coupee_par_le_delai() {
+        let url = vendeur("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n", |c| {
+            for _ in 0..100 {
+                if c.write_all(b"x").is_err() { break; }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
+        let debut = std::time::Instant::now();
+        let r = client_http_delai(Duration::from_secs(1)).get(&url).call();
+        let lu = r.map_err(|e| e.to_string()).and_then(|r| lire_borne(r).map_err(|e| e.to_string()));
+        assert!(lu.is_err(), "la lecture devait échouer");
+        assert!(debut.elapsed() < Duration::from_secs(5), "l'agent est resté bloqué {:?}", debut.elapsed());
+    }
+
+    #[test]
+    fn reponse_tronquee_detectee() {
+        let url = vendeur("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n", |c| {
+            let _ = c.write_all(b"debut seulement");
+        });
+        let r = client_http_delai(Duration::from_secs(5)).get(&url).call().unwrap();
+        assert!(lire_borne(r).is_err(), "une réponse tronquée ne doit pas passer pour complète");
+    }
+
+    #[test]
+    fn redirection_jamais_suivie() {
+        let url = vendeur("HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data\r\nContent-Length: 0\r\n\r\n", |_| {});
+        match client_http_delai(Duration::from_secs(5)).get(&url).call() {
+            Ok(r) => assert_eq!(r.status(), 302),
+            Err(ureq::Error::Status(c, _)) => assert_eq!(c, 302),
+            Err(e) => panic!("{e}"),
+        }
+    }
 }

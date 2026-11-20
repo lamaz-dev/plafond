@@ -29,6 +29,7 @@ borsh = "1.5.1"
 base64 = "0.22"
 tiny_http = "0.12"
 ureq = "2"
+url = "2.5"
 
 [dev-dependencies]
 proptest = "1"

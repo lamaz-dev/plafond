@@ -158,6 +158,27 @@ pub struct Politique {
 impl Politique {
     pub fn verifier_url(&self, url: &str) -> Result<(), String> {
         let (orig, hote) = origine(url).ok_or("url http(s) attendue, sans identifiants")?;
+        // Le client HTTP lit l'URL selon la norme WHATWG (crate `url`), qui normalise certains
+        // caractères (barres obliques inverses, tabulations, IPv4 en hexadécimal ou en octal…).
+        // On exige que les deux lectures désignent le même hôte : sinon, l'URL vérifiée et l'URL
+        // contactée pourraient différer.
+        let lu = url::Url::parse(url).map_err(|_| "url invalide")?;
+        let hote_client = match lu.host() {
+            Some(url::Host::Domain(d)) => d.to_ascii_lowercase(),
+            Some(url::Host::Ipv4(a)) => a.to_string(),
+            Some(url::Host::Ipv6(a)) => a.to_string(),
+            None => return Err("url sans hôte".into()),
+        };
+        if !lu.username().is_empty() || lu.password().is_some() {
+            return Err("identifiants interdits dans l'url".into());
+        }
+        let hote_client_ip = hote_client.parse::<IpAddr>().ok();
+        if hote_client_ip.is_some_and(ip_interne) && !self.demo {
+            return Err("adresse interne refusée".into());
+        }
+        if hote_client != hote && hote_client_ip.is_none_or(|a| hote.parse::<IpAddr>().ok() != Some(a)) {
+            return Err("url ambiguë : l'hôte lu par le client diffère de l'hôte vérifié".into());
+        }
         if !self.origines.is_empty() && !self.origines.iter().any(|o| *o == orig) {
             return Err(format!("vendeur non autorisé : {orig}"));
         }
@@ -268,6 +289,37 @@ pub fn lancer(handle: Handle, cfg: Config) -> Res<()> {
     let serveur = tiny_http::Server::http(ecoute.as_str()).map_err(|e| format!("écoute {ecoute} : {e}"))?;
     println!("[ROUTEUR] à l'écoute sur http://{ecoute} (démo : {}, plafond par requête : {} sompi)", if demo { "oui" } else { "non" }, politique.max_requete);
     let attendu = format!("Bearer {cle}");
+    servir(&serveur, &attendu, &mut idem, |methode, chemin, req| match (methode, chemin) {
+        ("GET", "/v1/coffre") => match handle.block_on(etat_budget(&cfg.owner_pk, &cfg.agent)) {
+            Ok(v) => (200, v),
+            Err(e) => (503, json!({ "erreur": e.to_string() })),
+        },
+        ("POST", "/v1/fetch") => traiter_fetch(&handle, &cfg, &politique, &mut debit, req, &journal),
+        ("POST", "/v1/demo/agent-compromis") if demo => match lire_json(req) {
+            Err(e) => (400, json!({ "erreur": e })),
+            Ok(v) => {
+                let montant = v["montant_sompi"].as_i64().unwrap_or(0);
+                let service = cfg.demo.as_ref().map(|d| d.0.clone()).expect("démo");
+                println!("[ROUTEUR] démo : paiement de {} TKAS diffusé SANS contrôle local", montant as f64 / 1e8);
+                match handle.block_on(agent_compromis(&cfg.owner_pk, &cfg.agent, &service, montant)) {
+                    Ok(v) => {
+                        journaliser(&journal, json!({ "evenement": "demo-agent-compromis", "montant_sompi": montant, "resultat": v.clone() }));
+                        (200, v)
+                    }
+                    Err(e) => (502, json!({ "erreur": e.to_string() })),
+                }
+            }
+        },
+        _ => (404, json!({ "erreur": "point d'entrée inconnu" })),
+    });
+    Ok(())
+}
+
+/// Boucle du serveur. Les requêtes sont traitées UNE PAR UNE, dans l'ordre d'arrivée : deux achats
+/// ne peuvent jamais lire le même état du coffre ni signer deux dépenses de la même sortie en même
+/// temps. La clé d'API est vérifiée avant toute lecture du corps ; une clé d'idempotence déjà vue
+/// rejoue la réponse enregistrée sans nouvel achat.
+pub fn servir(serveur: &tiny_http::Server, attendu: &str, idem: &mut Idempotence, mut routage: impl FnMut(&str, &str, &mut tiny_http::Request) -> (u16, Value)) {
     for mut req in serveur.incoming_requests() {
         let autorise = req.headers().iter().any(|h| h.field.equiv("Authorization") && egal_temps_constant(h.value.as_str().as_bytes(), attendu.as_bytes()));
         let chemin = req.url().split('?').next().unwrap_or("").to_string();
@@ -275,44 +327,21 @@ pub fn lancer(handle: Handle, cfg: Config) -> Res<()> {
         let cle_idem = req.headers().iter().find(|h| h.field.equiv("Idempotency-Key")).map(|h| h.value.as_str().chars().take(128).collect::<String>());
         let (statut, corps) = if !autorise {
             (401, json!({ "erreur": "clé d'API invalide" }))
-        } else {
-            match (methode.as_str(), chemin.as_str()) {
-                ("GET", "/v1/coffre") => match handle.block_on(etat_budget(&cfg.owner_pk, &cfg.agent)) {
-                    Ok(v) => (200, v),
-                    Err(e) => (503, json!({ "erreur": e.to_string() })),
-                },
-                ("POST", "/v1/fetch") => {
-                    if let Some(r) = cle_idem.as_deref().and_then(|k| idem.lire(k)) {
-                        (r.0, json!({ "rejoue": true, "reponse": r.1 }))
-                    } else {
-                        let r = traiter_fetch(&handle, &cfg, &politique, &mut debit, &mut req, &journal);
-                        if let (Some(k), true) = (cle_idem, r.0 == 200 || r.0 == 402) {
-                            idem.garder(k, r.clone());
-                        }
-                        r
-                    }
+        } else if methode == "POST" && chemin == "/v1/fetch" {
+            if let Some(r) = cle_idem.as_deref().and_then(|k| idem.lire(k)) {
+                (r.0, json!({ "rejoue": true, "reponse": r.1 }))
+            } else {
+                let r = routage(&methode, &chemin, &mut req);
+                if let (Some(k), true) = (cle_idem, r.0 == 200 || r.0 == 402) {
+                    idem.garder(k, r.clone());
                 }
-                ("POST", "/v1/demo/agent-compromis") if demo => match lire_json(&mut req) {
-                    Err(e) => (400, json!({ "erreur": e })),
-                    Ok(v) => {
-                        let montant = v["montant_sompi"].as_i64().unwrap_or(0);
-                        let service = cfg.demo.as_ref().map(|d| d.0.clone()).expect("démo");
-                        println!("[ROUTEUR] démo : paiement de {} TKAS diffusé SANS contrôle local", montant as f64 / 1e8);
-                        match handle.block_on(agent_compromis(&cfg.owner_pk, &cfg.agent, &service, montant)) {
-                            Ok(v) => {
-                                journaliser(&journal, json!({ "evenement": "demo-agent-compromis", "montant_sompi": montant, "resultat": v.clone() }));
-                                (200, v)
-                            }
-                            Err(e) => (502, json!({ "erreur": e.to_string() })),
-                        }
-                    }
-                },
-                _ => (404, json!({ "erreur": "point d'entrée inconnu" })),
+                r
             }
+        } else {
+            routage(&methode, &chemin, &mut req)
         };
         let _ = req.respond(reponse(statut, corps));
     }
-    Ok(())
 }
 
 fn traiter_fetch(handle: &Handle, cfg: &Config, pol: &Politique, debit: &mut Debit, req: &mut tiny_http::Request, journal: &str) -> (u16, Value) {
@@ -392,6 +421,89 @@ mod tests {
         for a in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "64:ff9b::808:808", "2002:808:808::"] {
             assert!(!ip_interne(a.parse().unwrap()), "{a} devrait être public");
         }
+    }
+
+    /// Adresses internes déguisées (décimal, hexadécimal, octal, forme courte, IPv6 mappée) et
+    /// URLs ambiguës (barre oblique inverse, tabulation, identifiants) : toutes refusées hors démo.
+    #[test]
+    fn adresses_deguisees_et_urls_ambigues_refusees() {
+        let pol = Politique { origines: vec![], max_requete: 1, demo: false };
+        for u in [
+            "https://2130706433/", "https://0x7f000001/", "https://0x7f.0.0.1/", "https://017700000001/",
+            "https://0177.0.0.1/", "https://127.1/", "https://[::ffff:127.0.0.1]/", "https://[::1]/",
+            "https://169.254.169.254/latest/meta-data", "https://0/", "https://localhost/",
+            "https://exemple.com\\@127.0.0.1/", "https://ex\tample.com/", "https://u:p@exemple.com/",
+            "file:///etc/passwd", "gopher://exemple.com/",
+        ] {
+            assert!(pol.verifier_url(u).is_err(), "devrait être refusée : {u}");
+        }
+        // liste blanche : une URL ambiguë ne passe pas pour un vendeur autorisé
+        let pol = Politique { origines: vec!["https://exemple.com".into()], max_requete: 1, demo: true };
+        assert!(pol.verifier_url("https://exemple.com/x").is_ok());
+        for u in ["https://exemple.com\\.evil.com/", "https://exemple.com.evil.com/", "https://evil.com/#https://exemple.com", "https://EXEMPLE.com:8443/"] {
+            assert!(pol.verifier_url(u).is_err(), "ne doit pas passer pour le vendeur autorisé : {u}");
+        }
+    }
+
+    /// 50 requêtes d'achat simultanées : jamais deux traitements en même temps (pas de double
+    /// signature possible sur la même sortie) ; avec la même clé d'idempotence, un seul achat.
+    #[test]
+    fn cinquante_requetes_paralleles() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        use std::sync::Arc;
+        for meme_cle in [false, true] {
+            let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+            let port = serveur.server_addr().to_ip().unwrap().port();
+            let (en_cours, max, achats) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+            let (s2, e2, m2, a2) = (serveur.clone(), en_cours.clone(), max.clone(), achats.clone());
+            let boucle = std::thread::spawn(move || {
+                let mut idem = Idempotence::new();
+                servir(&s2, "Bearer cle-de-test-suffisamment-longue-0123456789", &mut idem, |_, _, _| {
+                    let n = e2.fetch_add(1, SeqCst) + 1;
+                    m2.fetch_max(n, SeqCst);
+                    a2.fetch_add(1, SeqCst);
+                    std::thread::sleep(Duration::from_millis(5));
+                    e2.fetch_sub(1, SeqCst);
+                    (200, json!({ "paye": true }))
+                });
+            });
+            let clients: Vec<_> = (0..50)
+                .map(|i| {
+                    std::thread::spawn(move || {
+                        let cle = if meme_cle { "meme-achat".to_string() } else { format!("achat-{i}") };
+                        ureq::post(&format!("http://127.0.0.1:{port}/v1/fetch"))
+                            .set("Authorization", "Bearer cle-de-test-suffisamment-longue-0123456789")
+                            .set("Idempotency-Key", &cle)
+                            .send_string("{}")
+                            .map(|r| r.status())
+                            .unwrap_or(0)
+                    })
+                })
+                .collect();
+            let statuts: Vec<u16> = clients.into_iter().map(|c| c.join().unwrap()).collect();
+            serveur.unblock();
+            boucle.join().unwrap();
+            assert!(statuts.iter().all(|s| *s == 200), "toutes les requêtes reçoivent une réponse : {statuts:?}");
+            assert_eq!(max.load(SeqCst), 1, "deux achats traités en même temps");
+            assert_eq!(achats.load(SeqCst), if meme_cle { 1 } else { 50 });
+        }
+    }
+
+    /// Sans la bonne clé d'API : refus, et le corps n'est même pas lu.
+    #[test]
+    fn mauvaise_cle_refusee_avant_tout_traitement() {
+        use std::sync::Arc;
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let s2 = serveur.clone();
+        let boucle = std::thread::spawn(move || {
+            let mut idem = Idempotence::new();
+            servir(&s2, "Bearer bonne-cle-de-test-0123456789abcdef", &mut idem, |_, _, _| panic!("ne doit jamais être appelé"));
+        });
+        let r = ureq::post(&format!("http://127.0.0.1:{port}/v1/fetch")).set("Authorization", "Bearer mauvaise").send_string("{}");
+        assert!(matches!(r, Err(ureq::Error::Status(401, _))));
+        serveur.unblock();
+        boucle.join().unwrap();
     }
 
     #[test]
