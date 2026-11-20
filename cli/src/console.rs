@@ -44,29 +44,61 @@ fn json_rep(statut: u16, v: Value) -> tiny_http::Response<std::io::Cursor<Vec<u8
     reponse(statut, "application/json; charset=utf-8", v.to_string().into_bytes())
 }
 
-/// Cours indicatif du KAS (EUR, USD), mis en cache 5 minutes ; absent si l'API ne répond pas.
+/// Cours indicatifs du KAS dans plusieurs unités de lecture, mis en cache 5 minutes ; absents si
+/// l'API ne répond pas. USDT, USDC, BTC, ETH et SOL sont calculés à partir de leur propre cours en
+/// dollars (aucune parité supposée).
 struct Cours {
-    valeur: Option<(f64, f64)>,
+    valeur: Option<Value>,
     lu: Option<Instant>,
 }
 
 impl Cours {
-    fn lire(&mut self) -> Option<(f64, f64)> {
+    fn lire(&mut self) -> Option<Value> {
         if self.lu.is_some_and(|t| t.elapsed() < Duration::from_secs(300)) {
-            return self.valeur;
+            return self.valeur.clone();
         }
         self.lu = Some(Instant::now());
-        let r = ureq::AgentBuilder::new()
+        let v = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(5))
             .build()
-            .get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=eur,usd")
+            .get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa,tether,usd-coin,bitcoin,ethereum,solana&vs_currencies=usd,eur")
             .call()
             .ok()
             .and_then(|r| r.into_string().ok())
             .and_then(|t| serde_json::from_str::<Value>(&t).ok());
-        self.valeur = r.and_then(|v| Some((v["kaspa"]["eur"].as_f64()?, v["kaspa"]["usd"].as_f64()?)));
-        self.valeur
+        self.valeur = v.and_then(|v| {
+            let usd = |id: &str| v[id]["usd"].as_f64().filter(|x| *x > 0.0);
+            let kas = usd("kaspa")?;
+            let mut c = json!({ "usd": kas, "eur": v["kaspa"]["eur"].as_f64()?, "source": "CoinGecko (indicatif)" });
+            for (cle, id) in [("usdt", "tether"), ("usdc", "usd-coin"), ("btc", "bitcoin"), ("eth", "ethereum"), ("sol", "solana")] {
+                if let Some(x) = usd(id) {
+                    c[cle] = json!(kas / x);
+                }
+            }
+            Some(c)
+        });
+        self.valeur.clone()
     }
+}
+
+/// Tarif de référence d'une requête standard (frais inclus), pour exprimer les budgets en requêtes.
+fn tarif_reference() -> i64 {
+    std::env::var("TARIF_REQUETE_SOMPI").ok().and_then(|v| v.parse().ok()).filter(|t| *t > 0).unwrap_or(40_000_000)
+}
+
+/// QR code (SVG en URI data:) d'une adresse, généré localement, sans service tiers.
+fn qr(texte: &str) -> Option<String> {
+    use base64::Engine;
+    let code = qrcode::QrCode::new(texte.as_bytes()).ok()?;
+    let svg = code.render::<qrcode::render::svg::Color>().min_dimensions(180, 180).quiet_zone(true).build();
+    Some(format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg)))
+}
+
+/// Le mot de passe saisi déverrouille-t-il bien le fichier de clé du propriétaire chargé ?
+/// `None` : pas de fichier de clé (clés de test), aucun mot de passe à vérifier.
+fn verifier_mot_de_passe(chemin_cle: Option<&str>, owner: &Keypair, mdp: &str) -> Option<bool> {
+    let chemin = chemin_cle?;
+    Some(cle::lire(chemin).ok().and_then(|f| cle::dechiffrer(&f, mdp).ok()).is_some_and(|k| k.x_only_public_key() == owner.x_only_public_key()))
 }
 
 fn origine() -> Option<Etat> {
@@ -74,7 +106,7 @@ fn origine() -> Option<Etat> {
 }
 
 /// Tableau de bord : tout est lu sur la chaîne (état, historique vérifié saut par saut).
-async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) -> Res<Value> {
+async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<Value> {
     let pk = xonly(owner);
     let p0 = VaultParams::pour(&pk, agent, 0, 0);
     let regles = json!({
@@ -85,9 +117,13 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
         "periode_daa": p0.refill_period,
         "periode_secondes": p0.refill_period / 10,
     });
-    let cours_json = cours.map(|(e, u)| json!({ "eur": e, "usd": u, "source": "CoinGecko (indicatif)" }));
+    let cours_json = cours;
+    let adresse = address(owner).to_string();
+    let commun = json!({ "tarif_reference_sompi": tarif_reference(), "qr_adresse": qr(&adresse), "mot_de_passe_requis": std::env::var("PROPRIETAIRE_CLE").is_ok() });
     let Some(orig) = origine() else {
-        return Ok(json!({ "sante": "aucun", "regles": regles, "cours": cours_json, "adresse_proprietaire": address(owner).to_string() }));
+        let mut r = json!({ "sante": "aucun", "regles": regles, "cours": cours_json, "adresse_proprietaire": adresse });
+        fusion(&mut r, &commun);
+        return Ok(r);
     };
     // Historique vérifié depuis l'origine (indexeur public, chaque saut recalculé).
     let (pk2, ag2, o2) = (pk.clone(), agent.clone(), orig.clone());
@@ -115,8 +151,10 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
     let etat = match issue {
         retrouver::Issue::Ferme { txid } => {
             c.disconnect().await?;
-            return Ok(json!({ "sante": "gele", "gel": txid, "regles": regles, "historique": historique, "cours": cours_json,
-                "solde_proprietaire_sompi": solde_proprio, "adresse_proprietaire": address(owner).to_string() }));
+            let mut r = json!({ "sante": "gele", "gel": txid, "regles": regles, "historique": historique, "cours": cours_json,
+                "solde_proprietaire_sompi": solde_proprio, "adresse_proprietaire": adresse });
+            fusion(&mut r, &commun);
+            return Ok(r);
         }
         retrouver::Issue::Courant(mut e) => {
             e.valeur = montant_coffre(&c, &pk, agent, &e).await?;
@@ -136,14 +174,14 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
         .sum();
     let min_achat = 2_000_000 + FEE as i64;
     let sante = if disponible < min_achat { "epuise" } else if disponible * 5 < p.capacity { "alerte" } else { "normal" };
-    Ok(json!({
+    let mut r = json!({
         "sante": sante,
         "regles": regles,
         "solde_coffre_sompi": etat.valeur,
         "exposition_immediate_sompi": disponible.min(etat.valeur as i64),
         "depense_periode_sompi": depense_periode,
         "solde_proprietaire_sompi": solde_proprio,
-        "adresse_proprietaire": address(owner).to_string(),
+        "adresse_proprietaire": adresse,
         "historique": historique,
         "cours": cours_json,
         "technique": {
@@ -154,7 +192,17 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
             "explorateur": explorer(&etat.txid),
             "empreinte_source_contrat": hex::encode(blake2b_simd::Params::new().hash_length(32).hash(include_str!("../../contracts/agent_budget.sil").as_bytes()).as_bytes()),
         },
-    }))
+    });
+    fusion(&mut r, &commun);
+    Ok(r)
+}
+
+fn fusion(r: &mut Value, commun: &Value) {
+    if let (Some(a), Some(b)) = (r.as_object_mut(), commun.as_object()) {
+        for (k, v) in b {
+            a.insert(k.clone(), v.clone());
+        }
+    }
 }
 
 fn journal(entree: Value) {
@@ -172,16 +220,17 @@ pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
     println!("Console du propriétaire : ouvrez http://127.0.0.1:{PORT}/#jeton={jeton}");
     println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
-    servir(&serveur, &jeton, handle, owner, agent);
+    servir(&serveur, &jeton, handle, owner, agent, std::env::var("PROPRIETAIRE_CLE").ok());
     Ok(())
 }
 
 /// Boucle de la console (séparée pour être testée sur un port libre).
-pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: Keypair, agent: Keypair) {
+pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: Keypair, agent: Keypair, chemin_cle: Option<String>) {
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
     let mut cours = Cours { valeur: None, lu: None };
+    let (mut echecs, mut verrou_jusqu_a): (u32, Option<Instant>) = (0, None);
     for mut req in serveur.incoming_requests() {
         let entetes: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
         let entete = |nom: &str| entetes.iter().find(|(k, _)| k == &nom.to_ascii_lowercase()).map(|(_, v)| v.clone());
@@ -211,9 +260,22 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     }
                 }
                 ("POST", "/api/geler") => {
+                    let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+                    let verrouille = verrou_jusqu_a.is_some_and(|t| Instant::now() < t);
                     if v["confirmation"].as_str() != Some("GELER") {
                         json_rep(400, json!({ "erreur": "confirmation requise" }))
+                    } else if verrouille {
+                        json_rep(429, json!({ "erreur": "trop d'essais de mot de passe : réessayez dans une minute" }))
+                    } else if verifier_mot_de_passe(chemin_cle.as_deref(), &owner, &mdp) == Some(false) {
+                        echecs += 1;
+                        if echecs >= 5 {
+                            verrou_jusqu_a = Some(Instant::now() + Duration::from_secs(60));
+                            echecs = 0;
+                        }
+                        journal(json!({ "geler": "mot de passe refusé" }));
+                        json_rep(403, json!({ "erreur": "mot de passe incorrect" }))
                     } else {
+                        echecs = 0;
                         let r = handle.block_on(geler(&owner, &agent, false, 0));
                         journal(json!({ "geler": r.as_ref().map_err(|e| e.to_string()) }));
                         match r {
@@ -265,7 +327,7 @@ mod tests {
         let port = serveur.server_addr().to_ip().unwrap().port();
         let (s2, h) = (serveur.clone(), rt.handle().clone());
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let fil = std::thread::spawn(move || servir(&s2, "jeton-de-test", h, k(1), k(2)));
+        let fil = std::thread::spawn(move || servir(&s2, "jeton-de-test", h, k(1), k(2), None));
         let base = format!("http://127.0.0.1:{port}");
         let statut = |r: Result<ureq::Response, ureq::Error>| match r {
             Ok(r) => r.status(),
@@ -288,6 +350,38 @@ mod tests {
         assert_eq!(statut(ureq::post(&format!("{base}/api/alimenter")).set("X-Jeton", "jeton-de-test").send_string("{\"montant_sompi\":1}")), 400);
         serveur.unblock();
         fil.join().unwrap();
+    }
+
+    /// Gel : mot de passe propriétaire vérifié contre le fichier de clé ; verrouillage après 5 échecs.
+    #[test]
+    fn gel_exige_le_mot_de_passe_et_verrouille() {
+        use std::sync::Arc;
+        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let chemin = std::env::temp_dir().join(format!("cle-console-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&chemin);
+        cle::ecrire(chemin.to_str().unwrap(), &cle::chiffrer(&k(1), "le bon mot de passe").unwrap()).unwrap();
+        let c = chemin.to_str().unwrap().to_string();
+        assert_eq!(verifier_mot_de_passe(Some(&c), &k(1), "le bon mot de passe"), Some(true));
+        assert_eq!(verifier_mot_de_passe(Some(&c), &k(1), "un mauvais"), Some(false));
+        assert_eq!(verifier_mot_de_passe(Some(&c), &k(9), "le bon mot de passe"), Some(false), "clé d'un autre propriétaire");
+        assert_eq!(verifier_mot_de_passe(None, &k(1), "peu importe"), None, "clés de test : rien à vérifier");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let (s2, h) = (serveur.clone(), rt.handle().clone());
+        let fil = std::thread::spawn(move || servir(&s2, "jeton", h, k(1), k(2), Some(c)));
+        let geler = |mdp: &str| match ureq::post(&format!("http://127.0.0.1:{port}/api/geler")).set("X-Jeton", "jeton").send_string(&json!({ "confirmation": "GELER", "mot_de_passe": mdp }).to_string()) {
+            Ok(r) => r.status(),
+            Err(ureq::Error::Status(c, _)) => c,
+            Err(e) => panic!("{e}"),
+        };
+        for _ in 0..5 {
+            assert_eq!(geler("un mauvais"), 403);
+        }
+        assert_eq!(geler("le bon mot de passe"), 429, "verrouillé après 5 échecs, même avec le bon mot de passe");
+        serveur.unblock();
+        fil.join().unwrap();
+        let _ = std::fs::remove_file(&chemin);
     }
 
     #[test]

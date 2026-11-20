@@ -30,6 +30,7 @@ base64 = "0.22"
 tiny_http = "0.12"
 ureq = "2"
 url = "2.5"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
 proptest = "1"

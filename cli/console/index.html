@@ -64,6 +64,13 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
 .modale.ouverte{display:flex}
 .modale .carte{max-width:460px;width:92%}
 [hidden]{display:none!important}
+.req{font-size:30px;font-weight:700}
+.qr{background:#fff;border-radius:10px;padding:6px;width:150px;height:150px}
+.adr{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.ajout{color:var(--accent);font-weight:600;min-height:22px}
+.lienbtn{background:none;border:0;color:var(--accent);cursor:pointer;padding:0;text-decoration:underline}
+.outils{display:flex;gap:10px;justify-content:flex-end;margin-bottom:10px}
+#tarif-champ{width:110px}
 @media (max-width:640px){header,nav,main{padding-left:16px;padding-right:16px}.val{font-size:22px}}
 </style>
 </head>
@@ -73,7 +80,7 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   <span id="sante" class="sante s-aucun" role="status"><b></b><span id="sante-txt">…</span></span>
   <span class="esp"></span>
   <select id="devise" class="sel" aria-label="Devise">
-    <option value="kas">KAS</option><option value="eur">EUR</option><option value="usd">USD</option>
+    <option value="kas">KAS</option><option value="eur">EUR</option><option value="usd">USD</option><option value="usdt">USDT</option><option value="usdc">USDC</option><option value="btc">BTC</option><option value="eth">ETH</option><option value="sol">SOL</option>
   </select>
   <select id="langue" class="sel" aria-label="Langue">
     <option value="fr">Français</option><option value="en">English</option>
@@ -100,29 +107,31 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="grille">
         <div class="carte">
           <div class="etiq" data-t="budget">Budget garanti par période</div>
-          <div class="val mono" id="v-budget">–</div>
+          <div class="req mono" id="r-budget">–</div><div class="sous mono" id="v-budget">–</div>
           <div class="jauge" aria-hidden="true"><span id="jauge" style="width:0"></span></div>
-          <div class="sous"><span data-t="depense">Dépensé sur la période</span> : <span class="mono" id="v-depense">–</span></div>
+          <div class="sous"><span data-t="depense">Dépensé sur la période</span> : <span class="mono" id="r-depense">–</span> · <span class="mono" id="v-depense">–</span></div>
         </div>
         <div class="carte">
           <div class="etiq" data-t="exposition">Exposition maximale immédiate</div>
-          <div class="val mono" id="v-expo">–</div>
+          <div class="req mono" id="r-expo">–</div><div class="sous mono" id="v-expo">–</div>
           <div class="sous" data-t="exposition_txt">Ce qu'un agent compromis pourrait dépenser à l'instant, au plus.</div>
         </div>
         <div class="carte">
           <div class="etiq" data-t="solde">Fonds dans le coffre</div>
-          <div class="val mono" id="v-solde">–</div>
+          <div class="req mono" id="r-solde">–</div><div class="sous mono" id="v-solde">–</div>
           <div class="sous" data-t="solde_txt">Jamais plus ne peut être perdu.</div>
         </div>
         <div class="carte">
           <div class="etiq" data-t="plafond">Plafond par achat</div>
-          <div class="val mono" id="v-plafond">–</div>
+          <div class="req mono" id="r-plafond">–</div><div class="sous mono" id="v-plafond">–</div>
           <div class="sous"><span data-t="periode">Période</span> : <span id="v-periode">–</span></div>
         </div>
       </div>
       <h2 data-t="derniers">Derniers achats de l'agent</h2>
       <div class="carte" id="derniers"></div>
     </div>
+    <p class="note"><span id="tarif-txt"></span> <button class="lienbtn" id="b-tarif" data-t="modifier">modifier</button>
+      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0.0001" step="0.01" class="sel" aria-label="Tarif en KAS"> KAS <button class="btn sec" id="b-tarif-ok">OK</button></span></p>
     <p id="cours" class="note"></p>
   </section>
 
@@ -133,14 +142,20 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="note"><span data-t="votre_solde">Disponible sur votre adresse</span> : <span class="mono" id="v-proprio">–</span></div>
       <div class="champ"><input id="montant" type="number" min="0.1" step="0.1" inputmode="decimal" aria-label="Montant en KAS"><span>KAS</span>
         <button id="b-alim" class="btn" data-t="alimenter">Alimenter</button></div>
-      <div class="note"><span data-t="adresse">Adresse à approvisionner (portefeuille KasWare, Kastle…)</span> : <span class="mono" id="v-adresse">–</span></div>
+      <div class="ajout mono" id="ajout" aria-live="polite"></div>
+      <p class="note" data-t="kas_seul">Le dépôt sur le réseau s'effectue uniquement en KAS. Les requêtes et les autres devises sont des équivalents indicatifs.</p>
+      <div class="etiq" data-t="adresse">Adresse à approvisionner (portefeuille KasWare, Kastle…)</div>
+      <div class="adr"><img id="qr" class="qr" alt="QR code de l'adresse" hidden>
+        <div><div class="mono" id="v-adresse" style="word-break:break-all">–</div>
+        <p><button id="b-copier" class="btn sec" data-t="copier">Copier l'adresse</button> <span id="copie" class="note" aria-live="polite"></span></p></div></div>
       <div id="m-alim"></div>
     </div>
   </section>
 
   <section id="p-historique" hidden>
+    <div class="outils"><button id="b-csv" class="btn sec" data-t="export_csv">Exporter le rapport (CSV)</button><button id="b-json" class="btn sec" data-t="export_json">Exporter le rapport (JSON)</button></div>
     <div class="carte"><table>
-      <thead><tr><th data-t="h_type">Opération</th><th class="n" data-t="h_montant">Montant</th><th class="n" data-t="h_frais">Frais</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
+      <thead><tr><th data-t="h_type">Opération</th><th class="n" data-t="h_req">Requêtes</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
       <tbody id="histo"></tbody>
     </table></div>
     <p class="note" data-t="histo_txt">Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.</p>
@@ -168,9 +183,15 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   <div class="carte">
     <div class="val" id="mod-titre"></div>
     <p class="note" id="mod-txt"></p>
+    <div class="champ" id="mod-mdp-champ" hidden><input id="mod-mdp" type="password" autocomplete="current-password" data-tp="mdp" placeholder="Mot de passe propriétaire" aria-label="Mot de passe propriétaire"></div>
     <div class="champ"><input id="mod-saisie" autocomplete="off" aria-label="Confirmation"></div>
     <p><button id="mod-ok" class="btn rouge"></button> <button id="mod-annuler" class="btn sec" data-t="annuler">Annuler</button></p>
   </div>
+</div>
+
+<div id="detail" class="modale" role="dialog" aria-modal="true" aria-labelledby="det-titre">
+  <div class="carte"><div class="val" id="det-titre"></div><dl id="det-dl"></dl>
+  <p><span id="det-lien"></span> <button id="det-fermer" class="btn sec" data-t="fermer">Fermer</button></p></div>
 </div>
 
 <script>
@@ -191,7 +212,13 @@ const T={
   conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_creer:"Confirmer la création",conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",
   en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Lien de session invalide : rouvrez le lien affiché dans le terminal.",
   cours_note:"Équivalents en devises indicatifs, au cours du KAS ({src}). Sur le réseau de test, les jetons n'ont pas de valeur.",cours_absent:"Cours indisponible : montants affichés en KAS.",
-  regles:"Règles : budget garanti {b} par période de {p}, réserve {r}, plafond par achat {m}.",reseau:"Réseau",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat",heure:"heure",heures:"heures",minutes:"minutes"},
+  regles:"Règles : budget garanti {b} par période de {p}, réserve {r}, plafond par achat {m}.",reseau:"Réseau",
+  req1:"requête",reqN:"requêtes",reqc:"req.",tarif:"Tarif de référence : {t} par requête standard, frais inclus.",modifier:"modifier",
+  kas_seul:"Le dépôt sur le réseau s'effectue uniquement en KAS. Les requêtes et les autres devises sont des équivalents indicatifs.",
+  ajout:"+ {n} ajoutées",copier:"Copier l'adresse",copie:"Adresse copiée.",copie_ko:"Copie impossible : sélectionnez l'adresse.",
+  h_req:"Requêtes",export_csv:"Exporter le rapport (CSV)",export_json:"Exporter le rapport (JSON)",fermer:"Fermer",
+  d_montant:"Montant exact",d_frais:"Frais",d_txid:"Transaction",d_instant:"Instant (score DAA)",d_dest:"Bénéficiaire",
+  mdp:"Mot de passe propriétaire",conf_gel_mdp:"Saisissez votre mot de passe propriétaire, puis tapez GELER.",rapport:"Rapport de contrôle",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat",heure:"heure",heures:"heures",minutes:"minutes"},
  en:{titre:"Agent treasury",t_tableau:"Dashboard",t_alimenter:"Fund",t_historique:"History",t_urgence:"Emergency stop",
   normal:"Under control",alerte:"Over 80% of the reserve used",epuise:"Reserve exhausted: the agent waits for the refill",gele:"Frozen: spending stopped",aucun:"No vault",
   aucun_titre:"No active agent budget",aucun_txt:"Create a vault: the agent will pay on its own, within the limits below, enforced outside your infrastructure.",creer:"Create the vault",
@@ -207,7 +234,13 @@ const T={
   conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_creer:"Confirm creation",conf_creer_txt:"Type CREER to create the vault with these rules.",
   en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Invalid session link: reopen the link shown in the terminal.",
   cours_note:"Currency equivalents are indicative, at the KAS rate ({src}). On the test network, tokens have no value.",cours_absent:"Rate unavailable: amounts shown in KAS.",
-  regles:"Rules: guaranteed budget {b} per period of {p}, reserve {r}, cap per purchase {m}.",reseau:"Network",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint",heure:"hour",heures:"hours",minutes:"minutes"}
+  regles:"Rules: guaranteed budget {b} per period of {p}, reserve {r}, cap per purchase {m}.",reseau:"Network",
+  req1:"request",reqN:"requests",reqc:"req.",tarif:"Reference price: {t} per standard request, fees included.",modifier:"edit",
+  kas_seul:"Deposits on the network are made in KAS only. Requests and other currencies are indicative equivalents.",
+  ajout:"+ {n} added",copier:"Copy address",copie:"Address copied.",copie_ko:"Copy failed: select the address.",
+  h_req:"Requests",export_csv:"Export report (CSV)",export_json:"Export report (JSON)",fermer:"Close",
+  d_montant:"Exact amount",d_frais:"Fee",d_txid:"Transaction",d_instant:"Time (DAA score)",d_dest:"Payee",
+  mdp:"Owner password",conf_gel_mdp:"Enter your owner password, then type GELER.",rapport:"Control report",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint",heure:"hour",heures:"hours",minutes:"minutes"}
 };
 const etat={jeton:null,donnees:null,langue:"fr",devise:"kas",page:"tableau"};
 const $=id=>document.getElementById(id);
@@ -217,12 +250,25 @@ const t=k=>(T[etat.langue]||T.fr)[k]??k;
 try{etat.langue=localStorage.getItem("langue")||(navigator.language||"fr").slice(0,2);etat.devise=localStorage.getItem("devise")||"kas"}catch(e){}
 if(!T[etat.langue])etat.langue="en";
 
+const loc=()=>etat.langue==="fr"?"fr-FR":"en-US";
+const DECIMALES={btc:8,eth:6,sol:4,usdt:4,usdc:4};
+function kasTexte(sompi){const kas=sompi/1e8;return new Intl.NumberFormat(loc(),{maximumFractionDigits:8}).format(kas)+" KAS"}
 function montant(sompi){
   if(sompi==null)return "–";
-  const kas=sompi/1e8,c=etat.donnees&&etat.donnees.cours,loc=etat.langue==="fr"?"fr-FR":"en-US";
-  if(etat.devise!=="kas"&&c){const v=kas*c[etat.devise];return new Intl.NumberFormat(loc,{style:"currency",currency:etat.devise.toUpperCase(),maximumFractionDigits:v<10?4:2}).format(v)}
-  return new Intl.NumberFormat(loc,{maximumFractionDigits:kas<10?4:2}).format(kas)+" KAS";
+  const kas=sompi/1e8,c=etat.donnees&&etat.donnees.cours,d=etat.devise;
+  if(d!=="kas"&&c&&c[d]!=null){const v=kas*c[d];
+    if(d==="eur"||d==="usd")return new Intl.NumberFormat(loc(),{style:"currency",currency:d.toUpperCase(),maximumFractionDigits:v<10?4:2}).format(v);
+    return new Intl.NumberFormat(loc(),{maximumFractionDigits:DECIMALES[d]||4}).format(v)+" "+d.toUpperCase()}
+  return new Intl.NumberFormat(loc(),{maximumFractionDigits:kas<10?4:2}).format(kas)+" KAS";
 }
+// Unité de lecture « requêtes » : tarif de référence du serveur, modifiable par le lecteur.
+function tarif(){let v=null;try{v=Number(localStorage.getItem("tarif"))}catch(e){}return v>0?v:((etat.donnees&&etat.donnees.tarif_reference_sompi)||40000000)}
+function requetes(sompi,sens){
+  if(sompi==null)return "–";
+  const x=sompi/tarif(),n=sens==="haut"?Math.ceil(x-1e-9):Math.floor(x+1e-9),exact=Math.abs(x-n)<1e-9;
+  return (exact?"":"~")+new Intl.NumberFormat(loc()).format(n)+" "+(n===1?t("req1"):t("reqN"));
+}
+function reqCourt(sompi){return new Intl.NumberFormat(loc(),{maximumFractionDigits:1}).format(sompi/tarif())+" "+t("reqc")}
 function duree(s){if(s>=3600){const h=s/3600;return new Intl.NumberFormat(etat.langue).format(h)+" "+(h>1?t("heures"):t("heure"))}return Math.round(s/60)+" "+t("minutes")}
 function court(h){return h&&h.length>18?h.slice(0,8)+"…"+h.slice(-6):(h||"–")}
 function lien(url,txt){const a=document.createElement("a");a.href=url;a.textContent=txt;a.target="_blank";a.rel="noopener noreferrer";return a}
@@ -249,29 +295,60 @@ function afficher(){
   const sans=d.sante==="aucun"||d.sante==="gele";
   $("sans-coffre").hidden=!sans;$("avec-coffre").hidden=sans;
   $("regles-creer").textContent=t("regles").replace("{b}",montant(r.budget_garanti_par_periode_sompi)).replace("{p}",duree(r.periode_secondes)).replace("{r}",montant(r.reserve_sompi)).replace("{m}",montant(r.plafond_par_achat_sompi));
+  $("r-budget").textContent=requetes(r.budget_garanti_par_periode_sompi,"bas");
   $("v-budget").textContent=montant(r.budget_garanti_par_periode_sompi);
+  $("r-depense").textContent=requetes(d.depense_periode_sompi??0,"haut");
   $("v-depense").textContent=montant(d.depense_periode_sompi??0);
   const pct=Math.min(100,100*(d.depense_periode_sompi||0)/r.budget_garanti_par_periode_sompi);
   $("jauge").style.width=pct+"%";$("jauge").style.background=pct>80?"var(--ambre)":"var(--accent)";
+  // exposition (un risque) arrondie vers le haut ; capacités (budget, fonds) vers le bas
+  $("r-expo").textContent=requetes(d.exposition_immediate_sompi,"haut");
   $("v-expo").textContent=montant(d.exposition_immediate_sompi);
+  $("r-solde").textContent=requetes(d.solde_coffre_sompi,"bas");
   $("v-solde").textContent=montant(d.solde_coffre_sompi);
+  $("r-plafond").textContent=requetes(r.plafond_par_achat_sompi,"bas");
   $("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
+  $("tarif-txt").textContent=t("tarif").replace("{t}",kasTexte(tarif()));
+  if(d.qr_adresse){$("qr").src=d.qr_adresse;$("qr").hidden=false}
+  majAjout();
   $("v-periode").textContent=duree(r.periode_secondes);
   $("v-proprio").textContent=montant(d.solde_proprietaire_sompi);
   $("v-adresse").textContent=d.adresse_proprietaire||"–";
   const achats=(d.historique||[]).filter(m=>m.genre==="achat").slice(0,5);
   const der=$("derniers");der.replaceChildren();
   if(!achats.length){const p=document.createElement("div");p.className="vide";p.textContent=t("aucun_achat");der.append(p)}
-  else{const tb=document.createElement("table");for(const m of achats){const tr=tb.insertRow();tr.insertCell().textContent=court(m.destinataire);const c=tr.insertCell();c.className="n mono";c.textContent=montant(m.montant_sompi)}der.append(tb)}
+  else{const tb=document.createElement("table");for(const m of achats){const tr=tb.insertRow();tr.insertCell().textContent=court(m.destinataire);const c=tr.insertCell();c.className="n mono";c.textContent=reqCourt(m.montant_sompi+m.frais_sompi);const c2=tr.insertCell();c2.className="n mono note";c2.textContent=montant(m.montant_sompi+m.frais_sompi)}der.append(tb)}
   const h=$("histo");h.replaceChildren();
   for(const m of d.historique||[]){const tr=h.insertRow();tr.insertCell().textContent=t(m.genre);
-    const a=tr.insertCell();a.className="n mono";a.textContent=montant(m.montant_sompi);
-    const f=tr.insertCell();f.className="n mono";f.textContent=m.frais_sompi?montant(m.frais_sompi):"–";
+    const a=tr.insertCell();a.className="n mono";a.textContent=reqCourt(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0));
     tr.insertCell().textContent=m.destinataire?court(m.destinataire):"–";
-    tr.insertCell().append(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("voir")))}
+    const b=document.createElement("button");b.className="lienbtn";b.textContent=t("voir");b.onclick=()=>detail(m);tr.insertCell().append(b)}
   $("cours").textContent=d.cours?t("cours_note").replace("{src}",d.cours.source):t("cours_absent");
   const tech=$("tech");tech.replaceChildren();
   const k=d.technique;if(k){for(const [cle,val] of [["reseau",k.reseau],["contrat",k.contrat],["lignee",k.lignee],["sortie",k.sortie_courante],["empreinte",k.empreinte_source_contrat]]){const dt=document.createElement("dt");dt.textContent=t(cle);const dd=document.createElement("dd");dd.className="mono";dd.textContent=val;tech.append(dt,dd)}}
+}
+
+function detail(m){
+  $("det-titre").textContent=t(m.genre);
+  const dl=$("det-dl");dl.replaceChildren();
+  for(const [k,v] of [["d_montant",kasTexte(m.montant_sompi)+" ("+m.montant_sompi+" sompi)"],["d_frais",m.frais_sompi?kasTexte(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]]){
+    const dt=document.createElement("dt");dt.textContent=t(k);const dd=document.createElement("dd");dd.className="mono";dd.textContent=String(v);dl.append(dt,dd)}
+  $("det-lien").replaceChildren(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("preuve")));
+  $("detail").classList.add("ouverte");$("det-fermer").focus();
+}
+function majAjout(){const v=parseFloat(($("montant").value||"").replace(",","."));$("ajout").textContent=v>0?t("ajout").replace("{n}",requetes(Math.round(v*1e8),"bas")):""}
+function telecharger(nom,type,contenu){const u=URL.createObjectURL(new Blob([contenu],{type}));const a=document.createElement("a");a.href=u;a.download=nom;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
+function rapport(){
+  const d=etat.donnees||{};
+  return {titre:t("rapport"),genere_le:new Date().toISOString(),sante:d.sante,regles:d.regles,tarif_reference_sompi:tarif(),
+    solde_coffre_sompi:d.solde_coffre_sompi,exposition_immediate_sompi:d.exposition_immediate_sompi,depense_periode_sompi:d.depense_periode_sompi,
+    technique:d.technique,mouvements:d.historique||[],
+    note:"Montants exacts en sompi (1 KAS = 100 000 000 sompi). Chaque mouvement est vérifiable avec son identifiant de transaction sur le registre public."};
+}
+function csv(){
+  const lignes=[["operation","montant_sompi","frais_sompi","requetes","beneficiaire","instant_daa","transaction"]];
+  for(const m of (etat.donnees&&etat.donnees.historique)||[])lignes.push([m.genre,m.montant_sompi,m.frais_sompi,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),m.destinataire||"",m.instant_daa??"",m.txid]);
+  return lignes.map(l=>l.map(x=>{const s=String(x);return /[",;\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(",")).join("\n")+"\n";
 }
 
 async function charger(){
@@ -279,11 +356,12 @@ async function charger(){
   catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}
 }
 
-function confirmer(titre,texte,mot,action){
+function confirmer(titre,texte,mot,action,avecMdp){
   return new Promise(res=>{
-    $("mod-titre").textContent=titre;$("mod-txt").textContent=texte;$("mod-ok").textContent=action;$("mod-saisie").value="";
-    $("modale").classList.add("ouverte");$("mod-saisie").focus();
-    const fin=v=>{$("modale").classList.remove("ouverte");$("mod-ok").onclick=$("mod-annuler").onclick=null;res(v)};
+    $("mod-titre").textContent=titre;$("mod-txt").textContent=texte;$("mod-ok").textContent=action;$("mod-saisie").value="";$("mod-mdp").value="";
+    $("mod-mdp-champ").hidden=!avecMdp;$("mod-mdp").placeholder=t("mdp");
+    $("modale").classList.add("ouverte");(avecMdp?$("mod-mdp"):$("mod-saisie")).focus();
+    const fin=v=>{const mdp=$("mod-mdp").value;$("mod-mdp").value="";$("modale").classList.remove("ouverte");$("mod-ok").onclick=$("mod-annuler").onclick=null;res(v?{mdp}:false)};
     $("mod-ok").onclick=()=>fin($("mod-saisie").value.trim().toUpperCase()===mot);
     $("mod-annuler").onclick=()=>fin(false);
   });
@@ -303,10 +381,19 @@ document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
 });
 $("langue").onchange=e=>{etat.langue=e.target.value;try{localStorage.setItem("langue",etat.langue)}catch(x){}traduire()};
 $("devise").onchange=e=>{etat.devise=e.target.value;try{localStorage.setItem("devise",etat.devise)}catch(x){}if(etat.donnees)afficher()};
-$("b-geler").onclick=async()=>{if(await confirmer(t("conf_gel"),t("conf_gel_txt"),"GELER",t("geler")))agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER"})};
-$("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer")))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
+$("b-geler").onclick=async()=>{const avec=!!(etat.donnees&&etat.donnees.mot_de_passe_requis);
+  const r=await confirmer(t("conf_gel"),avec?t("conf_gel_mdp"):t("conf_gel_txt"),"GELER",t("geler"),avec);
+  if(r)agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER",mot_de_passe:r.mdp})};
+$("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer"),false))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
+$("montant").oninput=majAjout;
+$("b-copier").onclick=async()=>{try{await navigator.clipboard.writeText($("v-adresse").textContent);$("copie").textContent=t("copie")}catch(e){$("copie").textContent=t("copie_ko")}};
+$("b-csv").onclick=()=>telecharger("rapport-controle.csv","text/csv;charset=utf-8",csv());
+$("b-json").onclick=()=>telecharger("rapport-controle.json","application/json",JSON.stringify(rapport(),null,2));
+$("det-fermer").onclick=()=>$("detail").classList.remove("ouverte");
+$("b-tarif").onclick=()=>{$("tarif-edit").hidden=false;$("tarif-champ").value=tarif()/1e8;$("tarif-champ").focus()};
+$("b-tarif-ok").onclick=()=>{const v=Math.round(parseFloat(String($("tarif-champ").value).replace(",","."))*1e8);if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
 $("b-alim").onclick=()=>{const v=Math.round(parseFloat($("montant").value.replace(",","."))*1e8);if(!(v>0)){message("m-alim",false,t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("modale").classList.contains("ouverte"))$("mod-annuler").click()});
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte")});
 
 traduire();
 if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t("jeton")}else{charger();setInterval(charger,20000)}
