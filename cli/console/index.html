@@ -141,7 +141,7 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="etiq" data-t="alim_titre">Ajouter des fonds au coffre</div>
       <p class="note" data-t="alim_txt">Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.</p>
       <div class="note"><span data-t="votre_solde">Disponible sur votre compte propriétaire</span> : <span class="mono" id="v-proprio">–</span></div>
-      <div class="champ"><input id="montant" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant"><span id="alim-devise" class="mono">USD</span>
+      <div class="champ"><input id="montant" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant"><select id="alim-devise" class="sel mono" aria-label="Devise du montant"></select>
         <button id="b-alim" class="btn" data-t="alimenter">Alimenter</button></div>
       <div class="ajout mono" id="ajout" aria-live="polite"></div>
       <p class="note" data-t="conversion">Montant converti au cours indicatif du moment. Le change de devises et le portefeuille seront intégrés dans une prochaine étape.</p>
@@ -272,14 +272,16 @@ const LOC={fr:"fr-FR",en:"en-US",ja:"ja-JP"};
 const loc=()=>LOC[etat.langue]||"en-US";
 const FIAT=["usd","eur","jpy","gbp"],DECIMALES={btc:8,eth:6,sol:4,usdt:2,usdc:2};
 // Valeur d'une unité de base (1e8) dans la devise choisie ; null si le cours manque.
-function cours(){const c=etat.donnees&&etat.donnees.cours;return c&&c[etat.devise]!=null?c[etat.devise]:null}
+function cours(dv){const c=etat.donnees&&etat.donnees.cours,d=dv||etat.devise;return c&&c[d]!=null?c[d]:null}
+// Devise de saisie d'Alimenter : suit la devise d'affichage, sauf si le client en choisit une autre ici.
+function deviseSaisie(){return etat.deviseSaisie||etat.devise}
 function montant(sompi){
   const c=cours();if(sompi==null||c==null)return "–";
   const v=sompi/1e8*c,d=etat.devise;
   if(FIAT.includes(d))return new Intl.NumberFormat(loc(),{style:"currency",currency:d.toUpperCase(),maximumFractionDigits:d==="jpy"?(v<100?2:0):(v<10?4:2)}).format(v);
   return new Intl.NumberFormat(loc(),{maximumFractionDigits:DECIMALES[d]||4}).format(v)+" "+d.toUpperCase();
 }
-const versSompi=v=>{const c=cours();return c?Math.round(v/c*1e8):null};
+const versSompi=(v,dv)=>{const c=cours(dv);return c?Math.round(v/c*1e8):null};
 const deSompi=x=>{const c=cours();return c?x/1e8*c:null};
 // Unité de lecture « requêtes » : tarif de référence du serveur, modifiable par le lecteur.
 function tarif(){let v=null;try{v=Number(localStorage.getItem("tarif"))}catch(e){}return v>0?v:((etat.donnees&&etat.donnees.tarif_reference_sompi)||40000000)}
@@ -330,7 +332,11 @@ function afficher(){
   afficherReq($("r-plafond"),r.plafond_par_achat_sompi,"bas");
   $("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
   $("tarif-txt").textContent=t("tarif").replace("{t}",montant(tarif()));
-  $("alim-devise").textContent=$("tarif-devise").textContent=etat.devise.toUpperCase();
+  $("tarif-devise").textContent=etat.devise.toUpperCase();
+  const sel=$("alim-devise");
+  if(!sel.options.length)for(const o of $("devise").options)sel.add(new Option(o.text,o.value));
+  for(const o of sel.options)o.disabled=cours(o.value)==null;
+  sel.value=deviseSaisie();
   $("b-tarif").hidden=cours()==null;
   majAjout();
   $("v-periode").textContent=duree(r.periode_secondes);
@@ -357,7 +363,7 @@ function detail(m){
   $("det-lien").replaceChildren(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("preuve")));
   $("detail").classList.add("ouverte");$("det-fermer").focus();
 }
-function majAjout(){const v=parseFloat(($("montant").value||"").replace(",","."));const x=v>0?versSompi(v):null;$("ajout").textContent=v>0?(x==null?t("sans_cours"):t("ajout").replace("{n}",requetes(x,"bas"))):""}
+function majAjout(){const v=parseFloat(($("montant").value||"").replace(",","."));const x=v>0?versSompi(v,deviseSaisie()):null;$("ajout").textContent=v>0?(x==null?t("sans_cours"):t("ajout").replace("{n}",requetes(x,"bas"))):""}
 function telecharger(nom,type,contenu){const u=URL.createObjectURL(new Blob([contenu],{type}));const a=document.createElement("a");a.href=u;a.download=nom;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
 function rapport(){
   const d=etat.donnees||{};
@@ -409,12 +415,13 @@ $("b-geler").onclick=async()=>{const avec=!!(etat.donnees&&etat.donnees.mot_de_p
   if(r)agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER",mot_de_passe:r.mdp})};
 $("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer"),false))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
 $("montant").oninput=majAjout;
+$("alim-devise").onchange=e=>{etat.deviseSaisie=e.target.value;majAjout()};
 $("b-csv").onclick=()=>telecharger("rapport-controle.csv","text/csv;charset=utf-8",csv());
 $("b-json").onclick=()=>telecharger("rapport-controle.json","application/json",JSON.stringify(rapport(),null,2));
 $("det-fermer").onclick=()=>$("detail").classList.remove("ouverte");
 $("b-tarif").onclick=()=>{const x=deSompi(tarif());if(x==null)return;$("tarif-edit").hidden=false;$("tarif-champ").value=Number(x.toPrecision(4));$("tarif-champ").focus()};
 $("b-tarif-ok").onclick=()=>{const v=versSompi(parseFloat(String($("tarif-champ").value).replace(",",".")));if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
-$("b-alim").onclick=()=>{const m=parseFloat(String($("montant").value).replace(",","."));const v=m>0?versSompi(m):null;if(v==null){message("m-alim",false,m>0?t("sans_cours"):t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
+$("b-alim").onclick=()=>{const m=parseFloat(String($("montant").value).replace(",","."));const v=m>0?versSompi(m,deviseSaisie()):null;if(v==null){message("m-alim",false,m>0?t("sans_cours"):t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
 document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte")});
 
 traduire();
