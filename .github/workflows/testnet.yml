@@ -54,6 +54,17 @@ jobs:
               [ -z "$line" ] && continue
               cmd="${line%% *}"
               case "$cmd" in
+                essai-routeur)
+                  echo "\$ routeur (démo) + agent Python"
+                  export ROUTEUR_CLE="$(openssl rand -hex 24)" ROUTEUR_DEMO=1 ROUTEUR_JOURNAL=testnet/routeur-journal.jsonl
+                  ./cli/target/release/vault-cli routeur --avec-vendeur > /tmp/routeur.log 2>&1 &
+                  RPID=$!
+                  for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8403/ && break; sleep 1; done
+                  ROUTEUR_URL=http://127.0.0.1:8403 python3 sdk/python/exemples/demo_agent.py 2>&1 || echo "(code de sortie $?)"
+                  kill $RPID 2>/dev/null; echo "--- journal du routeur ---"; grep -v "Connecté" /tmp/routeur.log | tail -20
+                  unset ROUTEUR_CLE ROUTEUR_DEMO
+                  echo ""
+                  continue ;;
                 essai-relais)
                   echo "\$ node tests/juge-kaspa-x402/essai-testnet.mjs"
                   node tests/juge-kaspa-x402/essai-testnet.mjs "$PWD/cli/target/release/vault-cli" 2>&1 || echo "(code de sortie $?)"

@@ -1,0 +1,17 @@
+[project]
+name = "kaspa-vault"
+version = "0.1.0"
+description = "Client for the kaspa-agent-vault router: AI agents pay HTTP 402 resources from a covenant-bounded Kaspa vault."
+requires-python = ">=3.9"
+license = "ISC"
+dependencies = []
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.3"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["kaspa_vault"]

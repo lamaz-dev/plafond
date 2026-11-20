@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: SDK Python (tests contre un faux routeur)
+        run: cd sdk/python && python3 -m unittest discover -s tests -v
       - name: Relais vers Kaspa x402 (juge et bout en bout, hors ligne)
         run: |
           cd tests/juge-kaspa-x402 && npm ci --ignore-scripts

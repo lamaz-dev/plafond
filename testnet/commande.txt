@@ -1,3 +1,2 @@
-# essai 5 (piece neuve, etat du noeud du vendeur)
-essai-relais
-pieces-porte-monnaie
+# essai : routeur + agent Python
+essai-routeur
