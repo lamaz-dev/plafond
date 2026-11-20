@@ -40,6 +40,7 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 mod fuzz;
 mod masse;
 #[cfg_attr(not(test), allow(dead_code))]
+mod attaques;
 mod cle;
 mod retrouver;
 mod relais;
@@ -829,6 +830,14 @@ async fn main() -> Res<()> {
                 Err(err) => println!("Remboursement REFUSÉ par le réseau : {err}"),
             }
             c.disconnect().await?;
+        }
+        "attaque" => {
+            // Testnet uniquement : l'agent compromis attaque son propre coffre ; le réseau doit rejeter.
+            let quoi = args.get(2).map(String::as_str).unwrap_or("tout");
+            let attaquant = keypair_from_env("ATTAQUANT_SK")?;
+            if !attaques::batterie(&xonly(&owner), &agent, &attaquant, quoi).await? {
+                return Err("au moins une attaque n'a pas eu le résultat attendu".into());
+            }
         }
         "retrouver" => {
             let c = connect().await?;
