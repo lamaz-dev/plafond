@@ -93,6 +93,23 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
     let (pk2, ag2, o2) = (pk.clone(), agent.clone(), orig.clone());
     let (issue, _, historique): (retrouver::Issue, usize, Vec<Mouvement>) =
         tokio::task::spawn_blocking(move || retrouver::retrouver_avec_historique(&retrouver::Rest::depuis_env(), &pk2, &ag2, &o2).map_err(|e| e.to_string())).await??;
+    // Bénéficiaire lisible : adresse plutôt que script brut ; plus récent en premier.
+    let historique: Vec<Value> = historique
+        .iter()
+        .rev()
+        .take(50)
+        .map(|m| {
+            let mut v = serde_json::to_value(m).unwrap_or(Value::Null);
+            if let Some(h) = &m.destinataire {
+                let adr = hex::decode(h).ok().and_then(|octets| {
+                    let spk = kaspa_consensus_core::tx::ScriptPublicKey::new(0, octets.into());
+                    kaspa_txscript::extract_script_pub_key_address(&spk, Prefix::Testnet).ok().map(|a| a.to_string())
+                });
+                v["destinataire"] = adr.map(Value::String).unwrap_or(Value::String(h.clone()));
+            }
+            v
+        })
+        .collect();
     let c = connect_silencieux().await?;
     let solde_proprio: u64 = c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
     let etat = match issue {
@@ -114,8 +131,8 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
     let disponible = p.available(now, creation);
     let depense_periode: i64 = historique
         .iter()
-        .filter(|m| m.genre == "achat" && m.instant_daa.is_some_and(|t| t > now - p.refill_period))
-        .map(|m| m.montant_sompi + m.frais_sompi)
+        .filter(|m| m["genre"] == "achat" && m["instant_daa"].as_i64().is_some_and(|t| t > now - p.refill_period))
+        .map(|m| m["montant_sompi"].as_i64().unwrap_or(0) + m["frais_sompi"].as_i64().unwrap_or(0))
         .sum();
     let min_achat = 2_000_000 + FEE as i64;
     let sante = if disponible < min_achat { "epuise" } else if disponible * 5 < p.capacity { "alerte" } else { "normal" };
@@ -127,7 +144,7 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<(f64, f64)>) ->
         "depense_periode_sompi": depense_periode,
         "solde_proprietaire_sompi": solde_proprio,
         "adresse_proprietaire": address(owner).to_string(),
-        "historique": historique.iter().rev().take(50).collect::<Vec<_>>(),
+        "historique": historique,
         "cours": cours_json,
         "technique": {
             "reseau": "Kaspa testnet-10",
