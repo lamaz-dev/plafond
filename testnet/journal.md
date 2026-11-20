@@ -265,3 +265,61 @@ Solde du propriétaire : 998.865 TKAS (3 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-20 10:15 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Coffre déployé : 5 TKAS, budget 2 TKAS, lignée 7cbd7f2a5432734844520b75518b727dc7343c6278dd0bb4b562fd140cc7a180
+Transaction : https://tn10.kaspa.stream/transactions/f3479b88a8ff10029413054c43569ae4a29e4c6a84ee9870cbbdcd8b49859d11
+
+$ vault-cli pause 360
+(pause de 360 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628348205
+Solde du propriétaire : 993.82 TKAS (1 UTXO)
+Coffre : 5 TKAS, budget disponible ~2 TKAS (sortie f3479b88a8ff10029413054c43569ae4a29e4c6a84ee9870cbbdcd8b49859d11:0)
+
+$ vault-cli attaque tout
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+[ATTAQUE] jetons gonflés dans l'état suivant : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction c1d2c8337a26d4c704e8eb98bff3ccb73d11c27c9592860eddc74626a4782864: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] règles plus lâches dans la continuation : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction 68ccb42347486e42b9aafa488e1431e3862e5f0b8cc64d214172fded09c92931: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] reste du coffre détourné vers l'attaquant : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction c77007a53c4548103827f0a775a28746737b79b72f493c37475e2e0ec857cd83: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] frais excessifs (vidage par les frais) : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction a8f17aebfd024f1a4afe57c6246e7eec65650c6bdea5f4bcac7275f61053b126: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] paiement de poussière (1 000 sompi, KIP-9) : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction f9b559c91534606b6272eeebea057d6cc3074a16e6878f1e0952150e691a7732: transaction storage mass of 1000000024 is larger than max allowed size of 500000
+[TÉMOIN] vidage antidaté n°1 (0.5 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/35fe0e1e92c9eafd20df5368872f78746bb20fd5fdb22efa2e9c81691ea79ef8
+[TÉMOIN] vidage antidaté n°2 (0.5 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/41450c51953a83f161cc083e61def2f07a8044db353b0560e4f202f3b0331105
+[TÉMOIN] vidage antidaté n°3 (0.5 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/a8ac4d8484b6b62b51a8bbdd1b4dfb6742f1b206ee5f9e6a1f92c3e98a8009a3
+[TÉMOIN] vidage antidaté n°4 (0.44 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/28141982d17612af275e465a07764ae258c9deab897d56cda1c88972bc05e269
+[ATTAQUE] temps mis de côté : en v0.4 l'agent aurait disposé de 0.18555555 TKAS ; en v0.5 de 0 TKAS ; il tente 0.17055555 TKAS
+Error: "paramètres invalides : plafond, frais ou jetons supérieurs à la capacité"
+(code de sortie 1)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628348311
+Solde du propriétaire : 993.82 TKAS (1 UTXO)
+Coffre : 3 TKAS, budget disponible ~0 TKAS (sortie 28141982d17612af275e465a07764ae258c9deab897d56cda1c88972bc05e269:1)
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre récupéré par le propriétaire : https://tn10.kaspa.stream/transactions/4370f70c55a197ccf475ee808f436bee247399d317c6f334c4db36a210141c28
+
+$ vault-cli pause 10
+(pause de 10 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628348819
+Solde du propriétaire : 996.805 TKAS (2 UTXO)
+Coffre : pas encore déployé
+
+```
