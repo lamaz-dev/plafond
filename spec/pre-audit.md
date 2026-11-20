@@ -87,7 +87,7 @@ sortie  : [0] S-F vers l'adresse de remboursement figée à la création, F ≤ 
 | H2 | `this.ageDaa` (verrou relatif via la séquence) n'est satisfait qu'après `timeoutDaa` blocs de maturité de l'UTXO | observé sur testnet-10 : « sequence locks conditions was not met » (essai 8) |
 | H3 | Une sortie liée à un covenant n'est acceptée que si une entrée de la même lignée l'autorise (KIP-20) | test `continuation_hors_lignee_refusee` |
 | H4 | L'identifiant de transaction exclut les scripts de signature : une signature réécrite en transit ne change pas l'identifiant | R20 ; observé sur testnet-10 : la fausse et la vraie réclamation ont le même identifiant |
-| H5 | Arithmétique du script sur entiers signés 64 bits, dépassement = échec du script | garde `check_params` (P4) |
+| H5 | Arithmétique du script sur entiers signés 64 bits ; dépassement et division par zéro = échec du script, jamais de retour à zéro | **vérifié dans le code** : `kaspa-txscript` 2.1.0, `opcodes/mod.rs`, `OpAdd`/`OpSub`/`OpMul` en `checked_*` (`NumberTooBig`), `OpDiv`/`OpMod` en `checked_div`/`checked_rem` (`InvalidState`) ; garde `check_params` (P4) ; test `parametres_aberrants_sans_danger_pour_les_fonds` |
 | H6 | Limite de masse de stockage 500 000 g, frais de relais calculés sur la masse de calcul et transitoire seulement | mesuré sur testnet-10 (essai 8) ; code du nœud |
 | H7 | La cadence du réseau (10 blocs/s) peut changer : les durées comptées en blocs changent de durée réelle | R6 |
 
@@ -125,3 +125,6 @@ Référence : guide officiel Toccata, https://docs.kaspa.org/toccata (tarificati
 1. Le calcul `elapsed * capacity / refillPeriod` arrondit à l'inférieur : la perte d'arrondi peut-elle être exploitée en paiements très rapprochés ? (le budget ne peut que perdre, jamais gagner, selon nos tests)
 2. Course `claim` / `refund` après le délai (R22) : la parade côté vendeur (réclamer dès la preuve, délai minimal 600 blocs) est-elle suffisante ?
 3. `ownerControl` sans restriction : un propriétaire distrait peut détruire sa propre lignée. Faut-il une entrée de recharge contrainte ?
+4. Gardes de paramètres dans le contrat (`refillPeriod > 0`, `maxPerPayment <= capacity`) : aujourd'hui assurées hors chaîne par l'outil et par le vendeur, qui recompilent avec `check_params`. Un coffre déployé hors outil avec des paramètres aberrants ne met aucun fonds en danger (R33). Faut-il quand même les inscrire dans le script ? Prévu pour la prochaine version du contrat, regroupé avec les retours d'audit, pour ne pas redéployer deux fois.
+5. Liste blanche par empreinte du script de sortie : une même clé peut recevoir sur plusieurs scripts (P2PK Schnorr, P2PK ECDSA, P2SH). La liste blanche autorise exactement les scripts inscrits, ni plus ni moins ; c'est voulu, mais le propriétaire doit inscrire le bon script.
+6. Séquestre : l'unicité de `requestHash` et l'honnêteté du vérificateur relèvent de l'application (R-série séquestre) ; le contrat garantit seulement le lien preuve ↔ requête ↔ résultat.

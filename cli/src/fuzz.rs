@@ -188,6 +188,57 @@ fn try_pay(m: &Model, amount: i64, fee: i64, back: i64, cheat: &Cheat) -> (bool,
     (ok, honest, after)
 }
 
+/// Pré-audit (R33) : paramètres aberrants qu'un déploiement fait hors de l'outil pourrait produire
+/// (période de recharge nulle, plafond par paiement supérieur à la capacité). Le contrat n'a pas de
+/// garde dédiée ; on vérifie qu'ils ne mettent aucun fonds en danger : l'outil et le vendeur les
+/// refusent, l'agent ne dépasse jamais la capacité, et le propriétaire récupère toujours tout.
+#[test]
+fn parametres_aberrants_sans_danger_pour_les_fonds() {
+    let (owner, agent) = (k(1), k(2));
+    let cov = Hash::from_bytes([7; 32]);
+    let payer = |p: &VaultParams, amount: i64, now: i64| -> bool {
+        let cur = compile_unchecked(p).unwrap();
+        let mut n = p.clone();
+        n.tokens = p.capacity.min(p.tokens) - amount - 1_000_000;
+        n.last_daa = now;
+        let next = compile_unchecked(&n).unwrap();
+        let entry = UtxoEntry::new(500_000_000, vault_spk(&cur), 0, false, Some(cov));
+        let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_VAULT);
+        let outputs = vec![
+            TransactionOutput::new(amount as u64, pay_to_address_script(&address(&k(10)))),
+            TransactionOutput { value: 500_000_000 - amount as u64 - 1_000_000, script_public_key: vault_spk(&next), covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) },
+        ];
+        let mut tx = Transaction::new(1, vec![input], outputs, now as u64, Default::default(), 0, vec![]);
+        let s = sign(&tx, std::slice::from_ref(&entry), 0, &agent);
+        tx.inputs[0].signature_script = vault_sigscript(&cur, "pay", &[s.into(), amount.into(), now.into()]).unwrap();
+        exec(&tx, vec![entry])
+    };
+    let recuperer = |p: &VaultParams| -> bool {
+        let cur = compile_unchecked(p).unwrap();
+        let entry = UtxoEntry::new(500_000_000, vault_spk(&cur), 0, false, Some(cov));
+        let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_VAULT);
+        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(499_000_000, pay_to_address_script(&address(&owner)))], 0, Default::default(), 0, vec![]);
+        let s = sign(&tx, std::slice::from_ref(&entry), 0, &owner);
+        tx.inputs[0].signature_script = vault_sigscript(&cur, "ownerControl", &[s.into()]).unwrap();
+        exec(&tx, vec![entry])
+    };
+
+    // Période de recharge nulle : tout paiement échoue (division par zéro), les fonds restent récupérables.
+    let mut p = VaultParams::ours(&owner, &agent, CAPACITY, 1_000);
+    p.refill_period = 0;
+    assert!(check_params(&p).is_err());
+    assert!(!payer(&p, 10_000_000, 2_000));
+    assert!(recuperer(&p));
+
+    // Plafond par paiement supérieur à la capacité : la capacité borne toujours la dépense.
+    let mut p = VaultParams::ours(&owner, &agent, CAPACITY, 1_000);
+    p.max_per_payment = CAPACITY * 2;
+    assert!(check_params(&p).is_err());
+    assert!(payer(&p, 10_000_000, 2_000), "témoin : un paiement normal passe");
+    assert!(!payer(&p, CAPACITY + 1, 2_000));
+    assert!(recuperer(&p));
+}
+
 /// Contrôle du banc : sans ce test, un harnais qui refuserait tout passerait les propriétés.
 #[test]
 fn banc_de_test_discriminant() {
