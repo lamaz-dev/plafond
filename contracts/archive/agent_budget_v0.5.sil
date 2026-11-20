@@ -1,0 +1,110 @@
+pragma silverscript ^0.1.0;
+
+// AgentBudget v0.5 — coffre-fort de dépenses pour agent IA.
+//
+// Règles garanties par le réseau Kaspa :
+//  - l'agent paie seul, dans la limite :
+//      * d'un plafond par paiement (maxPerPayment) ;
+//      * d'un budget qui se recharge en continu, plafonné (modèle « recharge » de Gnosis Pay) :
+//          capacity     = budget maximal disponible d'un coup (en sompi)
+//          refillPeriod = durée (en unités DAA, ~10 par seconde) pour recharger tout le budget
+//        Un budget non utilisé ne s'accumule jamais au-delà de `capacity`.
+//        v0.5 : la recharge court depuis l'inscription RÉELLE du coffre sur la chaîne (score DAA
+//        du bloc qui l'a créé, lu par OpTxInputDaaScore, motif repris de SompiVault), et non
+//        depuis l'instant annoncé par l'agent. Cela ferme l'attaque du « temps mis de côté »
+//        (v0.4 : jusqu'à 3 × capacity sur une seule période de recharge).
+//        Borne démontrée (spec/borne-de-perte.md) : sur toute durée réelle D, l'agent dépense au
+//        plus capacity + capacity × D / refillPeriod, et jamais plus que le solde du couloir.
+//      * d'une liste blanche de destinataires, OPTIONNELLE (useAllowlist = 0 : tout destinataire).
+//    Les frais de transaction sont décomptés du budget (impossible de vider le coffre par les frais).
+//  - le coffre est une lignée unique suivie par le réseau (identifiant de covenant, KIP-20) :
+//    des fonds envoyés à la même adresse sans cette lignée ne sont pas dépensables par l'agent
+//    (ils restent récupérables par le propriétaire).
+//  - les paiements de l'agent ne portent aucune donnée (payload vide) : impossible de glisser des
+//    instructions de bridge vers une autre chaîne, même vers un destinataire autorisé.
+//  - le propriétaire garde la main sur tout (dépense hors budget, récupération, changement de règles).
+//
+// Couloirs : pour permettre plusieurs paiements en parallèle, le propriétaire crée plusieurs
+// coffres (« couloirs »), chacun avec son numéro `lane` et sa part du budget. Une transaction
+// ne peut toucher qu'un seul couloir à la fois.
+//
+// Hypothèses : capacity * refillPeriod doit tenir dans un entier 64 bits ;
+// maxPerPayment <= capacity.
+
+contract AgentBudget(
+    pubkey ownerKey,
+    pubkey agentKey,
+    int lane,
+    int capacity,
+    int refillPeriod,
+    int maxPerPayment,
+    int maxFee,
+    int useAllowlist,
+    byte[32] payeeA,
+    byte[32] payeeB,
+    byte[32] payeeC,
+    int initTokens,
+    int initLastDaa
+) {
+    // État du couloir, transmis d'une transaction à la suivante.
+    int tokens = initTokens;   // budget restant au moment `lastDaa`
+    int lastDaa = initLastDaa; // dernier instant (score DAA) où le budget a été calculé
+
+    // Paiement par l'agent : output 0 = destinataire, output 1 = le couloir (reste).
+    entry pay(sig agentSig, int amount, int nowDaa) {
+        require(checkSig(agentSig, agentKey));
+        require(lane >= 0);
+        require(amount > 0);
+        require(amount <= maxPerPayment);
+
+        // Forme stricte : un seul couloir, pas de sortie cachée, aucune donnée attachée.
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 2);
+        require(OpTxPayloadLen() == 0);
+
+        // Le temps : l'agent annonce `nowDaa`, le réseau garantit qu'il n'est pas dans le futur.
+        require(nowDaa >= lastDaa);
+        require(tx.daa >= nowDaa);
+
+        // Inscription réelle de ce coffre (le paiement précédent) : fixée par le réseau, l'agent
+        // ne peut pas la choisir. Un coffre non encore confirmé (score inconnu) est refusé.
+        int inputDaa = OpTxInputDaaScore(this.activeInputIndex);
+        require(inputDaa >= lastDaa);
+
+        // Recharge du budget, plafonnée, pour le seul temps écoulé depuis cette inscription.
+        int elapsed = nowDaa - inputDaa;
+        if (elapsed < 0) {
+            elapsed = 0;
+        }
+        if (elapsed > refillPeriod) {
+            elapsed = refillPeriod;
+        }
+        int available = tokens + elapsed * capacity / refillPeriod;
+        if (available > capacity) {
+            available = capacity;
+        }
+        // Destinataire : libre, ou dans la liste blanche si elle est activée.
+        if (useAllowlist != 0) {
+            byte[32] payeeHash = blake2b(tx.outputs[0].scriptPubKey);
+            require(payeeHash == payeeA || payeeHash == payeeB || payeeHash == payeeC);
+        }
+        require(tx.outputs[0].value == amount);
+
+        // Dépense totale = montant + frais : c'est elle qui est décomptée du budget.
+        int inputValue = tx.inputs[this.activeInputIndex].value;
+        int spent = inputValue - tx.outputs[1].value;
+        require(spent >= amount);
+        require(spent - amount <= maxFee);
+        require(spent <= available);
+
+        // Lignée : la sortie 1 est la seule continuation de ce coffre (même identifiant de covenant).
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        require(OpAuthOutputIdx(this.activeInputIndex, 0) == 1);
+        validateOutputState(1, State { tokens: available - spent, lastDaa: nowDaa });
+    }
+
+    // Le propriétaire garde la main sur tout.
+    entry ownerControl(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+    }
+}

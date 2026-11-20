@@ -261,6 +261,7 @@ fn parametres_aberrants_sans_danger_pour_les_fonds() {
         ("période négative (relecteur, constat n° 4)", Box::new(|p| p.refill_period = -REFILL)),
         ("capacité nulle", Box::new(|p| { p.capacity = 0; p.max_per_payment = 0; p.tokens = 0; })),
         ("capacité × période hors 63 bits", Box::new(|p| { p.capacity = i64::MAX / 2; p.refill_period = 4; p.max_per_payment = 10_000_000; })),
+        ("période 1, capacité > 2^62 (jetons + recharge hors 63 bits, seconde relecture)", Box::new(|p| { p.refill_period = 1; p.capacity = i64::MAX / 2 + 1; p.max_per_payment = 10_000_000; p.tokens = 0; })),
         ("jetons > capacité", Box::new(|p| p.tokens = CAPACITY * 3)),
         ("jetons négatifs", Box::new(|p| p.tokens = -1)),
         ("frais maximum négatifs", Box::new(|p| p.max_fee = -1)),

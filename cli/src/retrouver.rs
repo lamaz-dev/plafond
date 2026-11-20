@@ -132,7 +132,12 @@ pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &E
                 Some(c) => c.eq_ignore_ascii_case(&cur.cov_id),
                 None => !strict,
             };
-            let candidates: Vec<&(u32, u64, Vec<u8>, Option<String>)> = tx.sorties.iter().filter(|s| meme_script(&s.2, &spk_suivant)).collect();
+            // Pour un paiement de l'agent, le contrat impose que la continuation soit la SORTIE 1 :
+            // un leurre au même script (sortie 0) est écarté même si l'indexeur ne donne pas la
+            // lignée. Pour une recharge (signée par le propriétaire), toute sortie peut convenir.
+            let paiement = p.len() == 5;
+            let candidates: Vec<&(u32, u64, Vec<u8>, Option<String>)> =
+                tx.sorties.iter().filter(|s| meme_script(&s.2, &spk_suivant) && (!paiement || s.0 == 1)).collect();
             let choisie = candidates.iter().copied().find(|s| porte(s, true)).or_else(|| candidates.iter().copied().find(|s| porte(s, false)));
             if let Some(s) = choisie {
                 suivant = Some(Etat { index: s.0, valeur: s.1, ..essai });
@@ -337,6 +342,16 @@ mod tests {
         f.daa.insert("b1".into(), now + 10);
         match retrouver(&f, &xonly(&owner), &agent, &origine).unwrap().0 {
             Issue::Courant(e) => assert_eq!(e.index, 1, "retrouver a suivi le leurre"),
+            autre => panic!("{autre:?}"),
+        }
+        // seconde passe du relecteur : même attaque avec un indexeur qui ne donne PAS la lignée
+        for v in f.par_adresse.values_mut() {
+            for t in v.iter_mut() {
+                for s in t.sorties.iter_mut() { s.3 = None; }
+            }
+        }
+        match retrouver(&f, &xonly(&owner), &agent, &origine).unwrap().0 {
+            Issue::Courant(e) => assert_eq!(e.index, 1, "retrouver a suivi le leurre (indexeur sans lignée)"),
             autre => panic!("{autre:?}"),
         }
     }

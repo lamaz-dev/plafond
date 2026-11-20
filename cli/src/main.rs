@@ -51,7 +51,17 @@ mod x402;
 const SOURCE: &str = include_str!("../../contracts/agent_budget.sil");
 /// v0.4, conservée uniquement pour rapatrier les coffres créés avant la v0.5 (R34).
 const SOURCE_V04: &str = include_str!("../../contracts/archive/agent_budget_v0.4.sil");
-pub static SOURCE_ANCIENNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// v0.5, conservée pour rapatrier les coffres créés avant la v0.5.1 (seconde relecture, constat n° 5).
+const SOURCE_V05: &str = include_str!("../../contracts/archive/agent_budget_v0.5.sil");
+/// Version de contrat à compiler : 0 = courante, 4 = v0.4 archivée, 5 = v0.5 archivée.
+pub static SOURCE_ANCIENNE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+fn source_choisie() -> &'static str {
+    match SOURCE_ANCIENNE.load(std::sync::atomic::Ordering::Relaxed) {
+        4 => SOURCE_V04,
+        5 => SOURCE_V05,
+        _ => SOURCE,
+    }
+}
 /// Révision exacte du compilateur SilverScript (doit correspondre à Cargo.toml).
 const SILVERSCRIPT_REV: &str = "443d519e6688fa03d24c69432763b13e6abe4486";
 
@@ -214,7 +224,7 @@ pub fn compile_params(p: &VaultParams) -> Res<SilAbiArtifact> {
 /// Compilation sans garde-fous : ce qu'un attaquant peut toujours faire de son côté.
 /// Réservée aux tests antagonistes ; l'outil et le vendeur passent par `compile_params`.
 pub fn compile_unchecked(p: &VaultParams) -> Res<SilAbiArtifact> {
-    let source = if SOURCE_ANCIENNE.load(std::sync::atomic::Ordering::Relaxed) { SOURCE_V04 } else { SOURCE };
+    let source = source_choisie();
     compile_source(p, source)
 }
 
@@ -398,7 +408,8 @@ pub async fn retrouver_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypa
     let (issue, sauts) = tokio::task::spawn_blocking(move || retrouver::retrouver(&retrouver::Rest::depuis_env(), &pk, &ag, &origine).map_err(|e| e.to_string())).await??;
     match issue {
         retrouver::Issue::Ferme { txid } => Err(format!("coffre déjà fermé par le propriétaire (transaction {txid})").into()),
-        retrouver::Issue::Courant(e) => {
+        retrouver::Issue::Courant(mut e) => {
+            e.valeur = montant_coffre(c, owner_pk, agent, &e).await?; // le nœud fait foi, pas l'indexeur
             creation_coffre(c, owner_pk, agent, &e).await.map_err(|_| "l'indexeur indique un coffre que le nœud ne connaît pas (non confirmé ou indexeur en retard) : réessayer")?;
             println!("Coffre retrouvé après {sauts} paiement(s), chaque saut vérifié : sortie {}:{}, {} TKAS", e.txid, e.index, e.valeur as f64 / 1e8);
             save_state(&e)?;
@@ -447,6 +458,23 @@ pub async fn connect_silencieux() -> Res<KaspaRpcClient> {
 
 /// v0.5 : score DAA du bloc qui a réellement inscrit le coffre courant (le contrat fait courir
 /// la recharge depuis lui). Erreur si le coffre n'est pas encore confirmé : réessayer.
+/// Erreur « sortie absente » : l'état local est périmé (le coffre a bougé) ; distincte de
+/// « pas encore confirmé », qui est passagère.
+pub const INTROUVABLE: &str = "sortie du coffre introuvable sur la chaîne (état local périmé ?)";
+
+/// Montant de la sortie courante du coffre, lu sur le nœud (lignée vérifiée).
+pub async fn montant_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<u64> {
+    let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
+    let spk = vault_spk(&compile_params(&p)?);
+    let addr = kaspa_txscript::extract_script_pub_key_address(&spk, Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?;
+    let utxos = c.get_utxos_by_addresses(vec![addr]).await?;
+    let u = utxos.iter().find(|u| u.outpoint.transaction_id.to_string() == e.txid && u.outpoint.index == e.index).ok_or(INTROUVABLE)?;
+    if u.utxo_entry.covenant_id != Some(e.covenant()?) {
+        return Err("sortie sans la lignée du coffre (leurre ou indexeur menteur) : refusée".into());
+    }
+    Ok(u.utxo_entry.amount)
+}
+
 pub async fn creation_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<i64> {
     let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
     let spk = vault_spk(&compile_params(&p)?);
@@ -455,7 +483,11 @@ pub async fn creation_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypai
     let u = utxos
         .iter()
         .find(|u| u.outpoint.transaction_id.to_string() == e.txid && u.outpoint.index == e.index)
-        .ok_or("coffre pas encore confirmé sur la chaîne : réessayer dans quelques secondes")?;
+        .ok_or(INTROUVABLE)?;
+    // Montant donné par le nœud : un état (ou un indexeur) qui ment sur la valeur est détecté.
+    if u.utxo_entry.amount != e.valeur {
+        return Err(format!("montant du coffre incohérent : {} sompi annoncés, {} sur la chaîne", e.valeur, u.utxo_entry.amount).into());
+    }
     // La sortie doit porter la LIGNÉE du coffre (identifiant de covenant attribué par le réseau,
     // infalsifiable) : un leurre au même script, ou une sortie inventée par un indexeur, ne l'a pas.
     if u.utxo_entry.covenant_id != Some(e.covenant()?) {
@@ -473,7 +505,7 @@ pub async fn creation_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypai
 pub async fn instants(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, e: &Etat) -> Res<(i64, i64)> {
     let creation = match creation_coffre(c, owner_pk, agent, e).await {
         Ok(cr) => cr,
-        Err(err) if std::path::Path::new(&origine_path()).exists() => {
+        Err(err) if err.to_string() == INTROUVABLE && std::path::Path::new(&origine_path()).exists() => {
             let courant = retrouver_coffre(c, owner_pk, agent).await.map_err(|e2| format!("{err} ; mode survie : {e2}"))?;
             if courant != *e {
                 return Err(format!("état local périmé : coffre courant retrouvé ({}:{}) et enregistré, relancer l'opération", courant.txid, courant.index).into());
@@ -862,9 +894,11 @@ async fn main() -> Res<()> {
             retrouver_coffre(&c, &xonly(&owner), &agent).await?;
             c.disconnect().await?;
         }
-        "recuperer" | "recuperer-v04" => {
-            if cmd == "recuperer-v04" {
-                SOURCE_ANCIENNE.store(true, std::sync::atomic::Ordering::Relaxed);
+        "recuperer" | "recuperer-v04" | "recuperer-v05" => {
+            match cmd {
+                "recuperer-v04" => SOURCE_ANCIENNE.store(4, std::sync::atomic::Ordering::Relaxed),
+                "recuperer-v05" => SOURCE_ANCIENNE.store(5, std::sync::atomic::Ordering::Relaxed),
+                _ => {}
             }
             let c = connect().await?;
             // Gel prioritaire : frais toujours au-dessus du plafond de frais de l'agent (maxFee), en
@@ -892,7 +926,8 @@ async fn main() -> Res<()> {
                         }
                     }
                 };
-                let frais = frais_gel * tentative;
+                // escalade plafonnée : on garde au moins 0,05 TKAS de sortie (sinon trop lourde, KIP-9)
+                let frais = (frais_gel * tentative).min(e.valeur.saturating_sub(5_000_000)).max(FEE);
                 let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
                 let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, e.covenant().ok());
                 let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
