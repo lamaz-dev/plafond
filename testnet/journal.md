@@ -365,3 +365,52 @@ Solde du propriétaire : 996.7 TKAS (6 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-20 11:30 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre déployé : 5 TKAS, budget 2 TKAS, lignée 65168a33b23989fa3e00293455d9b5f0b5a3572b381500061d8b2dcbd2f80854
+Transaction : https://tn10.kaspa.stream/transactions/e4a5c1f147fc08dce3b96d25ba2a3804f103ea600eb51880f0a69cd743d84687
+
+$ vault-cli pause 20
+(pause de 20 s)
+
+$ vault-cli payer 20000000
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Budget disponible : 2 TKAS, paiement demandé : 0.2 TKAS
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/4c5924717e0bcdcc68d36a70a93d6fd3de74b00ce5702e8424863ab35483b630
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli attaque regles
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+[ATTAQUE] jetons gonflés dans l'état suivant : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction 37f412d993efbfb5a1a049b7182be665f5f8575346a0313d571a518544744765: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] règles plus lâches dans la continuation : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction 3368770c8d5a23404ed7ee8eee6028a246fdb1d12beaad3317c72d3e2872528b: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] reste du coffre détourné vers l'attaquant : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction 80d74ea8bcc85374a3c140681cb03d0c33a360a230324a6b729fa5cd7a141da7: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] frais excessifs (vidage par les frais) : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction 40998bc7fc91bdbd4e3d61ac9fbc641e1727e3026719121adf6428dae9de14c1: failed to verify the signature script: script ran, but verification failed
+[ATTAQUE] paiement de poussière (1 000 sompi, KIP-9) : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction 9c7c6d92ed89d40ff5d9a69a3c963b944492969045964a4f8f3766d966938a29: transaction storage mass of 1000000027 is larger than max allowed size of 500000
+
+$ vault-cli recuperer --sans-etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+État local absent ou périmé : recherche du coffre courant (mode survie)…
+Coffre retrouvé après 1 paiement(s), chaque saut vérifié : sortie 4c5924717e0bcdcc68d36a70a93d6fd3de74b00ce5702e8424863ab35483b630:1, 4.785 TKAS
+Coffre récupéré par le propriétaire : https://tn10.kaspa.stream/transactions/071908d565f36609e31ce85bff589abf3175dab4f614b49725d00949211d17b2 (frais 0.06 TKAS, tentative 1)
+
+$ vault-cli pause 10
+(pause de 10 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628390860
+Solde du propriétaire : 996.41 TKAS (7 UTXO)
+Coffre : pas encore déployé
+
+```
