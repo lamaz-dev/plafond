@@ -38,7 +38,8 @@ pub fn tx_agent(owner_pk: &[u8], agent: &Keypair, attaquant: &ScriptPublicKey, e
         q.max_per_payment = q.capacity;
         compile_unchecked(&q)?
     } else {
-        compile_pk(owner_pk, agent, next_tokens, now)?
+        // un attaquant encode l'état qu'il veut, même impossible (jetons négatifs) : pas de contrôle
+        compile_unchecked(&VaultParams::pour(owner_pk, agent, next_tokens, now))?
     };
     let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), creation as u64, false, Some(cov));
     let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
@@ -78,7 +79,8 @@ fn rapport(nom: &str, attendu_refus: bool, r: &Result<String, String>) -> bool {
 pub async fn batterie(owner_pk: &[u8], agent: &Keypair, attaquant: &Keypair, quoi: &str) -> Res<bool> {
     let c = connect().await?;
     let attaquant_spk = pay_to_address_script(&address(attaquant));
-    let payee = pay_to_address_script(&address(&k_vendeur(owner_pk)));
+    // destinataire : l'adresse du propriétaire (les fonds de test restent chez lui)
+    let payee = pay_to_address_script(&Address::new(Prefix::Testnet, Version::PubKey, owner_pk));
     let mut ok = true;
     let mut e = load_state()?;
     if quoi == "regles" || quoi == "tout" {
@@ -136,7 +138,3 @@ pub async fn batterie(owner_pk: &[u8], agent: &Keypair, attaquant: &Keypair, quo
     Ok(ok)
 }
 
-/// Vendeur de démonstration dérivé du propriétaire (même convention que `payee`).
-fn k_vendeur(_owner_pk: &[u8]) -> Keypair {
-    Keypair::from_seckey_slice(secp256k1::SECP256K1, &[0x5e; 32]).expect("clé fixe")
-}

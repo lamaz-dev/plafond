@@ -1,11 +1,9 @@
 # Une commande par ligne. Pousser ce fichier lance l exécution sur le testnet-10.
-# Étape 4 : attaques volontaires d un agent compromis contre son propre coffre (20 nov. 2026)
+# Étape 4 (suite) : attaque du temps mis de côté sur le vrai réseau
 deployer
 # coffre laissé inactif 6 minutes (≈ 3 600 DAA, soit 0,2 TKAS de recharge en v0.4)
 pause 360
-etat
-# règles (état gonflé, règles lâches, reste détourné, frais excessifs, poussière) puis temps mis de côté
-attaque tout
+attaque temps
 etat
 recuperer
 pause 10
