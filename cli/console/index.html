@@ -11,10 +11,10 @@
   --r:14px;--ombre:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px rgba(0,0,0,.25);
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--fond);color:var(--texte);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{margin:0;background:var(--fond);color:var(--texte);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Sans","Noto Sans JP",sans-serif}
 .mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
-header{display:flex;align-items:center;gap:16px;padding:18px 28px;border-bottom:1px solid var(--ligne);position:sticky;top:0;background:rgba(14,17,22,.92);backdrop-filter:blur(8px);z-index:5}
-.logo{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:.2px}
+header{display:flex;align-items:center;gap:14px;padding:16px 28px;border-bottom:1px solid var(--ligne);position:sticky;top:0;background:rgba(14,17,22,.94);backdrop-filter:blur(8px);z-index:5;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;font-weight:650}
 .logo i{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#1C8E78);display:inline-block}
 .sante{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-weight:600;font-size:13px;border:1px solid var(--ligne)}
 .sante b{width:9px;height:9px;border-radius:50%;display:inline-block}
@@ -26,15 +26,19 @@ header{display:flex;align-items:center;gap:16px;padding:18px 28px;border-bottom:
 .esp{flex:1}
 select,button,input{font:inherit;color:inherit}
 .sel{background:var(--carte);border:1px solid var(--ligne);border-radius:10px;padding:6px 10px}
+.btn-param{background:var(--carte);border:1px solid var(--ligne);border-radius:10px;padding:6px 12px;cursor:pointer;color:var(--doux)}
+.btn-param[aria-pressed=true]{color:var(--texte);border-color:var(--accent)}
 nav{display:flex;gap:4px;padding:12px 28px 0}
 nav button{background:none;border:0;border-bottom:2px solid transparent;padding:10px 14px;color:var(--doux);cursor:pointer;font-weight:550}
 nav button[aria-selected=true]{color:var(--texte);border-color:var(--accent)}
 nav button.urgence{color:var(--danger)}
 main{padding:22px 28px 60px;max-width:1180px}
-.grille{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.grille{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
 .carte{background:var(--carte);border:1px solid var(--ligne);border-radius:var(--r);padding:18px;box-shadow:var(--ombre)}
 .etiq{color:var(--doux);font-size:13px;margin-bottom:6px}
-.val{font-size:26px;font-weight:650}
+.val{font-size:24px;font-weight:650}
+.req{font-size:30px;font-weight:700;white-space:nowrap}
+.req small{font-size:15px;font-weight:550;color:var(--doux);margin-left:6px}
 .sous{color:var(--doux);font-size:13px;margin-top:4px}
 .jauge{height:10px;background:var(--carte2);border-radius:999px;overflow:hidden;margin:12px 0 6px}
 .jauge span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .4s}
@@ -46,33 +50,46 @@ td.n{text-align:right}
 a{color:var(--accent)}
 .vide{color:var(--doux);padding:16px 0}
 .btn{background:var(--accent);color:#06231C;border:0;border-radius:10px;padding:11px 18px;font-weight:650;cursor:pointer}
-.btn:disabled{opacity:.5;cursor:wait}
+.btn:disabled{opacity:.5;cursor:not-allowed}
 .btn.sec{background:var(--carte2);color:var(--texte);border:1px solid var(--ligne)}
 .btn.rouge{background:var(--danger);color:#2A0A05}
+.btn.petit{padding:8px 12px;font-size:14px}
+.ajouter{margin-top:12px;width:100%}
 .grand{font-size:18px;padding:18px 28px;border-radius:14px}
-.champ{display:flex;gap:10px;align-items:center;margin:12px 0}
+.champ{display:flex;gap:10px;align-items:center;margin:12px 0;flex-wrap:wrap}
 .champ input{background:var(--carte2);border:1px solid var(--ligne);border-radius:10px;padding:10px 12px;width:200px}
 .note{color:var(--doux);font-size:13px}
 .msg{margin-top:12px;padding:12px 14px;border-radius:10px;font-size:14px}
 .ok{background:rgba(61,219,184,.1);border:1px solid rgba(61,219,184,.35)}
 .err{background:rgba(255,122,102,.1);border:1px solid rgba(255,122,102,.4)}
-details{margin-top:28px}
-summary{cursor:pointer;color:var(--doux)}
-dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;font-size:13px}
+.info{background:rgba(240,180,76,.08);border:1px solid rgba(240,180,76,.35)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;font-size:13px;margin:0}
 dt{color:var(--doux)}dd{margin:0;word-break:break-all}
-.modale{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10}
+.modale{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;z-index:10;overflow:auto;padding:6vh 12px}
 .modale.ouverte{display:flex}
-.modale .carte{max-width:460px;width:92%}
-[hidden]{display:none!important}
-.req{font-size:30px;font-weight:700;white-space:nowrap}
-.req small{font-size:15px;font-weight:550;color:var(--doux);margin-left:6px}
-.qr{background:#fff;border-radius:10px;padding:6px;width:150px;height:150px}
-.adr{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:12px}
-.ajout{color:var(--accent);font-weight:600;min-height:22px}
+.modale>.carte{max-width:560px;width:100%}
+.modale .tete{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.fermer{background:none;border:0;color:var(--doux);font-size:22px;cursor:pointer;line-height:1}
+.chiffres{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+.chiffres div{background:var(--carte2);border-radius:10px;padding:10px 12px}
+.manque{color:var(--ambre)}
+.rapides{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.rapides button[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
+.modes{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 10px}
+.modes button{background:var(--carte2);border:1px solid var(--ligne);border-radius:10px;padding:9px 12px;cursor:pointer}
+.modes button[aria-selected=true]{border-color:var(--accent)}
+.modes button:disabled{opacity:.55;cursor:not-allowed}
+.qr{background:#fff;border-radius:10px;padding:6px;width:160px;height:160px}
+.adr{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.attente{display:inline-flex;align-items:center;gap:8px;margin-top:10px}
+.point{width:9px;height:9px;border-radius:50%;background:var(--ambre);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
 .lienbtn{background:none;border:0;color:var(--accent);cursor:pointer;padding:0;text-decoration:underline}
-.outils{display:flex;gap:10px;justify-content:flex-end;margin-bottom:10px}
+.outils{display:flex;gap:10px;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap}
+.blocs{display:grid;gap:14px}
 #tarif-champ{width:110px}
-@media (max-width:640px){header,nav,main{padding-left:16px;padding-right:16px}.val{font-size:22px}}
+[hidden]{display:none!important}
+@media (max-width:640px){header,nav,main{padding-left:16px;padding-right:16px}.req{font-size:26px}.chiffres{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -86,21 +103,22 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   <select id="langue" class="sel" aria-label="Langue">
     <option value="fr">Français</option><option value="en">English</option><option value="ja">日本語</option>
   </select>
+  <button id="b-param" class="btn-param" aria-pressed="false"><span aria-hidden="true">⚙</span> <span data-t="parametres">Paramètres</span></button>
 </header>
 <nav role="tablist">
   <button role="tab" data-p="tableau" aria-selected="true" data-t="t_tableau">Tableau de bord</button>
-  <button role="tab" data-p="alimenter" aria-selected="false" data-t="t_alimenter">Alimenter</button>
   <button role="tab" data-p="historique" aria-selected="false" data-t="t_historique">Historique</button>
   <button role="tab" data-p="urgence" aria-selected="false" class="urgence" data-t="t_urgence">Arrêt d'urgence</button>
 </nav>
 <main>
   <div id="erreur" class="msg err" hidden></div>
 
+  <!-- ===================== Tableau de bord ===================== -->
   <section id="p-tableau">
     <div id="sans-coffre" class="carte" hidden>
       <div class="val" data-t="aucun_titre">Aucun budget d'agent actif</div>
       <p class="note" data-t="aucun_txt">Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.</p>
-      <div id="regles-creer" class="note mono"></div>
+      <div id="regles-creer" class="note"></div>
       <p><button id="b-creer" class="btn" data-t="creer">Créer le coffre</button></p>
       <div id="m-creer"></div>
     </div>
@@ -121,6 +139,7 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
           <div class="etiq" data-t="solde">Fonds dans le coffre</div>
           <div class="req mono" id="r-solde">–</div><div class="sous mono" id="v-solde">–</div>
           <div class="sous" data-t="solde_txt">Jamais plus ne peut être perdu.</div>
+          <button id="b-ajouter" class="btn ajouter">+ <span data-t="ajouter_fonds">Ajouter des fonds</span></button>
         </div>
         <div class="carte">
           <div class="etiq" data-t="plafond">Plafond par achat</div>
@@ -132,170 +151,260 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="carte" id="derniers"></div>
     </div>
     <p class="note"><span id="tarif-txt"></span> <button class="lienbtn" id="b-tarif" data-t="modifier">modifier</button>
-      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0" step="any" class="sel" aria-label="Tarif"> <span id="tarif-devise" class="mono">USD</span> <button class="btn sec" id="b-tarif-ok">OK</button></span></p>
+      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0" step="any" class="sel" aria-label="Tarif"> <span id="tarif-devise" class="mono"></span> <button class="btn sec petit" id="b-tarif-ok">OK</button></span></p>
     <p id="cours" class="note"></p>
   </section>
 
-  <section id="p-alimenter" hidden>
-    <div class="carte">
-      <div class="etiq" data-t="alim_titre">Ajouter des fonds au coffre</div>
-      <p class="note" data-t="alim_txt">Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.</p>
-      <div class="note"><span data-t="votre_solde">Disponible sur votre compte propriétaire</span> : <span class="mono" id="v-proprio">–</span></div>
-      <div class="champ"><input id="montant" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant"><select id="alim-devise" class="sel mono" aria-label="Devise du montant"></select>
-        <button id="b-alim" class="btn" data-t="alimenter">Alimenter</button></div>
-      <div class="ajout mono" id="ajout" aria-live="polite"></div>
-      <p class="note" data-t="conversion">Montant converti au cours indicatif du moment. Le change de devises et le portefeuille seront intégrés dans une prochaine étape.</p>
-      <div id="m-alim"></div>
-    </div>
-  </section>
-
+  <!-- ===================== Historique ===================== -->
   <section id="p-historique" hidden>
-    <div class="outils"><button id="b-csv" class="btn sec" data-t="export_csv">Exporter le rapport (CSV)</button><button id="b-json" class="btn sec" data-t="export_json">Exporter le rapport (JSON)</button></div>
+    <div class="outils"><button id="b-csv" class="btn sec petit" data-t="export_csv">Exporter le rapport (CSV)</button><button id="b-json" class="btn sec petit" data-t="export_json">Exporter le rapport (JSON)</button></div>
     <div class="carte"><table>
-      <thead><tr><th data-t="h_type">Opération</th><th class="n" data-t="h_req">Requêtes</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
+      <thead><tr><th data-t="h_type">Opération</th><th class="n" data-t="h_req">Requêtes</th><th class="n" data-t="h_montant">Montant</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
       <tbody id="histo"></tbody>
     </table></div>
     <p class="note" data-t="histo_txt">Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.</p>
   </section>
 
+  <!-- ===================== Arrêt d'urgence ===================== -->
   <section id="p-urgence" hidden>
     <div class="carte">
       <div class="val" data-t="urg_titre">Arrêter immédiatement toutes les dépenses</div>
-      <p class="note" data-t="urg_txt">Tous les fonds du coffre reviennent sur votre adresse de propriétaire. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.</p>
+      <p class="note" data-t="urg_txt">Tous les fonds du coffre reviennent dans votre trésorerie. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.</p>
       <button id="b-geler" class="btn rouge grand" data-t="geler">Geler maintenant</button>
       <div id="m-geler"></div>
     </div>
   </section>
 
-  <details>
-    <summary data-t="archi">Architecture et conformité</summary>
-    <div class="carte" style="margin-top:12px">
-      <p class="note" data-t="archi_txt">La règle de dépense est exécutée hors de votre infrastructure, par le consensus d'un réseau public : ni l'agent, ni son serveur, ni l'éditeur de ce logiciel ne peuvent la contourner. La clé du propriétaire reste chiffrée sur cet ordinateur.</p>
-      <dl id="tech"></dl>
+  <!-- ===================== Paramètres > Sécurité (vue avancée) ===================== -->
+  <section id="p-securite" hidden>
+    <div class="etiq"><span data-t="parametres">Paramètres</span> › <span data-t="securite">Sécurité</span></div>
+    <div class="blocs">
+      <div class="carte">
+        <div class="etiq" data-t="adr_tresorerie">Adresse de trésorerie</div>
+        <div class="adr"><img id="s-qr" class="qr" alt="QR" hidden>
+          <div><div class="mono" id="s-adresse" style="word-break:break-all">–</div>
+          <p><button class="btn sec petit" data-copier="s-adresse" data-t="copier">Copier</button> <span class="note" aria-live="polite" data-retour="s-adresse"></span></p></div></div>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="chiffrement">État du chiffrement local</div>
+        <div id="s-chiffrement" class="note">–</div>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="sauvegarde">Exporter / sauvegarder la clé</div>
+        <p class="note" data-t="sauvegarde_txt">Télécharge le fichier de clé tel qu'il est stocké : chiffré par votre mot de passe. La clé n'est jamais exportée en clair. Conservez cette sauvegarde hors de cet ordinateur.</p>
+        <button id="b-sauvegarde" class="btn sec" data-t="sauvegarder">Sauvegarder la clé chiffrée</button>
+        <div id="m-sauvegarde"></div>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="lignee_titre">Vérification de lignée (v0.5.1)</div>
+        <p class="note" data-t="lignee_txt">Retrouve le coffre courant depuis son origine sur le registre public et vérifie qu'il porte bien sa lignée, sans faire confiance à aucun serveur.</p>
+        <button id="b-lignee" class="btn sec" data-t="verifier">Vérifier maintenant</button>
+        <div id="m-lignee"></div>
+        <dl id="tech" style="margin-top:14px"></dl>
+      </div>
     </div>
-  </details>
+  </section>
 </main>
 
+<!-- ===================== Modale « Ajouter des fonds » ===================== -->
+<div id="m-fonds" class="modale" role="dialog" aria-modal="true" aria-labelledby="f-titre">
+  <div class="carte">
+    <div class="tete"><div class="val" id="f-titre" data-t="ajouter_fonds">Ajouter des fonds</div><button class="fermer" id="f-fermer" aria-label="Fermer">×</button></div>
+
+    <!-- Niveau 1 : la trésorerie suffit -->
+    <div id="f-n1">
+      <div class="chiffres">
+        <div><div class="etiq" data-t="solde_dispo">Solde disponible</div><div class="mono val" id="f-dispo">–</div></div>
+        <div id="f-manque-bloc" hidden><div class="etiq" data-t="manque">Manque</div><div class="mono val manque" id="f-manque">–</div></div>
+      </div>
+      <div class="champ"><input id="f-montant" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant">
+        <select id="f-devise" class="sel mono" aria-label="Devise du montant"></select></div>
+      <div class="note mono" id="f-apercu" aria-live="polite">&nbsp;</div>
+      <div class="champ" id="f-mdp-champ"><input id="f-mdp" type="password" autocomplete="current-password" aria-label="Mot de passe"></div>
+      <p><button id="f-valider" class="btn" data-t="ajouter_coffre" disabled>Ajouter au coffre</button>
+        <button id="f-vers-n2" class="lienbtn" data-t="approvisionner_lien">Ajouter des fonds à votre trésorerie</button></p>
+      <div id="f-msg1"></div>
+    </div>
+
+    <!-- Niveau 2 : approvisionner la trésorerie -->
+    <div id="f-n2" hidden>
+      <p class="msg info" id="f-n2-raison" hidden></p>
+      <div class="etiq" data-t="tresorerie_titre">Ajouter des fonds à votre trésorerie</div>
+      <div class="rapides" id="f-rapides"></div>
+      <div class="champ" id="f-libre-champ" hidden><input id="f-libre" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant libre"><span id="f-libre-devise" class="mono"></span></div>
+      <div class="modes" role="tablist">
+        <button role="tab" data-mode="crypto" aria-selected="true" data-t="mode_crypto">Crypto (Kaspa)</button>
+        <button role="tab" data-mode="virement" aria-selected="false" disabled><span data-t="mode_virement">Virement bancaire</span> · <span data-t="bientot">Bientôt disponible (Phase 2)</span></button>
+        <button role="tab" data-mode="test" aria-selected="false" data-t="mode_test">Fonds de test</button>
+      </div>
+      <div id="f-crypto">
+        <p class="note" data-t="crypto_txt">Envoyez le montant depuis votre portefeuille vers l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.</p>
+        <div class="mono note" id="f-a-envoyer"></div>
+        <div class="adr"><img id="f-qr" class="qr" alt="QR" hidden>
+          <div><div class="mono" id="f-adresse" style="word-break:break-all">–</div>
+          <p><button class="btn sec petit" data-copier="f-adresse" data-t="copier">Copier</button> <span class="note" aria-live="polite" data-retour="f-adresse"></span></p></div></div>
+      </div>
+      <div id="f-test" hidden>
+        <p class="note" data-t="test_txt">Réseau de test : obtenez des fonds sans valeur auprès du distributeur public, en collant l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.</p>
+        <p><button class="btn sec petit" data-copier="f-adresse" data-t="copier_adresse">Copier l'adresse</button> <a id="f-faucet" href="https://faucet-tn10.kaspanet.io/" target="_blank" rel="noopener noreferrer" data-t="ouvrir_faucet">Ouvrir le distributeur de test</a></p>
+      </div>
+      <div class="attente" id="f-attente" aria-live="polite"><span class="point" aria-hidden="true"></span><span data-t="attente">En attente du dépôt…</span></div>
+      <p><button id="f-retour" class="lienbtn" data-t="retour">← Revenir à l'ajout au coffre</button></p>
+    </div>
+  </div>
+</div>
+
+<!-- Modale de confirmation (gel, création, sauvegarde) -->
 <div id="modale" class="modale" role="dialog" aria-modal="true" aria-labelledby="mod-titre">
   <div class="carte">
     <div class="val" id="mod-titre"></div>
     <p class="note" id="mod-txt"></p>
-    <div class="champ" id="mod-mdp-champ" hidden><input id="mod-mdp" type="password" autocomplete="current-password" data-tp="mdp" placeholder="Mot de passe propriétaire" aria-label="Mot de passe propriétaire"></div>
-    <div class="champ"><input id="mod-saisie" autocomplete="off" aria-label="Confirmation"></div>
+    <div class="champ" id="mod-mdp-champ" hidden><input id="mod-mdp" type="password" autocomplete="current-password" aria-label="Mot de passe"></div>
+    <div class="champ" id="mod-saisie-champ"><input id="mod-saisie" autocomplete="off" aria-label="Confirmation"></div>
     <p><button id="mod-ok" class="btn rouge"></button> <button id="mod-annuler" class="btn sec" data-t="annuler">Annuler</button></p>
   </div>
 </div>
 
+<!-- Détail d'une opération -->
 <div id="detail" class="modale" role="dialog" aria-modal="true" aria-labelledby="det-titre">
-  <div class="carte"><div class="val" id="det-titre"></div><dl id="det-dl"></dl>
+  <div class="carte"><div class="val" id="det-titre"></div><dl id="det-dl" style="margin-top:12px"></dl>
   <p><span id="det-lien"></span> <button id="det-fermer" class="btn sec" data-t="fermer">Fermer</button></p></div>
 </div>
 
 <script>
 "use strict";
 const T={
- fr:{titre:"Trésorerie des agents",t_tableau:"Tableau de bord",t_alimenter:"Alimenter",t_historique:"Historique",t_urgence:"Arrêt d'urgence",
+ fr:{titre:"Trésorerie des agents",t_tableau:"Tableau de bord",t_historique:"Historique",t_urgence:"Arrêt d'urgence",parametres:"Paramètres",securite:"Sécurité",
   normal:"Sous contrôle",alerte:"Réserve à plus de 80 % consommée",epuise:"Réserve épuisée : l'agent attend la recharge",gele:"Gelé : dépenses arrêtées",aucun:"Aucun coffre",
   aucun_titre:"Aucun budget d'agent actif",aucun_txt:"Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.",creer:"Créer le coffre",
   budget:"Budget garanti par période",depense:"Dépensé sur la période",exposition:"Exposition maximale immédiate",exposition_txt:"Ce qu'un agent compromis pourrait dépenser à l'instant, au plus.",
   solde:"Fonds dans le coffre",solde_txt:"Jamais plus ne peut être perdu.",plafond:"Plafond par achat",periode:"Période",derniers:"Derniers achats de l'agent",
-  alim_titre:"Ajouter des fonds au coffre",alim_txt:"Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.",
-  votre_solde:"Disponible sur votre compte propriétaire",alimenter:"Alimenter",conversion:"Montant converti au cours indicatif du moment. Le change de devises et le portefeuille seront intégrés dans une prochaine étape.",sans_cours:"Cours indisponible : réessayez dans un instant.",adresse:"Adresse à approvisionner (portefeuille KasWare, Kastle…)",
-  h_type:"Opération",h_montant:"Montant",h_frais:"Frais",h_dest:"Bénéficiaire",h_preuve:"Preuve",histo_txt:"Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.",
+  ajouter_fonds:"Ajouter des fonds",solde_dispo:"Solde disponible",manque:"Manque",ajouter_coffre:"Ajouter au coffre",approvisionner_lien:"Ajouter des fonds à votre trésorerie",
+  apercu:"+ {n} ajoutées",apercu_insuffisant:"Trésorerie insuffisante pour ce montant.",mdp:"Mot de passe maître",
+  tresorerie_titre:"Ajouter des fonds à votre trésorerie",raison_manque:"Il manque {m} dans votre trésorerie pour ajouter {x} au coffre.",libre:"Montant libre",
+  mode_crypto:"Crypto (Kaspa)",mode_virement:"Virement bancaire",bientot:"Bientôt disponible (Phase 2)",mode_test:"Fonds de test",
+  crypto_txt:"Envoyez le montant depuis votre portefeuille vers l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.",
+  a_envoyer:"À envoyer : ≈ {k} (pour {m})",test_txt:"Réseau de test : obtenez des fonds sans valeur auprès du distributeur public, en collant l'adresse de votre trésorerie. L'arrivée est détectée automatiquement.",
+  copier_adresse:"Copier l'adresse",ouvrir_faucet:"Ouvrir le distributeur de test",attente:"En attente du dépôt…",recu:"Dépôt reçu : +{m}. Votre trésorerie est à jour.",retour:"← Revenir à l'ajout au coffre",
+  h_type:"Opération",h_req:"Requêtes",h_montant:"Montant",h_frais:"Frais",h_dest:"Bénéficiaire",h_preuve:"Preuve",histo_txt:"Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.",
   achat:"Achat de l'agent",ajout:"Ajout de fonds",gel:"Gel",voir:"voir",aucun_achat:"Aucun achat pour l'instant.",
-  urg_titre:"Arrêter immédiatement toutes les dépenses",urg_txt:"Tous les fonds du coffre reviennent sur votre adresse de propriétaire. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.",
-  geler:"Geler maintenant",annuler:"Annuler",archi:"Architecture et conformité",
-  archi_txt:"La règle de dépense est exécutée hors de votre infrastructure, par le consensus d'un réseau public : ni l'agent, ni son serveur, ni l'éditeur de ce logiciel ne peuvent la contourner. La clé du propriétaire reste chiffrée sur cet ordinateur.",
-  conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_creer:"Confirmer la création",conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",
+  urg_titre:"Arrêter immédiatement toutes les dépenses",urg_txt:"Tous les fonds du coffre reviennent dans votre trésorerie. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.",
+  geler:"Geler maintenant",annuler:"Annuler",fermer:"Fermer",
+  conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_gel_mdp:"Saisissez votre mot de passe maître, puis tapez GELER.",
+  conf_creer:"Confirmer la création",conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",conf_sauvegarde:"Sauvegarder la clé chiffrée",conf_sauvegarde_txt:"Saisissez votre mot de passe maître pour télécharger le fichier de clé chiffré.",
   en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Lien de session invalide : rouvrez le lien affiché dans le terminal.",
-  cours_note:"Montants en devises indicatifs ({src}). Sur le réseau de test, ils n'ont pas de valeur réelle.",cours_absent:"Cours indisponible : seuls les nombres de requêtes sont affichés.",
-  regles:"Règles : budget garanti {b} par période de {p}, réserve {r}, plafond par achat {m}.",reseau:"Réseau",
+  cours_note:"Montants en devises indicatifs ({src}). Sur le réseau de test, ils n'ont pas de valeur réelle.",cours_absent:"Cours indisponible : seuls les nombres de requêtes sont affichés.",sans_cours:"Cours indisponible : réessayez dans un instant.",
+  regles:"Règles : budget garanti {b} par période de {p}, plafond par achat {m}.",heure:"heure",heures:"heures",minutes:"minutes",
   req1:"requête",reqN:"requêtes",reqc:"req.",tarif:"Tarif de référence : {t} par requête standard, frais inclus.",modifier:"modifier",
-  ajout:"+ {n} ajoutées",copier:"Copier l'adresse",copie:"Adresse copiée.",copie_ko:"Copie impossible : sélectionnez l'adresse.",
-  h_req:"Requêtes",export_csv:"Exporter le rapport (CSV)",export_json:"Exporter le rapport (JSON)",fermer:"Fermer",
-  d_montant:"Montant exact",d_frais:"Frais",d_txid:"Transaction",d_instant:"Instant (score DAA)",d_dest:"Bénéficiaire",
-  mdp:"Mot de passe propriétaire",conf_gel_mdp:"Saisissez votre mot de passe propriétaire, puis tapez GELER.",rapport:"Rapport de contrôle",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat",heure:"heure",heures:"heures",minutes:"minutes"},
- ja:{titre:"エージェント資金管理",t_tableau:"ダッシュボード",t_alimenter:"入金",t_historique:"履歴",t_urgence:"緊急停止",
-  normal:"管理下にあります",alerte:"準備金の80%以上を使用済み",epuise:"準備金が枯渇：補充待ち",gele:"凍結済み：支出は停止しています",aucun:"金庫なし",
-  aucun_titre:"有効なエージェント予算はありません",aucun_txt:"金庫を作成すると、エージェントは以下の上限内で単独で支払えます。上限はお客様のインフラの外で保証されます。",creer:"金庫を作成",
-  budget:"期間ごとの保証予算",depense:"今期間の支出",exposition:"即時最大エクスポージャー",exposition_txt:"侵害されたエージェントが今この瞬間に使える最大額。",
-  solde:"金庫内の資金",solde_txt:"これ以上を失うことはありません。",plafond:"1回あたりの上限",periode:"期間",derniers:"エージェントの最近の購入",
-  alim_titre:"金庫に資金を追加",alim_txt:"資金は所有者アカウントから移されます。期間ごとの保証予算は変わらず、準備金の総額だけが増えます。",
-  votre_solde:"所有者アカウントの利用可能額",alimenter:"入金",conversion:"金額は現在の参考レートで換算されます。通貨の両替とウォレットは今後のステップで統合されます。",sans_cours:"レートを取得できません。しばらくしてから再度お試しください。",
-  h_type:"取引",h_montant:"金額",h_frais:"手数料",h_dest:"受取人",h_preuve:"証明",histo_txt:"各行は公開台帳から再構成・検証されており、後から改ざんすることはできません。",
-  achat:"エージェントの購入",ajout:"資金の追加",gel:"凍結",voir:"表示",aucun_achat:"まだ購入はありません。",
-  urg_titre:"すべての支出を直ちに停止",urg_txt:"金庫の資金はすべて所有者アカウントに戻ります。エージェントはもう何も使えません。この操作はエージェントのサーバーにも、いかなる事業者にも依存しません。",
-  geler:"今すぐ凍結",annuler:"キャンセル",archi:"アーキテクチャとコンプライアンス",
-  archi_txt:"支出ルールはお客様のインフラの外で、公開ネットワークのコンセンサスによって実行されます。エージェントも、そのサーバーも、本ソフトウェアの発行者も、これを回避できません。所有者の鍵はこのコンピューター上で暗号化されたままです。",
-  conf_gel:"凍結の確認",conf_gel_txt:"GELER と入力すると、すべての支出を停止し資金を戻します。",conf_creer:"作成の確認",conf_creer_txt:"CREER と入力すると、このルールで金庫を作成します。",
-  en_cours:"処理中です。数秒お待ちください…",fait:"完了しました。",preuve:"公開証明",jeton:"セッションリンクが無効です。ターミナルに表示されたリンクを開き直してください。",
-  cours_note:"通貨建ての金額は参考値です（{src}）。テストネットワーク上では実際の価値はありません。",cours_absent:"レートを取得できません：リクエスト数のみ表示しています。",
-  regles:"ルール：期間 {p} ごとの保証予算 {b}、準備金 {r}、1回あたりの上限 {m}。",reseau:"ネットワーク",contrat:"コントラクト",lignee:"系譜",sortie:"現在の出力",empreinte:"コントラクトの指紋",heure:"時間",heures:"時間",minutes:"分",
-  req1:"リクエスト",reqN:"リクエスト",reqc:"件",tarif:"参考価格：標準リクエスト1件あたり {t}（手数料込み）。",modifier:"変更",
-  ajout:"+ {n} 追加",copier:"コピー",copie:"コピーしました。",copie_ko:"コピーできません。",
-  h_req:"リクエスト",export_csv:"管理レポートを書き出す（CSV）",export_json:"管理レポートを書き出す（JSON）",fermer:"閉じる",
-  d_montant:"金額",d_frais:"手数料",d_txid:"トランザクション",d_instant:"時刻（DAAスコア）",d_dest:"受取人",
-  mdp:"所有者パスワード",conf_gel_mdp:"所有者パスワードを入力し、GELER と入力してください。",rapport:"管理レポート"},
- en:{titre:"Agent treasury",t_tableau:"Dashboard",t_alimenter:"Fund",t_historique:"History",t_urgence:"Emergency stop",
+  export_csv:"Exporter le rapport (CSV)",export_json:"Exporter le rapport (JSON)",rapport:"Rapport de contrôle",
+  d_montant:"Montant",d_frais:"Frais",d_txid:"Transaction",d_instant:"Instant (score DAA)",d_dest:"Bénéficiaire",
+  copier:"Copier",copie:"Copié.",copie_ko:"Copie impossible : sélectionnez le texte.",
+  adr_tresorerie:"Adresse de trésorerie",chiffrement:"État du chiffrement local",sauvegarde:"Exporter / sauvegarder la clé",
+  sauvegarde_txt:"Télécharge le fichier de clé tel qu'il est stocké : chiffré par votre mot de passe. La clé n'est jamais exportée en clair. Conservez cette sauvegarde hors de cet ordinateur.",
+  sauvegarder:"Sauvegarder la clé chiffrée",lignee_titre:"Vérification de lignée (v0.5.1)",lignee_txt:"Retrouve le coffre courant depuis son origine sur le registre public et vérifie qu'il porte bien sa lignée, sans faire confiance à aucun serveur.",
+  verifier:"Vérifier maintenant",lignee_ok:"Lignée vérifiée : le coffre courant descend bien de son origine.",lignee_ko:"Vérification impossible : {d}",
+  chiffre_ok:"Clé chiffrée sur cet ordinateur ({a}, {m} Mio, {p} passes).",chiffre_test:"Mode test : clés dérivées d'une phrase de test, sans fichier chiffré. À ne jamais utiliser avec des fonds réels.",
+  reseau:"Réseau",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat"},
+ en:{titre:"Agent treasury",t_tableau:"Dashboard",t_historique:"History",t_urgence:"Emergency stop",parametres:"Settings",securite:"Security",
   normal:"Under control",alerte:"Over 80% of the reserve used",epuise:"Reserve exhausted: the agent waits for the refill",gele:"Frozen: spending stopped",aucun:"No vault",
   aucun_titre:"No active agent budget",aucun_txt:"Create a vault: the agent will pay on its own, within the limits below, enforced outside your infrastructure.",creer:"Create the vault",
   budget:"Guaranteed budget per period",depense:"Spent this period",exposition:"Maximum immediate exposure",exposition_txt:"The most a compromised agent could spend right now.",
   solde:"Funds in the vault",solde_txt:"Never more can be lost.",plafond:"Cap per purchase",periode:"Period",derniers:"Latest agent purchases",
-  alim_titre:"Add funds to the vault",alim_txt:"Funds come from your owner address. The guaranteed budget per period does not change; only the total reserve grows.",
-  votre_solde:"Available on your owner account",alimenter:"Fund",conversion:"Amount converted at the current indicative rate. Currency exchange and the wallet will be integrated in a later step.",sans_cours:"Rate unavailable: try again in a moment.",adresse:"Address to top up (KasWare, Kastle wallet…)",
-  h_type:"Operation",h_montant:"Amount",h_frais:"Fee",h_dest:"Payee",h_preuve:"Proof",histo_txt:"Each line is rebuilt from the public ledger and verified; it cannot be altered afterwards.",
+  ajouter_fonds:"Add funds",solde_dispo:"Available balance",manque:"Missing",ajouter_coffre:"Add to the vault",approvisionner_lien:"Add funds to your treasury",
+  apercu:"+ {n} added",apercu_insuffisant:"Not enough in your treasury for this amount.",mdp:"Master password",
+  tresorerie_titre:"Add funds to your treasury",raison_manque:"Your treasury is short of {m} to add {x} to the vault.",libre:"Custom amount",
+  mode_crypto:"Crypto (Kaspa)",mode_virement:"Bank transfer",bientot:"Coming soon (Phase 2)",mode_test:"Test funds",
+  crypto_txt:"Send the amount from your wallet to your treasury address. Arrival is detected automatically.",
+  a_envoyer:"To send: ≈ {k} (for {m})",test_txt:"Test network: get valueless funds from the public faucet by pasting your treasury address. Arrival is detected automatically.",
+  copier_adresse:"Copy address",ouvrir_faucet:"Open the test faucet",attente:"Waiting for the deposit…",recu:"Deposit received: +{m}. Your treasury is up to date.",retour:"← Back to adding to the vault",
+  h_type:"Operation",h_req:"Requests",h_montant:"Amount",h_frais:"Fee",h_dest:"Payee",h_preuve:"Proof",histo_txt:"Each line is rebuilt from the public ledger and verified; it cannot be altered afterwards.",
   achat:"Agent purchase",ajout:"Funds added",gel:"Freeze",voir:"view",aucun_achat:"No purchase yet.",
-  urg_titre:"Stop all spending immediately",urg_txt:"All vault funds return to your owner address. The agent can no longer spend anything. This does not depend on the agent's server or on any provider.",
-  geler:"Freeze now",annuler:"Cancel",archi:"Architecture and compliance",
-  archi_txt:"The spending rule is enforced outside your infrastructure, by the consensus of a public network: neither the agent, nor its server, nor the publisher of this software can bypass it. The owner key stays encrypted on this computer.",
-  conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_creer:"Confirm creation",conf_creer_txt:"Type CREER to create the vault with these rules.",
+  urg_titre:"Stop all spending immediately",urg_txt:"All vault funds return to your treasury. The agent can no longer spend anything. This does not depend on the agent's server or on any provider.",
+  geler:"Freeze now",annuler:"Cancel",fermer:"Close",
+  conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_gel_mdp:"Enter your master password, then type GELER.",
+  conf_creer:"Confirm creation",conf_creer_txt:"Type CREER to create the vault with these rules.",conf_sauvegarde:"Back up the encrypted key",conf_sauvegarde_txt:"Enter your master password to download the encrypted key file.",
   en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Invalid session link: reopen the link shown in the terminal.",
-  cours_note:"Currency amounts are indicative ({src}). On the test network they have no real value.",cours_absent:"Rate unavailable: only request counts are shown.",
-  regles:"Rules: guaranteed budget {b} per period of {p}, reserve {r}, cap per purchase {m}.",reseau:"Network",
+  cours_note:"Currency amounts are indicative ({src}). On the test network they have no real value.",cours_absent:"Rate unavailable: only request counts are shown.",sans_cours:"Rate unavailable: try again in a moment.",
+  regles:"Rules: guaranteed budget {b} per period of {p}, cap per purchase {m}.",heure:"hour",heures:"hours",minutes:"minutes",
   req1:"request",reqN:"requests",reqc:"req.",tarif:"Reference price: {t} per standard request, fees included.",modifier:"edit",
-  ajout:"+ {n} added",copier:"Copy address",copie:"Address copied.",copie_ko:"Copy failed: select the address.",
-  h_req:"Requests",export_csv:"Export report (CSV)",export_json:"Export report (JSON)",fermer:"Close",
-  d_montant:"Exact amount",d_frais:"Fee",d_txid:"Transaction",d_instant:"Time (DAA score)",d_dest:"Payee",
-  mdp:"Owner password",conf_gel_mdp:"Enter your owner password, then type GELER.",rapport:"Control report",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint",heure:"hour",heures:"hours",minutes:"minutes"}
+  export_csv:"Export report (CSV)",export_json:"Export report (JSON)",rapport:"Control report",
+  d_montant:"Amount",d_frais:"Fee",d_txid:"Transaction",d_instant:"Time (DAA score)",d_dest:"Payee",
+  copier:"Copy",copie:"Copied.",copie_ko:"Copy failed: select the text.",
+  adr_tresorerie:"Treasury address",chiffrement:"Local encryption status",sauvegarde:"Export / back up the key",
+  sauvegarde_txt:"Downloads the key file as stored: encrypted with your password. The key is never exported in clear. Keep this backup off this computer.",
+  sauvegarder:"Back up the encrypted key",lignee_titre:"Lineage check (v0.5.1)",lignee_txt:"Finds the current vault from its origin on the public ledger and checks it carries its lineage, trusting no server.",
+  verifier:"Check now",lignee_ok:"Lineage verified: the current vault descends from its origin.",lignee_ko:"Check failed: {d}",
+  chiffre_ok:"Key encrypted on this computer ({a}, {m} MiB, {p} passes).",chiffre_test:"Test mode: keys derived from a test phrase, no encrypted file. Never use with real funds.",
+  reseau:"Network",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint"},
+ ja:{titre:"エージェント資金管理",t_tableau:"ダッシュボード",t_historique:"履歴",t_urgence:"緊急停止",parametres:"設定",securite:"セキュリティ",
+  normal:"管理下にあります",alerte:"準備金の80%以上を使用済み",epuise:"準備金が枯渇：補充待ち",gele:"凍結済み：支出は停止しています",aucun:"金庫なし",
+  aucun_titre:"有効なエージェント予算はありません",aucun_txt:"金庫を作成すると、エージェントは以下の上限内で単独で支払えます。上限はお客様のインフラの外で保証されます。",creer:"金庫を作成",
+  budget:"期間ごとの保証予算",depense:"今期間の支出",exposition:"即時最大エクスポージャー",exposition_txt:"侵害されたエージェントが今この瞬間に使える最大額。",
+  solde:"金庫内の資金",solde_txt:"これ以上を失うことはありません。",plafond:"1回あたりの上限",periode:"期間",derniers:"エージェントの最近の購入",
+  ajouter_fonds:"資金を追加",solde_dispo:"利用可能残高",manque:"不足額",ajouter_coffre:"金庫に追加",approvisionner_lien:"資金管理口座に入金",
+  apercu:"+ {n} 追加",apercu_insuffisant:"この金額には資金管理口座の残高が不足しています。",mdp:"マスターパスワード",
+  tresorerie_titre:"資金管理口座に入金",raison_manque:"金庫に {x} を追加するには、資金管理口座に {m} が不足しています。",libre:"任意の金額",
+  mode_crypto:"暗号資産（Kaspa）",mode_virement:"銀行振込",bientot:"近日提供（フェーズ2）",mode_test:"テスト用資金",
+  crypto_txt:"ウォレットから資金管理口座のアドレスへ送金してください。着金は自動で検出されます。",
+  a_envoyer:"送金額：約 {k}（{m} 分）",test_txt:"テストネットワーク：資金管理口座のアドレスを貼り付けて、公開配布サービスから価値のない資金を受け取れます。着金は自動で検出されます。",
+  copier_adresse:"アドレスをコピー",ouvrir_faucet:"テスト用配布サービスを開く",attente:"入金を待っています…",recu:"入金を確認しました：+{m}。資金管理口座は最新です。",retour:"← 金庫への追加に戻る",
+  h_type:"取引",h_req:"リクエスト",h_montant:"金額",h_frais:"手数料",h_dest:"受取人",h_preuve:"証明",histo_txt:"各行は公開台帳から再構成・検証されており、後から改ざんすることはできません。",
+  achat:"エージェントの購入",ajout:"資金の追加",gel:"凍結",voir:"表示",aucun_achat:"まだ購入はありません。",
+  urg_titre:"すべての支出を直ちに停止",urg_txt:"金庫の資金はすべて資金管理口座に戻ります。エージェントはもう何も使えません。この操作はエージェントのサーバーにも、いかなる事業者にも依存しません。",
+  geler:"今すぐ凍結",annuler:"キャンセル",fermer:"閉じる",
+  conf_gel:"凍結の確認",conf_gel_txt:"GELER と入力すると、すべての支出を停止し資金を戻します。",conf_gel_mdp:"マスターパスワードを入力し、GELER と入力してください。",
+  conf_creer:"作成の確認",conf_creer_txt:"CREER と入力すると、このルールで金庫を作成します。",conf_sauvegarde:"暗号化された鍵をバックアップ",conf_sauvegarde_txt:"暗号化された鍵ファイルをダウンロードするには、マスターパスワードを入力してください。",
+  en_cours:"処理中です。数秒お待ちください…",fait:"完了しました。",preuve:"公開証明",jeton:"セッションリンクが無効です。ターミナルに表示されたリンクを開き直してください。",
+  cours_note:"通貨建ての金額は参考値です（{src}）。テストネットワーク上では実際の価値はありません。",cours_absent:"レートを取得できません：リクエスト数のみ表示しています。",sans_cours:"レートを取得できません。しばらくしてから再度お試しください。",
+  regles:"ルール：期間 {p} ごとの保証予算 {b}、1回あたりの上限 {m}。",heure:"時間",heures:"時間",minutes:"分",
+  req1:"リクエスト",reqN:"リクエスト",reqc:"件",tarif:"参考価格：標準リクエスト1件あたり {t}（手数料込み）。",modifier:"変更",
+  export_csv:"管理レポートを書き出す（CSV）",export_json:"管理レポートを書き出す（JSON）",rapport:"管理レポート",
+  d_montant:"金額",d_frais:"手数料",d_txid:"トランザクション",d_instant:"時刻（DAAスコア）",d_dest:"受取人",
+  copier:"コピー",copie:"コピーしました。",copie_ko:"コピーできません。テキストを選択してください。",
+  adr_tresorerie:"資金管理口座のアドレス",chiffrement:"ローカル暗号化の状態",sauvegarde:"鍵のエクスポート／バックアップ",
+  sauvegarde_txt:"保存されている鍵ファイルを、パスワードで暗号化されたままダウンロードします。鍵が平文で書き出されることはありません。このバックアップはこのコンピューター以外の場所に保管してください。",
+  sauvegarder:"暗号化された鍵をバックアップ",lignee_titre:"系譜の検証（v0.5.1）",lignee_txt:"公開台帳上で金庫をその起点からたどり、系譜を正しく持っているかを、いかなるサーバーも信頼せずに検証します。",
+  verifier:"今すぐ検証",lignee_ok:"系譜を検証しました：現在の金庫は起点から正しく続いています。",lignee_ko:"検証できません：{d}",
+  chiffre_ok:"鍵はこのコンピューター上で暗号化されています（{a}、{m} MiB、{p} 回）。",chiffre_test:"テストモード：テスト用フレーズから導出した鍵で、暗号化ファイルはありません。実際の資金には絶対に使用しないでください。",
+  reseau:"ネットワーク",contrat:"コントラクト",lignee:"系譜",sortie:"現在の出力",empreinte:"コントラクトの指紋"}
 };
-const etat={jeton:null,donnees:null,langue:"fr",devise:"usd",page:"tableau"};
+const etat={jeton:null,donnees:null,securite:null,langue:"fr",devise:"usd",deviseSaisie:null,page:"tableau",suivi:null,soldeAvant:null,manque:null};
 const DEVISES=["usd","eur","jpy","gbp","usdt","usdc","btc","eth","sol"];
 const $=id=>document.getElementById(id);
-const t=k=>(T[etat.langue]||T.fr)[k]??k;
+const t=k=>(T[etat.langue]||T.fr)[k]??(T.fr[k]??k);
 // Le jeton arrive dans le fragment de l'URL (jamais envoyé au serveur) ; on l'efface de la barre d'adresse.
 (()=>{const m=location.hash.match(/jeton=([0-9a-f]{64})/);if(m){etat.jeton=m[1];history.replaceState(null,"",location.pathname)}})();
 try{etat.langue=localStorage.getItem("langue")||(navigator.language||"fr").slice(0,2);etat.devise=localStorage.getItem("devise")||"usd"}catch(e){}
 if(!T[etat.langue])etat.langue="en";
 if(!DEVISES.includes(etat.devise))etat.devise="usd";
 
+// ---------- unités ----------
 const LOC={fr:"fr-FR",en:"en-US",ja:"ja-JP"};
 const loc=()=>LOC[etat.langue]||"en-US";
 const FIAT=["usd","eur","jpy","gbp"],DECIMALES={btc:8,eth:6,sol:4,usdt:2,usdc:2};
-// Valeur d'une unité de base (1e8) dans la devise choisie ; null si le cours manque.
+const pos=x=>Math.max(0,Number(x)||0); // aucun solde ni montant négatif n'est jamais affiché
 function cours(dv){const c=etat.donnees&&etat.donnees.cours,d=dv||etat.devise;return c&&c[d]!=null?c[d]:null}
-// Devise de saisie d'Alimenter : suit la devise d'affichage, sauf si le client en choisit une autre ici.
-function deviseSaisie(){return etat.deviseSaisie||etat.devise}
-function montant(sompi){
-  const c=cours();if(sompi==null||c==null)return "–";
-  const v=sompi/1e8*c,d=etat.devise;
+function formater(v,d){
+  v=pos(v);
   if(FIAT.includes(d))return new Intl.NumberFormat(loc(),{style:"currency",currency:d.toUpperCase(),maximumFractionDigits:d==="jpy"?(v<100?2:0):(v<10?4:2)}).format(v);
   return new Intl.NumberFormat(loc(),{maximumFractionDigits:DECIMALES[d]||4}).format(v)+" "+d.toUpperCase();
 }
-const versSompi=(v,dv)=>{const c=cours(dv);return c?Math.round(v/c*1e8):null};
-const deSompi=x=>{const c=cours();return c?x/1e8*c:null};
-// Unité de lecture « requêtes » : tarif de référence du serveur, modifiable par le lecteur.
+function montant(sompi,dv){const d=dv||etat.devise,c=cours(d);if(sompi==null||c==null)return "–";return formater(pos(sompi)/1e8*c,d)}
+const versSompi=(v,dv)=>{const c=cours(dv);return c?Math.round(pos(v)/c*1e8):null};
+const deSompi=(x,dv)=>{const c=cours(dv);return c?pos(x)/1e8*c:null};
 function tarif(){let v=null;try{v=Number(localStorage.getItem("tarif"))}catch(e){}return v>0?v:((etat.donnees&&etat.donnees.tarif_reference_sompi)||40000000)}
 function reqParts(sompi,sens){
-  const x=sompi/tarif(),n=sens==="haut"?Math.ceil(x-1e-9):Math.floor(x+1e-9),exact=Math.abs(x-n)<1e-9;
+  const x=pos(sompi)/tarif(),n=sens==="haut"?Math.ceil(x-1e-9):Math.floor(x+1e-9),exact=Math.abs(x-n)<1e-9;
   return [(exact?"":"~")+new Intl.NumberFormat(loc()).format(n),n===1?t("req1"):t("reqN")];
 }
 function requetes(sompi,sens){if(sompi==null)return "–";const [n,u]=reqParts(sompi,sens);return n+" "+u}
 function afficherReq(el,sompi,sens){if(sompi==null){el.textContent="–";return}const [n,u]=reqParts(sompi,sens);const sm=document.createElement("small");sm.textContent=u;el.replaceChildren(document.createTextNode(n),sm)}
-function reqCourt(sompi){return new Intl.NumberFormat(loc(),{maximumFractionDigits:1}).format(sompi/tarif())+" "+t("reqc")}
-function duree(s){if(s>=3600){const h=s/3600;return new Intl.NumberFormat(etat.langue).format(h)+" "+(h>1?t("heures"):t("heure"))}return Math.round(s/60)+" "+t("minutes")}
+function reqCourt(sompi){return new Intl.NumberFormat(loc(),{maximumFractionDigits:1}).format(pos(sompi)/tarif())+" "+t("reqc")}
+function duree(s){if(s>=3600){const h=s/3600;return new Intl.NumberFormat(loc()).format(h)+" "+(h>1?t("heures"):t("heure"))}return Math.round(s/60)+" "+t("minutes")}
 function court(h){return h&&h.length>18?h.slice(0,8)+"…"+h.slice(-6):(h||"–")}
 function lien(url,txt){const a=document.createElement("a");a.href=url;a.textContent=txt;a.target="_blank";a.rel="noopener noreferrer";return a}
-function message(cible,ok,texte,url){const d=document.createElement("div");d.className="msg "+(ok?"ok":"err");d.textContent=texte;if(url){d.append(" ",lien(url,t("preuve")))}$(cible).replaceChildren(d)}
+function message(cible,genre,texte,url){const d=document.createElement("div");d.className="msg "+genre;d.textContent=texte;if(url){d.append(" ",lien(url,t("preuve")))}$(cible).replaceChildren(d)}
+const lu=v=>parseFloat(String(v||"").replace(",","."));
 
 async function api(chemin,corps){
   const r=await fetch(chemin,{method:corps?"POST":"GET",headers:{"X-Jeton":etat.jeton||"","Content-Type":"application/json"},body:corps?JSON.stringify(corps):undefined});
@@ -305,124 +414,220 @@ async function api(chemin,corps){
   return j;
 }
 
+// ---------- affichage ----------
 function traduire(){
   document.documentElement.lang=etat.langue;
   document.querySelectorAll("[data-t]").forEach(e=>{e.textContent=t(e.dataset.t)});
+  $("f-mdp").placeholder=$("mod-mdp").placeholder=t("mdp");$("f-libre").placeholder=t("libre");
   $("langue").value=etat.langue;$("devise").value=etat.devise;
   if(etat.donnees)afficher();
+  if(etat.securite)afficherSecurite();
 }
 
 function afficher(){
   const d=etat.donnees,r=d.regles;
-  const s=$("sante");s.className="sante s-"+d.sante;$("sante-txt").textContent=t(d.sante);
+  $("sante").className="sante s-"+d.sante;$("sante-txt").textContent=t(d.sante);
   const sans=d.sante==="aucun"||d.sante==="gele";
   $("sans-coffre").hidden=!sans;$("avec-coffre").hidden=sans;
-  $("regles-creer").textContent=t("regles").replace("{b}",montant(r.budget_garanti_par_periode_sompi)).replace("{p}",duree(r.periode_secondes)).replace("{r}",montant(r.reserve_sompi)).replace("{m}",montant(r.plafond_par_achat_sompi));
-  afficherReq($("r-budget"),r.budget_garanti_par_periode_sompi,"bas");
-  $("v-budget").textContent=montant(r.budget_garanti_par_periode_sompi);
-  $("r-depense").textContent=requetes(d.depense_periode_sompi??0,"haut");
-  $("v-depense").textContent=montant(d.depense_periode_sompi??0);
-  const pct=Math.min(100,100*(d.depense_periode_sompi||0)/r.budget_garanti_par_periode_sompi);
+  $("regles-creer").textContent=t("regles").replace("{b}",requetes(r.budget_garanti_par_periode_sompi,"bas")).replace("{p}",duree(r.periode_secondes)).replace("{m}",requetes(r.plafond_par_achat_sompi,"bas"));
+  afficherReq($("r-budget"),r.budget_garanti_par_periode_sompi,"bas");$("v-budget").textContent=montant(r.budget_garanti_par_periode_sompi);
+  $("r-depense").textContent=requetes(d.depense_periode_sompi??0,"haut");$("v-depense").textContent=montant(d.depense_periode_sompi??0);
+  const pct=Math.min(100,100*pos(d.depense_periode_sompi)/r.budget_garanti_par_periode_sompi);
   $("jauge").style.width=pct+"%";$("jauge").style.background=pct>80?"var(--ambre)":"var(--accent)";
   // exposition (un risque) arrondie vers le haut ; capacités (budget, fonds) vers le bas
-  afficherReq($("r-expo"),d.exposition_immediate_sompi,"haut");
-  $("v-expo").textContent=montant(d.exposition_immediate_sompi);
-  afficherReq($("r-solde"),d.solde_coffre_sompi,"bas");
-  $("v-solde").textContent=montant(d.solde_coffre_sompi);
-  afficherReq($("r-plafond"),r.plafond_par_achat_sompi,"bas");
-  $("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
-  $("tarif-txt").textContent=t("tarif").replace("{t}",montant(tarif()));
-  $("tarif-devise").textContent=etat.devise.toUpperCase();
-  const sel=$("alim-devise");
-  if(!sel.options.length)for(const o of $("devise").options)sel.add(new Option(o.text,o.value));
-  for(const o of sel.options)o.disabled=cours(o.value)==null;
-  sel.value=deviseSaisie();
-  $("b-tarif").hidden=cours()==null;
-  majAjout();
+  afficherReq($("r-expo"),d.exposition_immediate_sompi,"haut");$("v-expo").textContent=montant(d.exposition_immediate_sompi);
+  afficherReq($("r-solde"),d.solde_coffre_sompi,"bas");$("v-solde").textContent=montant(d.solde_coffre_sompi);
+  afficherReq($("r-plafond"),r.plafond_par_achat_sompi,"bas");$("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
   $("v-periode").textContent=duree(r.periode_secondes);
-  $("v-proprio").textContent=montant(d.solde_proprietaire_sompi);
+  $("tarif-txt").textContent=t("tarif").replace("{t}",montant(tarif()));
+  $("tarif-devise").textContent=etat.devise.toUpperCase();$("b-tarif").hidden=cours()==null;
   const achats=(d.historique||[]).filter(m=>m.genre==="achat").slice(0,5);
   const der=$("derniers");der.replaceChildren();
   if(!achats.length){const p=document.createElement("div");p.className="vide";p.textContent=t("aucun_achat");der.append(p)}
   else{const tb=document.createElement("table");for(const m of achats){const tr=tb.insertRow();tr.insertCell().textContent=court(m.destinataire);const c=tr.insertCell();c.className="n mono";c.textContent=reqCourt(m.montant_sompi+m.frais_sompi);const c2=tr.insertCell();c2.className="n mono note";c2.textContent=montant(m.montant_sompi+m.frais_sompi)}der.append(tb)}
   const h=$("histo");h.replaceChildren();
   for(const m of d.historique||[]){const tr=h.insertRow();tr.insertCell().textContent=t(m.genre);
-    const a=tr.insertCell();a.className="n mono";a.textContent=reqCourt(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0));
+    const tot=m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0);
+    const a=tr.insertCell();a.className="n mono";a.textContent=reqCourt(tot);
+    const b0=tr.insertCell();b0.className="n mono note";b0.textContent=montant(tot);
     tr.insertCell().textContent=m.destinataire?court(m.destinataire):"–";
     const b=document.createElement("button");b.className="lienbtn";b.textContent=t("voir");b.onclick=()=>detail(m);tr.insertCell().append(b)}
   $("cours").textContent=d.cours?t("cours_note").replace("{src}",d.cours.source):t("cours_absent");
+  if($("m-fonds").classList.contains("ouverte"))majFonds();
+}
+
+function afficherSecurite(){
+  const s=etat.securite;if(!s)return;
+  $("s-adresse").textContent=s.adresse;if(s.qr){$("s-qr").src=s.qr;$("s-qr").hidden=false}
+  const c=s.chiffrement||{};
+  $("s-chiffrement").textContent=c.mode==="fichier_chiffre"?t("chiffre_ok").replace("{a}",c.algorithme).replace("{m}",Math.round(c.memoire_kio/1024)).replace("{p}",c.passes):(c.mode==="cles_de_test"?t("chiffre_test"):(c.detail||"–"));
+  $("b-sauvegarde").disabled=c.mode!=="fichier_chiffre";
   const tech=$("tech");tech.replaceChildren();
-  const k=d.technique;if(k){for(const [cle,val] of [["reseau",k.reseau],["contrat",k.contrat],["lignee",k.lignee],["sortie",k.sortie_courante],["empreinte",k.empreinte_source_contrat]]){const dt=document.createElement("dt");dt.textContent=t(cle);const dd=document.createElement("dd");dd.className="mono";dd.textContent=val;tech.append(dt,dd)}}
+  const k=etat.donnees&&etat.donnees.technique;if(k){for(const [cle,val] of [["reseau",k.reseau],["contrat",k.contrat],["lignee",k.lignee],["sortie",k.sortie_courante],["empreinte",k.empreinte_source_contrat]]){const dt=document.createElement("dt");dt.textContent=t(cle);const dd=document.createElement("dd");dd.className="mono";dd.textContent=val;tech.append(dt,dd)}}
 }
 
 function detail(m){
   $("det-titre").textContent=t(m.genre);
   const dl=$("det-dl");dl.replaceChildren();
-  for(const [k,v] of [["h_req",reqCourt(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))],["d_montant",montant(m.montant_sompi)],["d_frais",m.frais_sompi?montant(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]]){
+  const tot=m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0);
+  for(const [k,v] of [["h_req",reqCourt(tot)],["d_montant",montant(m.montant_sompi)],["d_frais",m.frais_sompi?montant(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]]){
     const dt=document.createElement("dt");dt.textContent=t(k);const dd=document.createElement("dd");dd.className="mono";dd.textContent=String(v);dl.append(dt,dd)}
   $("det-lien").replaceChildren(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("preuve")));
   $("detail").classList.add("ouverte");$("det-fermer").focus();
-}
-function majAjout(){const v=parseFloat(($("montant").value||"").replace(",","."));const x=v>0?versSompi(v,deviseSaisie()):null;$("ajout").textContent=v>0?(x==null?t("sans_cours"):t("ajout").replace("{n}",requetes(x,"bas"))):""}
-function telecharger(nom,type,contenu){const u=URL.createObjectURL(new Blob([contenu],{type}));const a=document.createElement("a");a.href=u;a.download=nom;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
-function rapport(){
-  const d=etat.donnees||{};
-  return {titre:t("rapport"),genere_le:new Date().toISOString(),sante:d.sante,regles:d.regles,tarif_reference_sompi:tarif(),
-    solde_coffre_sompi:d.solde_coffre_sompi,exposition_immediate_sompi:d.exposition_immediate_sompi,depense_periode_sompi:d.depense_periode_sompi,
-    technique:d.technique,mouvements:d.historique||[],
-    devise_affichage:etat.devise,cours_utilise:cours(),
-    note:"Montants exacts en unités du registre (100 000 000 unités = 1 jeton du réseau). Équivalents en devise indicatifs, au cours indiqué. Chaque mouvement est vérifiable avec son identifiant de transaction sur le registre public."};
-}
-function csv(){
-  const dv=etat.devise;
-  const lignes=[["operation","requetes","montant_"+dv,"frais_"+dv,"montant_unites_registre","frais_unites_registre","beneficiaire","instant_daa","transaction"]];
-  for(const m of (etat.donnees&&etat.donnees.historique)||[])lignes.push([m.genre,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),deSompi(m.montant_sompi)??"",deSompi(m.frais_sompi)??"",m.montant_sompi,m.frais_sompi,m.destinataire||"",m.instant_daa??"",m.txid]);
-  return lignes.map(l=>l.map(x=>{const s=String(x);return /[",;\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(",")).join("\n")+"\n";
 }
 
 async function charger(){
   try{etat.donnees=await api("/api/tableau");$("erreur").hidden=true;afficher()}
   catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}
 }
+async function chargerSecurite(){try{etat.securite=await api("/api/securite");afficherSecurite()}catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}}
 
+// ---------- Ajouter des fonds (3 niveaux) ----------
+const deviseSaisie=()=>etat.deviseSaisie||etat.devise;
+function ouvrirFonds(){
+  const sel=$("f-devise");if(!sel.options.length)for(const o of $("devise").options)sel.add(new Option(o.text,o.value));
+  for(const o of sel.options)o.disabled=cours(o.value)==null;
+  sel.value=deviseSaisie();$("f-montant").value="";$("f-mdp").value="";$("f-msg1").replaceChildren();etat.manque=null;
+  $("f-mdp-champ").hidden=!(etat.donnees&&etat.donnees.mot_de_passe_requis);
+  niveau(1);$("m-fonds").classList.add("ouverte");$("f-montant").focus();majFonds();
+}
+function fermerFonds(){$("m-fonds").classList.remove("ouverte");$("f-mdp").value="";arreterSuivi()}
+function niveau(n,raison){
+  $("f-n1").hidden=n!==1;$("f-n2").hidden=n!==2;
+  $("f-titre").textContent=n===1?t("ajouter_fonds"):t("tresorerie_titre");
+  if(n===2){$("f-n2-raison").hidden=!raison;if(raison)$("f-n2-raison").textContent=raison;remplirRapides();mode("crypto");demarrerSuivi()}else arreterSuivi();
+}
+function majFonds(){
+  const d=etat.donnees||{},dv=deviseSaisie(),dispo=pos(d.solde_proprietaire_sompi);
+  $("f-dispo").textContent=montant(dispo,dv);
+  const m=lu($("f-montant").value),x=m>0?versSompi(m,dv):null;
+  if(!(m>0)){$("f-apercu").textContent=" ";$("f-manque-bloc").hidden=true;$("f-valider").disabled=true;etat.manque=null;return}
+  if(x==null){$("f-apercu").textContent=t("sans_cours");$("f-valider").disabled=true;return}
+  const manque=x-dispo;
+  if(manque>0){ // Niveau 2 : jamais de solde négatif ; on montre ce qui manque et on propose d'approvisionner
+    $("f-manque-bloc").hidden=false;$("f-manque").textContent=montant(manque,dv);
+    $("f-apercu").textContent=t("apercu_insuffisant");$("f-valider").disabled=true;
+    etat.manque={sompi:manque,cible:x};
+  }else{
+    $("f-manque-bloc").hidden=true;etat.manque=null;
+    $("f-apercu").textContent=t("apercu").replace("{n}",requetes(x,"bas"));$("f-valider").disabled=false;
+  }
+}
+let basculeAuto=null;
+function raisonManque(){return etat.manque?t("raison_manque").replace("{m}",montant(etat.manque.sompi,deviseSaisie())).replace("{x}",montant(etat.manque.cible,deviseSaisie())):null}
+function surSaisie(){
+  majFonds();clearTimeout(basculeAuto);
+  // bascule automatique vers le niveau 2 quand le montant dépasse le solde (après une courte pause de saisie)
+  if(etat.manque)basculeAuto=setTimeout(()=>{if(etat.manque&&!$("f-n1").hidden)niveau(2,raisonManque())},1200);
+}
+function remplirRapides(){
+  const dv=deviseSaisie(),box=$("f-rapides");box.replaceChildren();$("f-libre-champ").hidden=true;
+  const base=dv==="jpy"?[10000,25000,50000,100000]:[100,250,500,1000];
+  for(const v of base){const b=document.createElement("button");b.className="btn sec petit";b.textContent=formater(v,dv);b.onclick=()=>choisirRapide(b,v);box.append(b)}
+  const l=document.createElement("button");l.className="btn sec petit";l.textContent=t("libre");l.onclick=()=>{choisirRapide(l,null);$("f-libre-champ").hidden=false;$("f-libre-devise").textContent=dv.toUpperCase();$("f-libre").focus()};box.append(l);
+  afficherAEnvoyer(etat.manque?deSompi(etat.manque.sompi,dv):null);
+}
+function choisirRapide(btn,v){
+  document.querySelectorAll("#f-rapides button").forEach(b=>b.setAttribute("aria-pressed",String(b===btn)));
+  if(v!=null){$("f-libre-champ").hidden=true;afficherAEnvoyer(v)}
+}
+function afficherAEnvoyer(v){
+  // montant à envoyer dans l'unité du réseau : affiché seulement dans le mode crypto, choisi explicitement
+  const dv=deviseSaisie(),x=v>0?versSompi(v,dv):null;
+  $("f-a-envoyer").textContent=x?t("a_envoyer").replace("{k}",new Intl.NumberFormat(loc(),{maximumFractionDigits:2}).format(x/1e8)+" KAS").replace("{m}",formater(v,dv)):"";
+}
+function mode(m){
+  document.querySelectorAll(".modes button").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.mode===m)));
+  $("f-crypto").hidden=m!=="crypto";$("f-test").hidden=m!=="test";
+}
+async function demarrerSuivi(){
+  arreterSuivi();
+  if(!etat.securite)await chargerSecurite();
+  const s=etat.securite;if(s){$("f-adresse").textContent=s.adresse;if(s.qr){$("f-qr").src=s.qr;$("f-qr").hidden=false}}
+  etat.soldeAvant=pos(etat.donnees&&etat.donnees.solde_proprietaire_sompi);
+  const p=document.createElement("span");p.className="point";const tx=document.createElement("span");tx.textContent=t("attente");$("f-attente").replaceChildren(p,tx);
+  etat.suivi=setInterval(async()=>{
+    try{const r=await api("/api/solde");const gain=pos(r.solde_proprietaire_sompi)-etat.soldeAvant;
+      if(gain>0){arreterSuivi();etat.donnees.solde_proprietaire_sompi=r.solde_proprietaire_sompi;
+        const ok=document.createElement("span");ok.className="msg ok";ok.textContent=t("recu").replace("{m}",montant(gain,deviseSaisie()));$("f-attente").replaceChildren(ok);
+        setTimeout(()=>{niveau(1);majFonds()},2500)}}catch(e){}
+  },5000);
+}
+function arreterSuivi(){if(etat.suivi){clearInterval(etat.suivi);etat.suivi=null}}
+async function ajouterAuCoffre(){
+  const x=versSompi(lu($("f-montant").value),deviseSaisie());if(!x||etat.manque)return;
+  const mdp=$("f-mdp").value;$("f-mdp").value="";$("f-valider").disabled=true;message("f-msg1","ok",t("en_cours"));
+  try{const r=await api("/api/alimenter",{montant_sompi:x,mot_de_passe:mdp});message("f-msg1","ok",t("fait"),r.explorateur);await charger()}
+  catch(e){message("f-msg1","err",e.message)}finally{majFonds()}
+}
+
+// ---------- confirmations, sécurité ----------
 function confirmer(titre,texte,mot,action,avecMdp){
   return new Promise(res=>{
     $("mod-titre").textContent=titre;$("mod-txt").textContent=texte;$("mod-ok").textContent=action;$("mod-saisie").value="";$("mod-mdp").value="";
-    $("mod-mdp-champ").hidden=!avecMdp;$("mod-mdp").placeholder=t("mdp");
+    $("mod-mdp-champ").hidden=!avecMdp;$("mod-saisie-champ").hidden=!mot;
     $("modale").classList.add("ouverte");(avecMdp?$("mod-mdp"):$("mod-saisie")).focus();
     const fin=v=>{const mdp=$("mod-mdp").value;$("mod-mdp").value="";$("modale").classList.remove("ouverte");$("mod-ok").onclick=$("mod-annuler").onclick=null;res(v?{mdp}:false)};
-    $("mod-ok").onclick=()=>fin($("mod-saisie").value.trim().toUpperCase()===mot);
+    $("mod-ok").onclick=()=>fin(!mot||$("mod-saisie").value.trim().toUpperCase()===mot);
     $("mod-annuler").onclick=()=>fin(false);
   });
 }
-
 async function agir(bouton,cible,chemin,corps){
-  bouton.disabled=true;message(cible,true,t("en_cours"));
-  try{const r=await api(chemin,corps);message(cible,true,t("fait"),r.explorateur);await charger()}
-  catch(e){message(cible,false,e.message)}
+  bouton.disabled=true;message(cible,"ok",t("en_cours"));
+  try{const r=await api(chemin,corps);message(cible,"ok",t("fait"),r.explorateur);await charger();return r}
+  catch(e){message(cible,"err",e.message)}
   finally{bouton.disabled=false}
 }
+function telecharger(nom,type,contenu){const u=URL.createObjectURL(new Blob([contenu],{type}));const a=document.createElement("a");a.href=u;a.download=nom;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
+function rapport(){
+  const d=etat.donnees||{};
+  return {titre:t("rapport"),genere_le:new Date().toISOString(),sante:d.sante,regles:d.regles,tarif_reference_sompi:tarif(),devise_affichage:etat.devise,cours_utilise:cours(),
+    solde_coffre_sompi:d.solde_coffre_sompi,exposition_immediate_sompi:d.exposition_immediate_sompi,depense_periode_sompi:d.depense_periode_sompi,technique:d.technique,mouvements:d.historique||[],
+    note:"Montants exacts en unités du registre (100 000 000 unités = 1 jeton du réseau). Équivalents en devise indicatifs, au cours indiqué. Chaque mouvement est vérifiable avec son identifiant de transaction sur le registre public."};
+}
+function csv(){
+  const dv=etat.devise,lignes=[["operation","requetes","montant_"+dv,"frais_"+dv,"montant_unites_registre","frais_unites_registre","beneficiaire","instant_daa","transaction"]];
+  for(const m of (etat.donnees&&etat.donnees.historique)||[])lignes.push([m.genre,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),deSompi(m.montant_sompi)??"",deSompi(m.frais_sompi)??"",m.montant_sompi,m.frais_sompi,m.destinataire||"",m.instant_daa??"",m.txid]);
+  return lignes.map(l=>l.map(x=>{const s=String(x);return /[",;\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(",")).join("\n")+"\n";
+}
 
-document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
-  etat.page=b.dataset.p;
-  document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",String(x===b)));
-  for(const p of ["tableau","alimenter","historique","urgence"])$("p-"+p).hidden=p!==etat.page;
-});
+// ---------- navigation ----------
+function page(p){
+  etat.page=p;
+  document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",String(x.dataset.p===p)));
+  $("b-param").setAttribute("aria-pressed",String(p==="securite"));
+  for(const q of ["tableau","historique","urgence","securite"])$("p-"+q).hidden=q!==p;
+  if(p==="securite"){if(!etat.securite)chargerSecurite();else afficherSecurite()}
+}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>page(b.dataset.p));
+$("b-param").onclick=()=>page(etat.page==="securite"?"tableau":"securite");
 $("langue").onchange=e=>{etat.langue=e.target.value;try{localStorage.setItem("langue",etat.langue)}catch(x){}traduire()};
-$("devise").onchange=e=>{etat.devise=e.target.value;try{localStorage.setItem("devise",etat.devise)}catch(x){}if(etat.donnees)afficher()};
+$("devise").onchange=e=>{etat.devise=e.target.value;etat.deviseSaisie=null;try{localStorage.setItem("devise",etat.devise)}catch(x){}if(etat.donnees)afficher()};
+$("b-ajouter").onclick=ouvrirFonds;
+$("f-fermer").onclick=fermerFonds;
+$("f-montant").oninput=surSaisie;
+$("f-devise").onchange=e=>{etat.deviseSaisie=e.target.value;majFonds()};
+$("f-valider").onclick=ajouterAuCoffre;
+$("f-vers-n2").onclick=()=>niveau(2,raisonManque());
+$("f-retour").onclick=()=>{niveau(1);majFonds()};
+$("f-libre").oninput=()=>afficherAEnvoyer(lu($("f-libre").value));
+document.querySelectorAll(".modes button").forEach(b=>b.onclick=()=>{if(!b.disabled)mode(b.dataset.mode)});
+document.querySelectorAll("[data-copier]").forEach(b=>b.onclick=async()=>{const id=b.dataset.copier,ret=document.querySelector('[data-retour="'+id+'"]');
+  try{await navigator.clipboard.writeText($(id).textContent);if(ret)ret.textContent=t("copie")}catch(e){if(ret)ret.textContent=t("copie_ko")}});
 $("b-geler").onclick=async()=>{const avec=!!(etat.donnees&&etat.donnees.mot_de_passe_requis);
   const r=await confirmer(t("conf_gel"),avec?t("conf_gel_mdp"):t("conf_gel_txt"),"GELER",t("geler"),avec);
   if(r)agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER",mot_de_passe:r.mdp})};
 $("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer"),false))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
-$("montant").oninput=majAjout;
-$("alim-devise").onchange=e=>{etat.deviseSaisie=e.target.value;majAjout()};
+$("b-sauvegarde").onclick=async()=>{const r=await confirmer(t("conf_sauvegarde"),t("conf_sauvegarde_txt"),null,t("sauvegarder"),true);if(!r)return;
+  try{const j=await api("/api/cle-chiffree",{mot_de_passe:r.mdp});telecharger("cle-proprietaire-chiffree.json","application/json",JSON.stringify(j.fichier,null,2));message("m-sauvegarde","ok",t("fait"))}catch(e){message("m-sauvegarde","err",e.message)}};
+$("b-lignee").onclick=async()=>{$("b-lignee").disabled=true;message("m-lignee","ok",t("en_cours"));
+  try{const r=await api("/api/verifier-lignee");message("m-lignee",r.ok?"ok":"err",r.ok?t("lignee_ok"):t("lignee_ko").replace("{d}",r.detail||""));if(r.ok)await charger();afficherSecurite()}catch(e){message("m-lignee","err",e.message)}finally{$("b-lignee").disabled=false}};
 $("b-csv").onclick=()=>telecharger("rapport-controle.csv","text/csv;charset=utf-8",csv());
 $("b-json").onclick=()=>telecharger("rapport-controle.json","application/json",JSON.stringify(rapport(),null,2));
 $("det-fermer").onclick=()=>$("detail").classList.remove("ouverte");
 $("b-tarif").onclick=()=>{const x=deSompi(tarif());if(x==null)return;$("tarif-edit").hidden=false;$("tarif-champ").value=Number(x.toPrecision(4));$("tarif-champ").focus()};
-$("b-tarif-ok").onclick=()=>{const v=versSompi(parseFloat(String($("tarif-champ").value).replace(",",".")));if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
-$("b-alim").onclick=()=>{const m=parseFloat(String($("montant").value).replace(",","."));const v=m>0?versSompi(m,deviseSaisie()):null;if(v==null){message("m-alim",false,m>0?t("sans_cours"):t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
-document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte")});
+$("b-tarif-ok").onclick=()=>{const v=versSompi(lu($("tarif-champ").value));if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte");if($("m-fonds").classList.contains("ouverte"))fermerFonds()});
 
 traduire();
 if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t("jeton")}else{charger();setInterval(charger,20000)}

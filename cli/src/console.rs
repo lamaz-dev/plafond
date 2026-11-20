@@ -236,6 +236,24 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
     let mut cours = Cours { valeur: None, lu: None };
     let (mut echecs, mut verrou_jusqu_a): (u32, Option<Instant>) = (0, None);
+    // Mot de passe maître : exigé pour geler, ajouter des fonds et exporter la clé ; 5 échecs = 60 s.
+    let mut controle_mdp = |v: &Value| -> Result<(), tiny_http::Response<std::io::Cursor<Vec<u8>>>> {
+        let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+        if verrou_jusqu_a.is_some_and(|t| Instant::now() < t) {
+            return Err(json_rep(429, json!({ "erreur": "trop d'essais de mot de passe : réessayez dans une minute" })));
+        }
+        if verifier_mot_de_passe(chemin_cle.as_deref(), &owner, &mdp) == Some(false) {
+            echecs += 1;
+            if echecs >= 5 {
+                verrou_jusqu_a = Some(Instant::now() + Duration::from_secs(60));
+                echecs = 0;
+            }
+            journal(json!({ "mot_de_passe": "refusé" }));
+            return Err(json_rep(403, json!({ "erreur": "mot de passe incorrect" })));
+        }
+        echecs = 0;
+        Ok(())
+    };
     for mut req in serveur.incoming_requests() {
         let entetes: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
         let entete = |nom: &str| entetes.iter().find(|(k, _)| k == &nom.to_ascii_lowercase()).map(|(_, v)| v.clone());
@@ -265,22 +283,11 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     }
                 }
                 ("POST", "/api/geler") => {
-                    let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
-                    let verrouille = verrou_jusqu_a.is_some_and(|t| Instant::now() < t);
                     if v["confirmation"].as_str() != Some("GELER") {
                         json_rep(400, json!({ "erreur": "confirmation requise" }))
-                    } else if verrouille {
-                        json_rep(429, json!({ "erreur": "trop d'essais de mot de passe : réessayez dans une minute" }))
-                    } else if verifier_mot_de_passe(chemin_cle.as_deref(), &owner, &mdp) == Some(false) {
-                        echecs += 1;
-                        if echecs >= 5 {
-                            verrou_jusqu_a = Some(Instant::now() + Duration::from_secs(60));
-                            echecs = 0;
-                        }
-                        journal(json!({ "geler": "mot de passe refusé" }));
-                        json_rep(403, json!({ "erreur": "mot de passe incorrect" }))
+                    } else if let Err(r) = controle_mdp(&v) {
+                        r
                     } else {
-                        echecs = 0;
                         let r = handle.block_on(geler(&owner, &agent, false, 0));
                         journal(json!({ "geler": r.as_ref().map_err(|e| e.to_string()) }));
                         match r {
@@ -290,7 +297,8 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     }
                 }
                 ("POST", "/api/alimenter") => match v["montant_sompi"].as_u64().filter(|m| (10_000_000..=100_000_000_000).contains(m)) {
-                    None => json_rep(400, json!({ "erreur": "montant invalide (0,1 à 1 000)" })),
+                    None => json_rep(400, json!({ "erreur": "montant invalide" })),
+                    Some(_) if controle_mdp(&v).is_err() => controle_mdp_reponse(),
                     Some(m) => {
                         let r = handle.block_on(recharger(&owner, &agent, m));
                         journal(json!({ "alimenter": m, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
@@ -310,6 +318,51 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                             Ok(txid) => json_rep(200, json!({ "transaction": txid, "explorateur": explorer(&txid) })),
                             Err(e) => json_rep(502, json!({ "erreur": e.to_string() })),
                         }
+                    }
+                }
+                // Solde de la trésorerie (adresse du propriétaire), interrogé pendant l'attente d'un dépôt.
+                ("GET", "/api/solde") => match handle.block_on(async {
+                    let c = connect_silencieux().await?;
+                    let s: u64 = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
+                    c.disconnect().await?;
+                    Ok::<u64, Box<dyn std::error::Error>>(s)
+                }) {
+                    Ok(s) => json_rep(200, json!({ "solde_proprietaire_sompi": s })),
+                    Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
+                },
+                // Paramètres > Sécurité : adresse, état du chiffrement local.
+                ("GET", "/api/securite") => {
+                    let adresse = address(&owner).to_string();
+                    let chiffrement = match chemin_cle.as_deref().map(cle::lire) {
+                        Some(Ok(f)) => json!({ "mode": "fichier_chiffre", "algorithme": "Argon2id + XChaCha20-Poly1305", "memoire_kio": f.m_kio, "passes": f.t, "version": f.version }),
+                        Some(Err(e)) => json!({ "mode": "erreur", "detail": e.to_string() }),
+                        None => json!({ "mode": "cles_de_test" }),
+                    };
+                    json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "chiffrement": chiffrement, "reseau": "testnet-10" }))
+                }
+                // Sauvegarde : le fichier de clé CHIFFRÉ (jamais la clé en clair), après mot de passe.
+                ("POST", "/api/cle-chiffree") => match chemin_cle.as_deref() {
+                    None => json_rep(409, json!({ "erreur": "clés de test : aucun fichier de clé à sauvegarder" })),
+                    Some(_) if controle_mdp(&v).is_err() => controle_mdp_reponse(),
+                    Some(ch) => match fs::read_to_string(ch) {
+                        Ok(t) => {
+                            journal(json!({ "export_cle": "fichier chiffré exporté" }));
+                            json_rep(200, json!({ "fichier": serde_json::from_str::<Value>(&t).unwrap_or(Value::Null) }))
+                        }
+                        Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                    },
+                },
+                // Vérification de lignée : le coffre courant porte-t-il bien la lignée de son origine ?
+                ("GET", "/api/verifier-lignee") => {
+                    let pk = xonly(&owner);
+                    match handle.block_on(async {
+                        let c = connect_silencieux().await?;
+                        let e = retrouver_coffre(&c, &pk, &agent).await;
+                        c.disconnect().await?;
+                        e
+                    }) {
+                        Ok(e) => json_rep(200, json!({ "ok": true, "lignee": e.cov_id, "sortie": format!("{}:{}", e.txid, e.index), "contrat": "AgentBudget v0.5.1" })),
+                        Err(e) => json_rep(200, json!({ "ok": false, "detail": e.to_string() })),
                     }
                 }
                 _ => json_rep(404, json!({ "erreur": "inconnu" })),
@@ -396,11 +449,20 @@ mod tests {
             assert!(!PAGE.contains(motif), "ressource externe dans la page : {motif}");
         }
         // choix produit : l'unité du réseau n'apparaît jamais à l'écran (requêtes et devises)
-        assert!(!PAGE.contains("KAS"), "l'unité du réseau ne doit pas apparaître dans l'interface");
+        // seule exception : le montant à envoyer, dans le mode de dépôt crypto choisi explicitement
+        for ligne in PAGE.lines().filter(|l| l.contains("KAS")) {
+            assert!(ligne.contains("a_envoyer"), "unité du réseau hors du mode de dépôt crypto : {ligne}");
+        }
+        assert_eq!(PAGE.matches("KAS").count(), 1);
     }
 }
 
 /// Données du tableau de bord, une fois (commande `tableau`, utile en CI et pour le support).
 pub async fn tableau_json(owner: &Keypair, agent: &Keypair) -> Res<Value> {
     tableau(owner, agent, None).await
+}
+
+/// Réponse générique après un refus de mot de passe (le détail exact est déjà journalisé).
+fn controle_mdp_reponse() -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+    json_rep(403, json!({ "erreur": "mot de passe incorrect ou essais bloqués : réessayez" }))
 }
