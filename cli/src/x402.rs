@@ -281,6 +281,31 @@ fn serve(handle: Handle, pay_to: Address) {
 // Agent
 // ---------------------------------------------------------------------------------------------
 
+/// Résultat d'un achat de l'agent, renvoyé par le routeur.
+pub struct Achat {
+    pub statut: u16,
+    pub contenu: String,
+    pub montant: i64,
+    pub txid: Option<String>,
+    pub refus: Option<String>,
+}
+
+impl Achat {
+    fn refus(montant: i64, raison: impl Into<String>) -> Self {
+        Achat { statut: 402, contenu: String::new(), montant, txid: None, refus: Some(raison.into()) }
+    }
+}
+
+/// Achat normal (contrôles locaux actifs), pour le routeur. `max` : plafond par requête choisi par l'appelant.
+pub fn acheter(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, max: Option<i64>) -> Res<Achat> {
+    agent_buy(handle, owner_pk, agent, url, Mode::Normal, max)
+}
+
+/// Vendeur de démonstration, lancé dans un fil à part.
+pub fn lancer_vendeur(handle: Handle, pay_to: Address) {
+    std::thread::spawn(move || serve(handle, pay_to));
+}
+
 #[derive(PartialEq)]
 enum Mode {
     Normal,
@@ -288,12 +313,12 @@ enum Mode {
     FakeVault,
 }
 
-fn agent_buy(handle: &Handle, owner: &Keypair, agent: &Keypair, url: &str, mode: Mode) -> Res<()> {
+fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode: Mode, max: Option<i64>) -> Res<Achat> {
     println!("\n[AGENT] GET {url}");
     let http = ureq::AgentBuilder::new().redirects(0).timeout(Duration::from_secs(90)).build();
     let challenge = match http.get(url).call() {
         Err(ureq::Error::Status(402, r)) => r.header("PAYMENT-REQUIRED").ok_or("402 sans PAYMENT-REQUIRED")?.to_string(),
-        Ok(_) => return Err("ressource servie sans paiement ?".into()),
+        Ok(r) => return Ok(Achat { statut: r.status(), contenu: r.into_string()?, montant: 0, txid: None, refus: None }),
         Err(e) => return Err(format!("requête : {e}").into()),
     };
     let pr: Value = serde_json::from_slice(&B64.decode(challenge)?)?;
@@ -305,12 +330,18 @@ fn agent_buy(handle: &Handle, owner: &Keypair, agent: &Keypair, url: &str, mode:
     let e = load_state()?;
     let rpc = handle.block_on(connect())?;
     let now = (handle.block_on(virtual_daa(&rpc))? - 100) as i64;
-    let mut params = VaultParams::ours(owner, agent, e.tokens, e.last_daa);
+    let mut params = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
+    if let Some(m) = max {
+        if amount > m {
+            println!("[AGENT] je refuse : prix supérieur au plafond de cette requête");
+            return Ok(Achat::refus(amount, format!("prix {amount} sompi supérieur au plafond demandé ({m})")));
+        }
+    }
     if mode == Mode::Normal && (amount > params.max_per_payment || amount + FEE as i64 > params.available(now)) {
         println!("[AGENT] je refuse moi-même : prix hors du budget de mon coffre");
-        return Ok(());
+        return Ok(Achat::refus(amount, "hors du budget du coffre : plafond par paiement ou budget disponible dépassé"));
     }
-    let (tx, next_state) = build_pay(owner, agent, &e, amount, pay_to_address_script(&pay_to), now.max(e.last_daa))?;
+    let (tx, next_state) = build_pay_pk(owner_pk, agent, &e, amount, pay_to_address_script(&pay_to), now.max(e.last_daa))?;
     if mode == Mode::FakeVault {
         params.capacity *= 100; // l'agent ment sur son budget
         params.max_per_payment *= 100;
@@ -339,15 +370,18 @@ fn agent_buy(handle: &Handle, owner: &Keypair, agent: &Keypair, url: &str, mode:
             let settlement: Value = serde_json::from_slice(&B64.decode(r.header("PAYMENT-RESPONSE").unwrap_or(""))?)?;
             let content = r.into_string()?;
             println!("[AGENT] ✅ contenu reçu : « {content} »");
-            println!("[AGENT] reçu de paiement : transaction {}", settlement["transaction"].as_str().unwrap_or("?"));
+            let tx = settlement["transaction"].as_str().unwrap_or("?").to_string();
+            println!("[AGENT] reçu de paiement : transaction {tx}");
             save_state(&next_state)?;
+            Ok(Achat { statut: 200, contenu: content, montant: amount, txid: Some(tx), refus: None })
         }
         Err(ureq::Error::Status(402, r)) => {
-            println!("[AGENT] ❌ refusé par le vendeur : {}", r.into_string().unwrap_or_default());
+            let raison = r.into_string().unwrap_or_default();
+            println!("[AGENT] ❌ refusé par le vendeur : {raison}");
+            Ok(Achat::refus(amount, format!("refusé par le vendeur : {raison}")))
         }
-        Err(e) => return Err(format!("requête : {e}").into()),
+        Err(e) => Err(format!("requête : {e}").into()),
     }
-    Ok(())
 }
 
 /// Démo complète sur le testnet-10 : un vendeur x402 local et trois achats de l'agent.
@@ -359,16 +393,16 @@ pub async fn demo(owner: &Keypair, agent: &Keypair) -> Res<()> {
     std::thread::spawn(move || serve(h, pay_to));
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let (o, a) = (*owner, *agent);
+    let (o, a) = (xonly(owner), *agent);
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let h = Handle::current();
         let base = format!("http://127.0.0.1:{PORT}");
         println!("\n=== Scénario 1 : achat normal, payé directement depuis le coffre ===");
-        agent_buy(&h, &o, &a, &format!("{base}/meteo-kaspa"), Mode::Normal).map_err(|e| e.to_string())?;
+        agent_buy(&h, &o, &a, &format!("{base}/meteo-kaspa"), Mode::Normal, None).map_err(|e| e.to_string())?;
         println!("\n=== Scénario 2 : prix au-dessus du plafond, le vendeur refuse avant toute diffusion ===");
-        agent_buy(&h, &o, &a, &format!("{base}/rapport-premium"), Mode::IgnoreLocalChecks).map_err(|e| e.to_string())?;
+        agent_buy(&h, &o, &a, &format!("{base}/rapport-premium"), Mode::IgnoreLocalChecks, None).map_err(|e| e.to_string())?;
         println!("\n=== Scénario 3 : l'agent présente un faux coffre, le vendeur le démasque ===");
-        agent_buy(&h, &o, &a, &format!("{base}/meteo-kaspa"), Mode::FakeVault).map_err(|e| e.to_string())?;
+        agent_buy(&h, &o, &a, &format!("{base}/meteo-kaspa"), Mode::FakeVault, None).map_err(|e| e.to_string())?;
         Ok(())
     })
     .await??;

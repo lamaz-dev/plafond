@@ -41,6 +41,7 @@ mod fuzz;
 mod masse;
 #[cfg_attr(not(test), allow(dead_code))]
 mod relais;
+mod routeur;
 mod sequestre;
 mod x402;
 
@@ -140,10 +141,14 @@ pub struct VaultParams {
 
 impl VaultParams {
     pub fn ours(owner: &Keypair, agent: &Keypair, tokens: i64, last_daa: i64) -> Self {
+        Self::pour(&xonly(owner), agent, tokens, last_daa)
+    }
+    /// Comme `ours`, à partir de la seule clé publique x-only du propriétaire (le routeur n'a jamais sa clé secrète).
+    pub fn pour(owner_pk: &[u8], agent: &Keypair, tokens: i64, last_daa: i64) -> Self {
         let zero = hex::encode([0u8; 32]);
         VaultParams {
             asset: ASSET_KAS.into(),
-            owner: hex::encode(xonly(owner)),
+            owner: hex::encode(owner_pk),
             agent: hex::encode(xonly(agent)),
             lane: LANE,
             capacity: CAPACITY,
@@ -218,6 +223,10 @@ fn compile(owner: &Keypair, agent: &Keypair, tokens: i64, last_daa: i64) -> Res<
     compile_params(&VaultParams::ours(owner, agent, tokens, last_daa))
 }
 
+fn compile_pk(owner_pk: &[u8], agent: &Keypair, tokens: i64, last_daa: i64) -> Res<SilAbiArtifact> {
+    compile_params(&VaultParams::pour(owner_pk, agent, tokens, last_daa))
+}
+
 /// Construit et signe un paiement de l'agent depuis le coffre.
 /// Renvoie la transaction, l'état suivant et la valeur restante dans le coffre.
 pub fn build_pay(
@@ -228,12 +237,24 @@ pub fn build_pay(
     payee_spk: ScriptPublicKey,
     now: i64,
 ) -> Res<(Transaction, Etat)> {
-    let p = VaultParams::ours(owner, agent, e.tokens, e.last_daa);
+    build_pay_pk(&xonly(owner), agent, e, amount, payee_spk, now)
+}
+
+/// Paiement de l'agent depuis le coffre, avec la seule clé publique du propriétaire.
+pub fn build_pay_pk(
+    owner_pk: &[u8],
+    agent: &Keypair,
+    e: &Etat,
+    amount: i64,
+    payee_spk: ScriptPublicKey,
+    now: i64,
+) -> Res<(Transaction, Etat)> {
+    let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
     let available = p.available(now);
     let vault = compile_params(&p)?;
     let cov = e.covenant()?;
     let next_tokens = available - amount - FEE as i64; // les frais sont décomptés du budget
-    let next = compile(owner, agent, next_tokens, now)?;
+    let next = compile_pk(owner_pk, agent, next_tokens, now)?;
     let entry = UtxoEntry::new(e.valeur, vault_spk(&vault), 0, false, Some(cov));
     let txid_in = TransactionId::from_bytes(<[u8; 32]>::try_from(hex::decode(&e.txid)?.as_slice())?);
     let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(txid_in, e.index), vec![], 0, CB_VAULT);
@@ -449,6 +470,31 @@ async fn main() -> Res<()> {
         masse::FORCER.store(true, std::sync::atomic::Ordering::Relaxed);
         println!("(refus local KIP-9 désactivé : le réseau tranchera)");
     }
+    if cmd == "routeur" {
+        // API des agents (voir routeur.rs). Hors démo, le routeur ne charge JAMAIS la clé secrète du
+        // propriétaire : seulement sa clé publique (PROPRIETAIRE_PUB) et la clé de l'agent.
+        let agent = keypair_from_env("AGENT_SK")?;
+        let demo = env::var("ROUTEUR_DEMO").map(|v| v == "1").unwrap_or(false);
+        let (owner_pk, demo_cfg) = if demo {
+            let owner = keypair_from_env("OWNER_SK")?;
+            let vendeur = args.iter().any(|a| a == "--avec-vendeur").then(|| address(&payee(&owner)));
+            (xonly(&owner), Some((address(&payee(&owner)), vendeur)))
+        } else {
+            if env::var("VAULT_PHRASE").is_ok() || env::var("OWNER_SK").is_ok() {
+                return Err("routeur hors démo : ne fournir que AGENT_SK et PROPRIETAIRE_PUB, jamais la clé du propriétaire".into());
+            }
+            let pk = hex::decode(env::var("PROPRIETAIRE_PUB").map_err(|_| "PROPRIETAIRE_PUB manquante (clé publique x-only du propriétaire, hex)")?)?;
+            if pk.len() != 32 || secp256k1::XOnlyPublicKey::from_slice(&pk).is_err() {
+                return Err("PROPRIETAIRE_PUB invalide (32 octets x-only attendus)".into());
+            }
+            (pk, None)
+        };
+        let h = tokio::runtime::Handle::current();
+        let cfg = routeur::Config { owner_pk, agent, demo: demo_cfg };
+        tokio::task::spawn_blocking(move || routeur::lancer(h, cfg).map_err(|e| e.to_string())).await??;
+        return Ok(());
+    }
+
     let owner = keypair_from_env("OWNER_SK")?;
     let agent = keypair_from_env("AGENT_SK")?;
     let service = payee(&owner);
