@@ -208,3 +208,60 @@ VERDICT : le coffre a payé ce qui était permis et le réseau a bloqué le rest
 [ROUTEUR] démo : paiement de 1 TKAS diffusé SANS contrôle local
 
 ```
+
+## 2026-11-20 09:43 UTC
+
+```
+$ vault-cli recuperer-v04
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre récupéré par le propriétaire : https://tn10.kaspa.stream/transactions/1e56fb331dfe10dc2016f9186801d3d05cb75d5c1d2e8a3471342de6a25792df
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli deployer
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Coffre déployé : 5 TKAS, budget 2 TKAS, lignée 5bfda1d635cf07e8b5dfbdd90227a2f04fac7f3006dee8afe1ccb447b155e3f9
+Transaction : https://tn10.kaspa.stream/transactions/cccae0caa2211c86e687b0b82369d7f5dcef06a2e20fd0883b265de68b502f78
+
+$ vault-cli pause 20
+(pause de 20 s)
+
+$ vault-cli payer 20000000
+Connecté au testnet-10 : wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Budget disponible : 2 TKAS, paiement demandé : 0.2 TKAS
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/dbd1e55df21c4eec090b6928473d26f55e7d6dcefb58e57f0133f62dc402134f
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli payer 30000000
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Budget disponible : 1.78805555 TKAS, paiement demandé : 0.3 TKAS
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/41323aed939bd3fe953638c53b9ab8f33a5a6ecccf61e1995e9d17b097311939
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628327461
+Solde du propriétaire : 994.41 TKAS (2 UTXO)
+Coffre : 4.47 TKAS, budget disponible ~1.47672221 TKAS (sortie 41323aed939bd3fe953638c53b9ab8f33a5a6ecccf61e1995e9d17b097311939:1)
+
+$ vault-cli recuperer --sans-etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+État local absent ou périmé : recherche du coffre courant (mode survie)…
+Coffre retrouvé après 2 paiement(s), chaque saut vérifié : sortie 41323aed939bd3fe953638c53b9ab8f33a5a6ecccf61e1995e9d17b097311939:1, 4.47 TKAS
+Coffre récupéré par le propriétaire : https://tn10.kaspa.stream/transactions/02ba27cf4adcbf72c7b2614985d7e514cfd4506a0affccafdfdb06ceeea6465e
+
+$ vault-cli pause 10
+(pause de 10 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628327578
+Solde du propriétaire : 998.865 TKAS (3 UTXO)
+Coffre : pas encore déployé
+
+```
