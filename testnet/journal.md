@@ -323,3 +323,45 @@ Solde du propriétaire : 996.805 TKAS (2 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-20 10:26 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre déployé : 5 TKAS, budget 2 TKAS, lignée 1793d11282748ddd8bfa5a7c6ec0aca9b66cf9af41a03af4dd69fd10cb7b8c2a
+Transaction : https://tn10.kaspa.stream/transactions/a25188efb9a05d0e1136c7b7a329ebfc443cc97ac7c53a148e94d0c85941f6ec
+
+$ vault-cli pause 360
+(pause de 360 s)
+
+$ vault-cli attaque temps
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+[TÉMOIN] vidage antidaté n°1 (0.5 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/5a849a0aecf85bb595e052818a675b37820bdbaffe00d1ffcee03bd4d640ccbf
+[TÉMOIN] vidage antidaté n°2 (0.5 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/864010c3e73449226b71518f1b542e0720b9a2c34a31c5ebdfca18f75d95c0b2
+[TÉMOIN] vidage antidaté n°3 (0.5 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/7180c9aff2639389b11879edd2f3a687ea3ab3cdd01cac2c3c64e82d3d873f89
+[TÉMOIN] vidage antidaté n°4 (0.44 TKAS) : acceptée : https://tn10.kaspa.stream/transactions/15b462e7d9ecc24aef4073925c29e57ba7f664651d71fe1126148a07ad8fde37
+[ATTAQUE] temps mis de côté : en v0.4 l'agent aurait disposé de 0.21244444 TKAS ; en v0.5 de 0 TKAS ; il tente 0.19744444 TKAS
+[ATTAQUE] réclamation du temps mis de côté : REJETÉE par le réseau, comme attendu
+          message du nœud : RPC Server (remote error) -> Rejected transaction d240a5babcd6d78c56bc4629785d56b2a67f13b1b6edc04732f3aeff4638624e: failed to verify the signature script: script ran, but verification failed
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628354532
+Solde du propriétaire : 993.715 TKAS (5 UTXO)
+Coffre : 3 TKAS, budget disponible ~0.0075 TKAS (sortie 15b462e7d9ecc24aef4073925c29e57ba7f664651d71fe1126148a07ad8fde37:1)
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Coffre récupéré par le propriétaire : https://tn10.kaspa.stream/transactions/3dfe079679f73134ea32f1605cdd1f8a84bb09b6b650d7554917e1e1f6b67f91
+
+$ vault-cli pause 10
+(pause de 10 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 628354893
+Solde du propriétaire : 996.7 TKAS (6 UTXO)
+Coffre : pas encore déployé
+
+```
