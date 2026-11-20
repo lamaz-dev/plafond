@@ -165,3 +165,46 @@ $ vault-cli pieces-porte-monnaie
 Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
 [{"address":"kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4","amount":"29700000","outpoint":{"index":1,"txid":"b137fd8ecbd66b00e6df107876bf6e0385e00bc0521ae681a98e5f9ebbf45f93"},"scriptPublicKey":"000020a3b905fef9f2f28872125d8b0c4fc703ce1ebdcf9fb0439e84f5c9626ceb80eeac"}]
 ```
+
+## 2026-11-20 04:25 UTC
+
+```
+$ routeur (démo) + agent Python
+Budget de l'agent : 2.0 TKAS disponibles, 0.5 TKAS max par paiement
+
+=== 1. L'agent achète une donnée (0,2 TKAS) ===
+Contenu : Météo du réseau Kaspa : 10 blocs/s, mempool calme, frais bas.
+Payé 0.2 TKAS depuis le coffre : https://tn10.kaspa.stream/transactions/3583ba3e9d0fb145ccf62d4e952f79bea38b9e361dfbc3673ff79e8b48a4aa75
+
+=== 2. Le vendeur demande 1 TKAS, au-dessus du plafond de 0,5 ===
+Refusé avant tout paiement : prix 100000000 sompi supérieur au plafond demandé (50000000)
+
+=== 3. Agent compromis : il contourne le logiciel et diffuse 1 TKAS directement ===
+Le réseau Kaspa REFUSE la transaction : elle viole le covenant du coffre.
+Réponse du nœud : RPC Server (remote error) -> Rejected transaction 6f23fff91d6cb185f5c23fc8f035c62528f4cb10e6baaead72f8b1fe390d493b: failed to verify the signature script: script ran, but verification failed
+
+Budget restant : 1.78794444 TKAS
+VERDICT : le coffre a payé ce qui était permis et le réseau a bloqué le reste.
+--- journal du routeur ---
+[ROUTEUR] à l'écoute sur http://127.0.0.1:8403 (démo : oui, plafond par requête : 50000000 sompi)
+[ROUTEUR] l'agent demande http://127.0.0.1:8402/meteo-kaspa
+
+[AGENT] GET http://127.0.0.1:8402/meteo-kaspa
+[VENDEUR] /meteo-kaspa : paiement requis (0.2 TKAS)
+[AGENT] 402 reçu : 0.2 TKAS à payer à kaspatest:qquknj8t2nw0nctxgg3kfcqfzwpq9uj5vjsd44rgvpl3neqakdnmwy8muhgdl
+[AGENT] paiement signé depuis le coffre, envoi au vendeur
+[VENDEUR] autorisation valide : signée par la clé agent du coffre pour cette requête
+[VENDEUR] coffre authentique : script AgentBudget recompilé = sortie on-chain (4.485 TKAS), lignée 605a11382264b13adf2c53e2e135258805cbc4ca21e3e14fa06632af2f66524e
+[VENDEUR] solvable : budget restant 2 TKAS ≥ prix 0.2 TKAS
+[VENDEUR] paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/3583ba3e9d0fb145ccf62d4e952f79bea38b9e361dfbc3673ff79e8b48a4aa75
+[AGENT] ✅ contenu reçu : « Météo du réseau Kaspa : 10 blocs/s, mempool calme, frais bas. »
+[AGENT] reçu de paiement : transaction 3583ba3e9d0fb145ccf62d4e952f79bea38b9e361dfbc3673ff79e8b48a4aa75
+[ROUTEUR] l'agent demande http://127.0.0.1:8402/rapport-premium
+
+[AGENT] GET http://127.0.0.1:8402/rapport-premium
+[VENDEUR] /rapport-premium : paiement requis (1 TKAS)
+[AGENT] 402 reçu : 1 TKAS à payer à kaspatest:qquknj8t2nw0nctxgg3kfcqfzwpq9uj5vjsd44rgvpl3neqakdnmwy8muhgdl
+[AGENT] je refuse : prix supérieur au plafond de cette requête
+[ROUTEUR] démo : paiement de 1 TKAS diffusé SANS contrôle local
+
+```
