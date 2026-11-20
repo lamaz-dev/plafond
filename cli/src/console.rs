@@ -61,7 +61,7 @@ impl Cours {
         let v = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(5))
             .build()
-            .get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa,tether,usd-coin,bitcoin,ethereum,solana&vs_currencies=usd,eur")
+            .get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa,tether,usd-coin,bitcoin,ethereum,solana&vs_currencies=usd,eur,jpy,gbp")
             .call()
             .ok()
             .and_then(|r| r.into_string().ok())
@@ -70,6 +70,11 @@ impl Cours {
             let usd = |id: &str| v[id]["usd"].as_f64().filter(|x| *x > 0.0);
             let kas = usd("kaspa")?;
             let mut c = json!({ "usd": kas, "eur": v["kaspa"]["eur"].as_f64()?, "source": "CoinGecko (indicatif)" });
+            for f in ["jpy", "gbp"] {
+                if let Some(x) = v["kaspa"][f].as_f64() {
+                    c[f] = json!(x);
+                }
+            }
             for (cle, id) in [("usdt", "tether"), ("usdc", "usd-coin"), ("btc", "bitcoin"), ("eth", "ethereum"), ("sol", "solana")] {
                 if let Some(x) = usd(id) {
                     c[cle] = json!(kas / x);
@@ -390,6 +395,8 @@ mod tests {
         for motif in ["<script src", "<link ", "http://", "https://fonts", "cdn."] {
             assert!(!PAGE.contains(motif), "ressource externe dans la page : {motif}");
         }
+        // choix produit : l'unité du réseau n'apparaît jamais à l'écran (requêtes et devises)
+        assert!(!PAGE.contains("KAS"), "l'unité du réseau ne doit pas apparaître dans l'interface");
     }
 }
 

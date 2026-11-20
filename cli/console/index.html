@@ -64,7 +64,8 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
 .modale.ouverte{display:flex}
 .modale .carte{max-width:460px;width:92%}
 [hidden]{display:none!important}
-.req{font-size:30px;font-weight:700}
+.req{font-size:30px;font-weight:700;white-space:nowrap}
+.req small{font-size:15px;font-weight:550;color:var(--doux);margin-left:6px}
 .qr{background:#fff;border-radius:10px;padding:6px;width:150px;height:150px}
 .adr{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .ajout{color:var(--accent);font-weight:600;min-height:22px}
@@ -80,10 +81,10 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   <span id="sante" class="sante s-aucun" role="status"><b></b><span id="sante-txt">…</span></span>
   <span class="esp"></span>
   <select id="devise" class="sel" aria-label="Devise">
-    <option value="kas">KAS</option><option value="eur">EUR</option><option value="usd">USD</option><option value="usdt">USDT</option><option value="usdc">USDC</option><option value="btc">BTC</option><option value="eth">ETH</option><option value="sol">SOL</option>
+    <option value="usd">USD $</option><option value="eur">EUR €</option><option value="jpy">JPY ¥</option><option value="gbp">GBP £</option><option value="usdt">USDT</option><option value="usdc">USDC</option><option value="btc">BTC</option><option value="eth">ETH</option><option value="sol">SOL</option>
   </select>
   <select id="langue" class="sel" aria-label="Langue">
-    <option value="fr">Français</option><option value="en">English</option>
+    <option value="fr">Français</option><option value="en">English</option><option value="ja">日本語</option>
   </select>
 </header>
 <nav role="tablist">
@@ -131,7 +132,7 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="carte" id="derniers"></div>
     </div>
     <p class="note"><span id="tarif-txt"></span> <button class="lienbtn" id="b-tarif" data-t="modifier">modifier</button>
-      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0.0001" step="0.01" class="sel" aria-label="Tarif en KAS"> KAS <button class="btn sec" id="b-tarif-ok">OK</button></span></p>
+      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0" step="any" class="sel" aria-label="Tarif"> <span id="tarif-devise" class="mono">USD</span> <button class="btn sec" id="b-tarif-ok">OK</button></span></p>
     <p id="cours" class="note"></p>
   </section>
 
@@ -139,15 +140,11 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
     <div class="carte">
       <div class="etiq" data-t="alim_titre">Ajouter des fonds au coffre</div>
       <p class="note" data-t="alim_txt">Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.</p>
-      <div class="note"><span data-t="votre_solde">Disponible sur votre adresse</span> : <span class="mono" id="v-proprio">–</span></div>
-      <div class="champ"><input id="montant" type="number" min="0.1" step="0.1" inputmode="decimal" aria-label="Montant en KAS"><span>KAS</span>
+      <div class="note"><span data-t="votre_solde">Disponible sur votre compte propriétaire</span> : <span class="mono" id="v-proprio">–</span></div>
+      <div class="champ"><input id="montant" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant"><span id="alim-devise" class="mono">USD</span>
         <button id="b-alim" class="btn" data-t="alimenter">Alimenter</button></div>
       <div class="ajout mono" id="ajout" aria-live="polite"></div>
-      <p class="note" data-t="kas_seul">Le dépôt sur le réseau s'effectue uniquement en KAS. Les requêtes et les autres devises sont des équivalents indicatifs.</p>
-      <div class="etiq" data-t="adresse">Adresse à approvisionner (portefeuille KasWare, Kastle…)</div>
-      <div class="adr"><img id="qr" class="qr" alt="QR code de l'adresse" hidden>
-        <div><div class="mono" id="v-adresse" style="word-break:break-all">–</div>
-        <p><button id="b-copier" class="btn sec" data-t="copier">Copier l'adresse</button> <span id="copie" class="note" aria-live="polite"></span></p></div></div>
+      <p class="note" data-t="conversion">Montant converti au cours indicatif du moment. Le change de devises et le portefeuille seront intégrés dans une prochaine étape.</p>
       <div id="m-alim"></div>
     </div>
   </section>
@@ -203,7 +200,7 @@ const T={
   budget:"Budget garanti par période",depense:"Dépensé sur la période",exposition:"Exposition maximale immédiate",exposition_txt:"Ce qu'un agent compromis pourrait dépenser à l'instant, au plus.",
   solde:"Fonds dans le coffre",solde_txt:"Jamais plus ne peut être perdu.",plafond:"Plafond par achat",periode:"Période",derniers:"Derniers achats de l'agent",
   alim_titre:"Ajouter des fonds au coffre",alim_txt:"Les fonds viennent de votre adresse de propriétaire. Le budget garanti par période ne change pas ; seule la réserve totale augmente.",
-  votre_solde:"Disponible sur votre adresse",alimenter:"Alimenter",adresse:"Adresse à approvisionner (portefeuille KasWare, Kastle…)",
+  votre_solde:"Disponible sur votre compte propriétaire",alimenter:"Alimenter",conversion:"Montant converti au cours indicatif du moment. Le change de devises et le portefeuille seront intégrés dans une prochaine étape.",sans_cours:"Cours indisponible : réessayez dans un instant.",adresse:"Adresse à approvisionner (portefeuille KasWare, Kastle…)",
   h_type:"Opération",h_montant:"Montant",h_frais:"Frais",h_dest:"Bénéficiaire",h_preuve:"Preuve",histo_txt:"Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.",
   achat:"Achat de l'agent",ajout:"Ajout de fonds",gel:"Gel",voir:"voir",aucun_achat:"Aucun achat pour l'instant.",
   urg_titre:"Arrêter immédiatement toutes les dépenses",urg_txt:"Tous les fonds du coffre reviennent sur votre adresse de propriétaire. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.",
@@ -211,21 +208,41 @@ const T={
   archi_txt:"La règle de dépense est exécutée hors de votre infrastructure, par le consensus d'un réseau public : ni l'agent, ni son serveur, ni l'éditeur de ce logiciel ne peuvent la contourner. La clé du propriétaire reste chiffrée sur cet ordinateur.",
   conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_creer:"Confirmer la création",conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",
   en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Lien de session invalide : rouvrez le lien affiché dans le terminal.",
-  cours_note:"Équivalents en devises indicatifs, au cours du KAS ({src}). Sur le réseau de test, les jetons n'ont pas de valeur.",cours_absent:"Cours indisponible : montants affichés en KAS.",
+  cours_note:"Montants en devises indicatifs ({src}). Sur le réseau de test, ils n'ont pas de valeur réelle.",cours_absent:"Cours indisponible : seuls les nombres de requêtes sont affichés.",
   regles:"Règles : budget garanti {b} par période de {p}, réserve {r}, plafond par achat {m}.",reseau:"Réseau",
   req1:"requête",reqN:"requêtes",reqc:"req.",tarif:"Tarif de référence : {t} par requête standard, frais inclus.",modifier:"modifier",
-  kas_seul:"Le dépôt sur le réseau s'effectue uniquement en KAS. Les requêtes et les autres devises sont des équivalents indicatifs.",
   ajout:"+ {n} ajoutées",copier:"Copier l'adresse",copie:"Adresse copiée.",copie_ko:"Copie impossible : sélectionnez l'adresse.",
   h_req:"Requêtes",export_csv:"Exporter le rapport (CSV)",export_json:"Exporter le rapport (JSON)",fermer:"Fermer",
   d_montant:"Montant exact",d_frais:"Frais",d_txid:"Transaction",d_instant:"Instant (score DAA)",d_dest:"Bénéficiaire",
   mdp:"Mot de passe propriétaire",conf_gel_mdp:"Saisissez votre mot de passe propriétaire, puis tapez GELER.",rapport:"Rapport de contrôle",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat",heure:"heure",heures:"heures",minutes:"minutes"},
+ ja:{titre:"エージェント資金管理",t_tableau:"ダッシュボード",t_alimenter:"入金",t_historique:"履歴",t_urgence:"緊急停止",
+  normal:"管理下にあります",alerte:"準備金の80%以上を使用済み",epuise:"準備金が枯渇：補充待ち",gele:"凍結済み：支出は停止しています",aucun:"金庫なし",
+  aucun_titre:"有効なエージェント予算はありません",aucun_txt:"金庫を作成すると、エージェントは以下の上限内で単独で支払えます。上限はお客様のインフラの外で保証されます。",creer:"金庫を作成",
+  budget:"期間ごとの保証予算",depense:"今期間の支出",exposition:"即時最大エクスポージャー",exposition_txt:"侵害されたエージェントが今この瞬間に使える最大額。",
+  solde:"金庫内の資金",solde_txt:"これ以上を失うことはありません。",plafond:"1回あたりの上限",periode:"期間",derniers:"エージェントの最近の購入",
+  alim_titre:"金庫に資金を追加",alim_txt:"資金は所有者アカウントから移されます。期間ごとの保証予算は変わらず、準備金の総額だけが増えます。",
+  votre_solde:"所有者アカウントの利用可能額",alimenter:"入金",conversion:"金額は現在の参考レートで換算されます。通貨の両替とウォレットは今後のステップで統合されます。",sans_cours:"レートを取得できません。しばらくしてから再度お試しください。",
+  h_type:"取引",h_montant:"金額",h_frais:"手数料",h_dest:"受取人",h_preuve:"証明",histo_txt:"各行は公開台帳から再構成・検証されており、後から改ざんすることはできません。",
+  achat:"エージェントの購入",ajout:"資金の追加",gel:"凍結",voir:"表示",aucun_achat:"まだ購入はありません。",
+  urg_titre:"すべての支出を直ちに停止",urg_txt:"金庫の資金はすべて所有者アカウントに戻ります。エージェントはもう何も使えません。この操作はエージェントのサーバーにも、いかなる事業者にも依存しません。",
+  geler:"今すぐ凍結",annuler:"キャンセル",archi:"アーキテクチャとコンプライアンス",
+  archi_txt:"支出ルールはお客様のインフラの外で、公開ネットワークのコンセンサスによって実行されます。エージェントも、そのサーバーも、本ソフトウェアの発行者も、これを回避できません。所有者の鍵はこのコンピューター上で暗号化されたままです。",
+  conf_gel:"凍結の確認",conf_gel_txt:"GELER と入力すると、すべての支出を停止し資金を戻します。",conf_creer:"作成の確認",conf_creer_txt:"CREER と入力すると、このルールで金庫を作成します。",
+  en_cours:"処理中です。数秒お待ちください…",fait:"完了しました。",preuve:"公開証明",jeton:"セッションリンクが無効です。ターミナルに表示されたリンクを開き直してください。",
+  cours_note:"通貨建ての金額は参考値です（{src}）。テストネットワーク上では実際の価値はありません。",cours_absent:"レートを取得できません：リクエスト数のみ表示しています。",
+  regles:"ルール：期間 {p} ごとの保証予算 {b}、準備金 {r}、1回あたりの上限 {m}。",reseau:"ネットワーク",contrat:"コントラクト",lignee:"系譜",sortie:"現在の出力",empreinte:"コントラクトの指紋",heure:"時間",heures:"時間",minutes:"分",
+  req1:"リクエスト",reqN:"リクエスト",reqc:"件",tarif:"参考価格：標準リクエスト1件あたり {t}（手数料込み）。",modifier:"変更",
+  ajout:"+ {n} 追加",copier:"コピー",copie:"コピーしました。",copie_ko:"コピーできません。",
+  h_req:"リクエスト",export_csv:"管理レポートを書き出す（CSV）",export_json:"管理レポートを書き出す（JSON）",fermer:"閉じる",
+  d_montant:"金額",d_frais:"手数料",d_txid:"トランザクション",d_instant:"時刻（DAAスコア）",d_dest:"受取人",
+  mdp:"所有者パスワード",conf_gel_mdp:"所有者パスワードを入力し、GELER と入力してください。",rapport:"管理レポート"},
  en:{titre:"Agent treasury",t_tableau:"Dashboard",t_alimenter:"Fund",t_historique:"History",t_urgence:"Emergency stop",
   normal:"Under control",alerte:"Over 80% of the reserve used",epuise:"Reserve exhausted: the agent waits for the refill",gele:"Frozen: spending stopped",aucun:"No vault",
   aucun_titre:"No active agent budget",aucun_txt:"Create a vault: the agent will pay on its own, within the limits below, enforced outside your infrastructure.",creer:"Create the vault",
   budget:"Guaranteed budget per period",depense:"Spent this period",exposition:"Maximum immediate exposure",exposition_txt:"The most a compromised agent could spend right now.",
   solde:"Funds in the vault",solde_txt:"Never more can be lost.",plafond:"Cap per purchase",periode:"Period",derniers:"Latest agent purchases",
   alim_titre:"Add funds to the vault",alim_txt:"Funds come from your owner address. The guaranteed budget per period does not change; only the total reserve grows.",
-  votre_solde:"Available on your address",alimenter:"Fund",adresse:"Address to top up (KasWare, Kastle wallet…)",
+  votre_solde:"Available on your owner account",alimenter:"Fund",conversion:"Amount converted at the current indicative rate. Currency exchange and the wallet will be integrated in a later step.",sans_cours:"Rate unavailable: try again in a moment.",adresse:"Address to top up (KasWare, Kastle wallet…)",
   h_type:"Operation",h_montant:"Amount",h_frais:"Fee",h_dest:"Payee",h_preuve:"Proof",histo_txt:"Each line is rebuilt from the public ledger and verified; it cannot be altered afterwards.",
   achat:"Agent purchase",ajout:"Funds added",gel:"Freeze",voir:"view",aucun_achat:"No purchase yet.",
   urg_titre:"Stop all spending immediately",urg_txt:"All vault funds return to your owner address. The agent can no longer spend anything. This does not depend on the agent's server or on any provider.",
@@ -233,41 +250,45 @@ const T={
   archi_txt:"The spending rule is enforced outside your infrastructure, by the consensus of a public network: neither the agent, nor its server, nor the publisher of this software can bypass it. The owner key stays encrypted on this computer.",
   conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_creer:"Confirm creation",conf_creer_txt:"Type CREER to create the vault with these rules.",
   en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Invalid session link: reopen the link shown in the terminal.",
-  cours_note:"Currency equivalents are indicative, at the KAS rate ({src}). On the test network, tokens have no value.",cours_absent:"Rate unavailable: amounts shown in KAS.",
+  cours_note:"Currency amounts are indicative ({src}). On the test network they have no real value.",cours_absent:"Rate unavailable: only request counts are shown.",
   regles:"Rules: guaranteed budget {b} per period of {p}, reserve {r}, cap per purchase {m}.",reseau:"Network",
   req1:"request",reqN:"requests",reqc:"req.",tarif:"Reference price: {t} per standard request, fees included.",modifier:"edit",
-  kas_seul:"Deposits on the network are made in KAS only. Requests and other currencies are indicative equivalents.",
   ajout:"+ {n} added",copier:"Copy address",copie:"Address copied.",copie_ko:"Copy failed: select the address.",
   h_req:"Requests",export_csv:"Export report (CSV)",export_json:"Export report (JSON)",fermer:"Close",
   d_montant:"Exact amount",d_frais:"Fee",d_txid:"Transaction",d_instant:"Time (DAA score)",d_dest:"Payee",
   mdp:"Owner password",conf_gel_mdp:"Enter your owner password, then type GELER.",rapport:"Control report",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint",heure:"hour",heures:"hours",minutes:"minutes"}
 };
-const etat={jeton:null,donnees:null,langue:"fr",devise:"kas",page:"tableau"};
+const etat={jeton:null,donnees:null,langue:"fr",devise:"usd",page:"tableau"};
+const DEVISES=["usd","eur","jpy","gbp","usdt","usdc","btc","eth","sol"];
 const $=id=>document.getElementById(id);
 const t=k=>(T[etat.langue]||T.fr)[k]??k;
 // Le jeton arrive dans le fragment de l'URL (jamais envoyé au serveur) ; on l'efface de la barre d'adresse.
 (()=>{const m=location.hash.match(/jeton=([0-9a-f]{64})/);if(m){etat.jeton=m[1];history.replaceState(null,"",location.pathname)}})();
-try{etat.langue=localStorage.getItem("langue")||(navigator.language||"fr").slice(0,2);etat.devise=localStorage.getItem("devise")||"kas"}catch(e){}
+try{etat.langue=localStorage.getItem("langue")||(navigator.language||"fr").slice(0,2);etat.devise=localStorage.getItem("devise")||"usd"}catch(e){}
 if(!T[etat.langue])etat.langue="en";
+if(!DEVISES.includes(etat.devise))etat.devise="usd";
 
-const loc=()=>etat.langue==="fr"?"fr-FR":"en-US";
-const DECIMALES={btc:8,eth:6,sol:4,usdt:4,usdc:4};
-function kasTexte(sompi){const kas=sompi/1e8;return new Intl.NumberFormat(loc(),{maximumFractionDigits:8}).format(kas)+" KAS"}
+const LOC={fr:"fr-FR",en:"en-US",ja:"ja-JP"};
+const loc=()=>LOC[etat.langue]||"en-US";
+const FIAT=["usd","eur","jpy","gbp"],DECIMALES={btc:8,eth:6,sol:4,usdt:2,usdc:2};
+// Valeur d'une unité de base (1e8) dans la devise choisie ; null si le cours manque.
+function cours(){const c=etat.donnees&&etat.donnees.cours;return c&&c[etat.devise]!=null?c[etat.devise]:null}
 function montant(sompi){
-  if(sompi==null)return "–";
-  const kas=sompi/1e8,c=etat.donnees&&etat.donnees.cours,d=etat.devise;
-  if(d!=="kas"&&c&&c[d]!=null){const v=kas*c[d];
-    if(d==="eur"||d==="usd")return new Intl.NumberFormat(loc(),{style:"currency",currency:d.toUpperCase(),maximumFractionDigits:v<10?4:2}).format(v);
-    return new Intl.NumberFormat(loc(),{maximumFractionDigits:DECIMALES[d]||4}).format(v)+" "+d.toUpperCase()}
-  return new Intl.NumberFormat(loc(),{maximumFractionDigits:kas<10?4:2}).format(kas)+" KAS";
+  const c=cours();if(sompi==null||c==null)return "–";
+  const v=sompi/1e8*c,d=etat.devise;
+  if(FIAT.includes(d))return new Intl.NumberFormat(loc(),{style:"currency",currency:d.toUpperCase(),maximumFractionDigits:d==="jpy"?(v<100?2:0):(v<10?4:2)}).format(v);
+  return new Intl.NumberFormat(loc(),{maximumFractionDigits:DECIMALES[d]||4}).format(v)+" "+d.toUpperCase();
 }
+const versSompi=v=>{const c=cours();return c?Math.round(v/c*1e8):null};
+const deSompi=x=>{const c=cours();return c?x/1e8*c:null};
 // Unité de lecture « requêtes » : tarif de référence du serveur, modifiable par le lecteur.
 function tarif(){let v=null;try{v=Number(localStorage.getItem("tarif"))}catch(e){}return v>0?v:((etat.donnees&&etat.donnees.tarif_reference_sompi)||40000000)}
-function requetes(sompi,sens){
-  if(sompi==null)return "–";
+function reqParts(sompi,sens){
   const x=sompi/tarif(),n=sens==="haut"?Math.ceil(x-1e-9):Math.floor(x+1e-9),exact=Math.abs(x-n)<1e-9;
-  return (exact?"":"~")+new Intl.NumberFormat(loc()).format(n)+" "+(n===1?t("req1"):t("reqN"));
+  return [(exact?"":"~")+new Intl.NumberFormat(loc()).format(n),n===1?t("req1"):t("reqN")];
 }
+function requetes(sompi,sens){if(sompi==null)return "–";const [n,u]=reqParts(sompi,sens);return n+" "+u}
+function afficherReq(el,sompi,sens){if(sompi==null){el.textContent="–";return}const [n,u]=reqParts(sompi,sens);const sm=document.createElement("small");sm.textContent=u;el.replaceChildren(document.createTextNode(n),sm)}
 function reqCourt(sompi){return new Intl.NumberFormat(loc(),{maximumFractionDigits:1}).format(sompi/tarif())+" "+t("reqc")}
 function duree(s){if(s>=3600){const h=s/3600;return new Intl.NumberFormat(etat.langue).format(h)+" "+(h>1?t("heures"):t("heure"))}return Math.round(s/60)+" "+t("minutes")}
 function court(h){return h&&h.length>18?h.slice(0,8)+"…"+h.slice(-6):(h||"–")}
@@ -295,25 +316,25 @@ function afficher(){
   const sans=d.sante==="aucun"||d.sante==="gele";
   $("sans-coffre").hidden=!sans;$("avec-coffre").hidden=sans;
   $("regles-creer").textContent=t("regles").replace("{b}",montant(r.budget_garanti_par_periode_sompi)).replace("{p}",duree(r.periode_secondes)).replace("{r}",montant(r.reserve_sompi)).replace("{m}",montant(r.plafond_par_achat_sompi));
-  $("r-budget").textContent=requetes(r.budget_garanti_par_periode_sompi,"bas");
+  afficherReq($("r-budget"),r.budget_garanti_par_periode_sompi,"bas");
   $("v-budget").textContent=montant(r.budget_garanti_par_periode_sompi);
   $("r-depense").textContent=requetes(d.depense_periode_sompi??0,"haut");
   $("v-depense").textContent=montant(d.depense_periode_sompi??0);
   const pct=Math.min(100,100*(d.depense_periode_sompi||0)/r.budget_garanti_par_periode_sompi);
   $("jauge").style.width=pct+"%";$("jauge").style.background=pct>80?"var(--ambre)":"var(--accent)";
   // exposition (un risque) arrondie vers le haut ; capacités (budget, fonds) vers le bas
-  $("r-expo").textContent=requetes(d.exposition_immediate_sompi,"haut");
+  afficherReq($("r-expo"),d.exposition_immediate_sompi,"haut");
   $("v-expo").textContent=montant(d.exposition_immediate_sompi);
-  $("r-solde").textContent=requetes(d.solde_coffre_sompi,"bas");
+  afficherReq($("r-solde"),d.solde_coffre_sompi,"bas");
   $("v-solde").textContent=montant(d.solde_coffre_sompi);
-  $("r-plafond").textContent=requetes(r.plafond_par_achat_sompi,"bas");
+  afficherReq($("r-plafond"),r.plafond_par_achat_sompi,"bas");
   $("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
-  $("tarif-txt").textContent=t("tarif").replace("{t}",kasTexte(tarif()));
-  if(d.qr_adresse){$("qr").src=d.qr_adresse;$("qr").hidden=false}
+  $("tarif-txt").textContent=t("tarif").replace("{t}",montant(tarif()));
+  $("alim-devise").textContent=$("tarif-devise").textContent=etat.devise.toUpperCase();
+  $("b-tarif").hidden=cours()==null;
   majAjout();
   $("v-periode").textContent=duree(r.periode_secondes);
   $("v-proprio").textContent=montant(d.solde_proprietaire_sompi);
-  $("v-adresse").textContent=d.adresse_proprietaire||"–";
   const achats=(d.historique||[]).filter(m=>m.genre==="achat").slice(0,5);
   const der=$("derniers");der.replaceChildren();
   if(!achats.length){const p=document.createElement("div");p.className="vide";p.textContent=t("aucun_achat");der.append(p)}
@@ -331,23 +352,25 @@ function afficher(){
 function detail(m){
   $("det-titre").textContent=t(m.genre);
   const dl=$("det-dl");dl.replaceChildren();
-  for(const [k,v] of [["d_montant",kasTexte(m.montant_sompi)+" ("+m.montant_sompi+" sompi)"],["d_frais",m.frais_sompi?kasTexte(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]]){
+  for(const [k,v] of [["h_req",reqCourt(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))],["d_montant",montant(m.montant_sompi)],["d_frais",m.frais_sompi?montant(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]]){
     const dt=document.createElement("dt");dt.textContent=t(k);const dd=document.createElement("dd");dd.className="mono";dd.textContent=String(v);dl.append(dt,dd)}
   $("det-lien").replaceChildren(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("preuve")));
   $("detail").classList.add("ouverte");$("det-fermer").focus();
 }
-function majAjout(){const v=parseFloat(($("montant").value||"").replace(",","."));$("ajout").textContent=v>0?t("ajout").replace("{n}",requetes(Math.round(v*1e8),"bas")):""}
+function majAjout(){const v=parseFloat(($("montant").value||"").replace(",","."));const x=v>0?versSompi(v):null;$("ajout").textContent=v>0?(x==null?t("sans_cours"):t("ajout").replace("{n}",requetes(x,"bas"))):""}
 function telecharger(nom,type,contenu){const u=URL.createObjectURL(new Blob([contenu],{type}));const a=document.createElement("a");a.href=u;a.download=nom;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
 function rapport(){
   const d=etat.donnees||{};
   return {titre:t("rapport"),genere_le:new Date().toISOString(),sante:d.sante,regles:d.regles,tarif_reference_sompi:tarif(),
     solde_coffre_sompi:d.solde_coffre_sompi,exposition_immediate_sompi:d.exposition_immediate_sompi,depense_periode_sompi:d.depense_periode_sompi,
     technique:d.technique,mouvements:d.historique||[],
-    note:"Montants exacts en sompi (1 KAS = 100 000 000 sompi). Chaque mouvement est vérifiable avec son identifiant de transaction sur le registre public."};
+    devise_affichage:etat.devise,cours_utilise:cours(),
+    note:"Montants exacts en unités du registre (100 000 000 unités = 1 jeton du réseau). Équivalents en devise indicatifs, au cours indiqué. Chaque mouvement est vérifiable avec son identifiant de transaction sur le registre public."};
 }
 function csv(){
-  const lignes=[["operation","montant_sompi","frais_sompi","requetes","beneficiaire","instant_daa","transaction"]];
-  for(const m of (etat.donnees&&etat.donnees.historique)||[])lignes.push([m.genre,m.montant_sompi,m.frais_sompi,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),m.destinataire||"",m.instant_daa??"",m.txid]);
+  const dv=etat.devise;
+  const lignes=[["operation","requetes","montant_"+dv,"frais_"+dv,"montant_unites_registre","frais_unites_registre","beneficiaire","instant_daa","transaction"]];
+  for(const m of (etat.donnees&&etat.donnees.historique)||[])lignes.push([m.genre,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),deSompi(m.montant_sompi)??"",deSompi(m.frais_sompi)??"",m.montant_sompi,m.frais_sompi,m.destinataire||"",m.instant_daa??"",m.txid]);
   return lignes.map(l=>l.map(x=>{const s=String(x);return /[",;\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(",")).join("\n")+"\n";
 }
 
@@ -386,13 +409,12 @@ $("b-geler").onclick=async()=>{const avec=!!(etat.donnees&&etat.donnees.mot_de_p
   if(r)agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER",mot_de_passe:r.mdp})};
 $("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer"),false))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
 $("montant").oninput=majAjout;
-$("b-copier").onclick=async()=>{try{await navigator.clipboard.writeText($("v-adresse").textContent);$("copie").textContent=t("copie")}catch(e){$("copie").textContent=t("copie_ko")}};
 $("b-csv").onclick=()=>telecharger("rapport-controle.csv","text/csv;charset=utf-8",csv());
 $("b-json").onclick=()=>telecharger("rapport-controle.json","application/json",JSON.stringify(rapport(),null,2));
 $("det-fermer").onclick=()=>$("detail").classList.remove("ouverte");
-$("b-tarif").onclick=()=>{$("tarif-edit").hidden=false;$("tarif-champ").value=tarif()/1e8;$("tarif-champ").focus()};
-$("b-tarif-ok").onclick=()=>{const v=Math.round(parseFloat(String($("tarif-champ").value).replace(",","."))*1e8);if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
-$("b-alim").onclick=()=>{const v=Math.round(parseFloat($("montant").value.replace(",","."))*1e8);if(!(v>0)){message("m-alim",false,t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
+$("b-tarif").onclick=()=>{const x=deSompi(tarif());if(x==null)return;$("tarif-edit").hidden=false;$("tarif-champ").value=Number(x.toPrecision(4));$("tarif-champ").focus()};
+$("b-tarif-ok").onclick=()=>{const v=versSompi(parseFloat(String($("tarif-champ").value).replace(",",".")));if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
+$("b-alim").onclick=()=>{const m=parseFloat(String($("montant").value).replace(",","."));const v=m>0?versSompi(m):null;if(v==null){message("m-alim",false,m>0?t("sans_cours"):t("h_montant")+" ?");return}agir($("b-alim"),"m-alim","/api/alimenter",{montant_sompi:v})};
 document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte")});
 
 traduire();
