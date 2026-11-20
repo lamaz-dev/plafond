@@ -96,6 +96,8 @@ enum Cheat {
     LooserRules,
     /// continuation sans liaison de covenant (sortir de la lignée)
     DropCovenant,
+    /// lignée déplacée sur la sortie 0 (le paiement) au lieu de la continuation (test de mutation M3)
+    MoveCovenantToPayment,
     /// troisième sortie (combiner, détourner)
     ExtraOutput(u64),
     /// annoncer un instant plus récent que le verrou temporel de la transaction
@@ -126,6 +128,7 @@ fn cheat() -> impl Strategy<Value = Cheat> {
         1 => Just(Cheat::WrongKey),
         1 => Just(Cheat::Payload),
         1 => Just(Cheat::BindPayment),
+        1 => Just(Cheat::MoveCovenantToPayment),
     ]
 }
 
@@ -188,8 +191,8 @@ fn try_pay(m: &Model, amount: i64, fee: i64, back: i64, cheat: &Cheat) -> (bool,
     }
     let entry = UtxoEntry::new(m.value, vault_spk(&cur), m.created as u64, false, Some(cov));
     let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_VAULT);
-    let binding = if matches!(cheat, Cheat::DropCovenant) { None } else { Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) };
-    let pay_binding = if matches!(cheat, Cheat::BindPayment) { Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) } else { None };
+    let binding = if matches!(cheat, Cheat::DropCovenant | Cheat::MoveCovenantToPayment) { None } else { Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) };
+    let pay_binding = if matches!(cheat, Cheat::BindPayment | Cheat::MoveCovenantToPayment) { Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) } else { None };
     let mut outputs = vec![
         TransactionOutput { value: amount as u64, script_public_key: pay_to_address_script(&address(&k(10))), covenant: pay_binding },
         TransactionOutput { value: rest as u64, script_public_key: vault_spk(&next), covenant: binding },
@@ -291,6 +294,7 @@ fn banc_de_test_discriminant() {
         Cheat::WrongKey,
         Cheat::Payload,
         Cheat::BindPayment,
+        Cheat::MoveCovenantToPayment,
     ] {
         let (ok, _, _) = try_pay(&m, 10_000_000, 1_500_000, 0, &c);
         assert!(!ok, "triche acceptée : {c:?}");

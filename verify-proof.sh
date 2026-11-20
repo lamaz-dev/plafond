@@ -21,7 +21,7 @@ teste() { local out; out=$(cargo test --release "$1" -- --exact "$1" 2>&1) || { 
 
 echo "AgentBudget v0.5.1 : vérification de la borne de perte (FUZZ_CASES=$FUZZ_CASES)"
 echo
-etape "0. Compilation (contrat SilverScript + moteur kaspa-txscript)" cargo build -q --release
+etape "0. Compilation (contrat SilverScript + moteur kaspa-txscript)" cargo build -q --release --locked
 etape "1. Empreintes : bytecode compilé = contracts/EMPREINTES.txt" \
   bash -c 'diff <(cargo run -q --release -- empreintes 2>/dev/null) ../contracts/EMPREINTES.txt'
 etape "2. Faille v0.4 reproduite (3 × la réserve en une période)" teste fuzz::faille_v04_demontree

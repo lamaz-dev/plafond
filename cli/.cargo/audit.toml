@@ -1,0 +1,10 @@
+# Configuration de `cargo audit` (base RustSec). Toute nouvelle vulnérabilité fait échouer la CI.
+# Exceptions, chacune justifiée et à réexaminer à chaque mise à jour de Kaspa ou de SilverScript :
+[advisories]
+ignore = [
+  # tracing-subscriber 0.2.25 (empoisonnement des journaux par séquences ANSI), tiré uniquement par
+  # ark-relations <- risc0-groth16 <- kaspa-txscript-zk-sdk <- silverscript-lang. vault-cli
+  # n'initialise aucun abonné tracing et n'utilise pas ces preuves ZK ; correction impossible sans
+  # mise à jour en amont (Kaspa / SilverScript).
+  "RUSTSEC-2025-0055",
+]

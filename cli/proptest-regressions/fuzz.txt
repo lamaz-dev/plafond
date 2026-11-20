@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ca6e95398b5a9050adb1138a14527f5f3d6d347ba39e2d16f3718b61228ed4e0 # shrinks to actions = [Pay { amount: 1, fee: 0, back: 0, cheat: InflateTokens(2) }], value = 30000000
+cc 1587c2fad33a267ef6fea5b7f04de1ab64865ccf122173163828df76bcc43a0b # shrinks to actions = [Pay { amount: 1, fee: 0, back: 0, cheat: None }], value = 30000000
