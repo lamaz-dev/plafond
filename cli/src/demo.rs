@@ -48,7 +48,98 @@ struct Etape {
     detail: String,
 }
 
+/// Clés jetables de la démo : créées une fois sur cet ordinateur (fichier lisible par ce seul compte),
+/// réutilisées ensuite pour ne pas redemander de jetons de test. Réseau de test uniquement ; aucune
+/// phrase à fournir. Tout le travail de la démo reste dans `demo-jetable/` (supprimable à tout moment).
+pub fn cles_jetables() -> Res<(Keypair, Keypair)> {
+    const DOSSIER: &str = "demo-jetable";
+    let chemin = format!("{DOSSIER}/cles-test.json");
+    *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("{DOSSIER}/etat-coffre.json"));
+    let lire = |v: &serde_json::Value, k: &str| -> Res<Keypair> {
+        let b = hex::decode(v[k].as_str().ok_or("fichier de clés de démo illisible")?)?;
+        Ok(Keypair::from_seckey_slice(secp256k1::SECP256K1, &b)?)
+    };
+    if let Ok(t) = std::fs::read_to_string(&chemin) {
+        let v: serde_json::Value = serde_json::from_str(&t)?;
+        println!("Clés de démo (réseau de test) : {chemin}");
+        return Ok((lire(&v, "proprietaire")?, lire(&v, "agent")?));
+    }
+    let nouvelle = || -> Res<Keypair> {
+        let mut b = [0u8; 32];
+        getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
+        Ok(Keypair::from_seckey_slice(secp256k1::SECP256K1, &b)?)
+    };
+    let (o, a) = (nouvelle()?, nouvelle()?);
+    std::fs::create_dir_all(DOSSIER)?;
+    let contenu = serde_json::json!({
+        "avertissement": "Clés jetables du réseau de test (testnet-10), sans valeur. Ne jamais y envoyer de fonds réels.",
+        "proprietaire": hex::encode(o.secret_bytes()),
+        "agent": hex::encode(a.secret_bytes()),
+    });
+    let mut f = std::fs::OpenOptions::new();
+    f.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut f, 0o600);
+    std::io::Write::write_all(&mut f.open(&chemin)?, serde_json::to_string_pretty(&contenu)?.as_bytes())?;
+    println!("Clés de démo créées pour le réseau de test : {chemin} (aucune phrase à fournir)");
+    Ok((o, a))
+}
+
+/// Trésorerie insuffisante : afficher l'adresse, un QR code et le montant exact, puis attendre les fonds.
+async fn attendre_fonds(c: &KaspaRpcClient, owner: &Keypair, besoin: u64) -> Res<u64> {
+    let adr = address(owner).to_string();
+    let manque = besoin.saturating_sub(solde(c, owner).await?);
+    println!("\nIl faut des jetons de test (gratuits) sur cette adresse, au moins {} unités de plus :\n\n  {adr}\n", unites(manque as i64));
+    if let Ok(q) = qrcode::QrCode::new(adr.as_bytes()) {
+        println!("{}", q.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build());
+    }
+    println!("Distributeur du réseau de test : https://faucet-tn10.kaspanet.io/ (collez l'adresse, validez).");
+    println!("La démo reprend toute seule dès que les fonds arrivent (attente maximale : 20 min ; Ctrl+C pour abandonner).");
+    let debut = Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let s = solde(c, owner).await?;
+        if s >= besoin {
+            println!("Fonds reçus : {} unités.", unites(s as i64));
+            return Ok(s);
+        }
+        if debut.elapsed() > Duration::from_secs(1200) {
+            return Err(format!("fonds non reçus après 20 min sur {adr} (distributeur indisponible ?) ; relancer la démo plus tard, l'adresse reste la même").into());
+        }
+    }
+}
+
 pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
+    // La console s'ouvre dans le même programme : un seul terminal, rien à recopier.
+    let console_ouverte = {
+        let (h, o, a) = (tokio::runtime::Handle::current(), owner, principal);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Err(e) = console::lancer(h, o, a) {
+                eprintln!("(console non ouverte : {e} ; la démo continue sans elle)");
+                let _ = tx.send(());
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        rx.try_recv().is_err()
+    };
+    if console_ouverte {
+        println!("Ouvrez le lien ci-dessus dans votre navigateur : c'est l'écran à filmer.\n");
+    }
+    let r = derouler(owner, principal).await;
+    if let Err(e) = &r {
+        eprintln!("\n✗ Démo interrompue : {e}");
+    }
+    if console_ouverte {
+        println!("\nLa console reste ouverte pour consulter le résultat. Ctrl+C pour quitter.");
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    }
+    r
+}
+
+async fn derouler(owner: Keypair, principal: Keypair) -> Res<()> {
     let defaut = etat_par_defaut();
     let mut etapes: Vec<Etape> = Vec::new();
     let mut note = |numero, titre, ok, detail: String| {
@@ -58,14 +149,12 @@ pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
     };
     // Paramètres : 2 unités par jour, 0,5 au plus par achat → exposition immédiate 0,5.
     let regles = Regles::calculer(200_000_000, JOUR_DAA, 50_000_000)?;
-    // Aucune dépendance à un indexeur : seule la chaîne du nœud sert à retrouver le coffre.
-    NOEUD_SEUL.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = connect().await?;
     let tresorerie_avant = solde(&c, &owner).await?;
     let besoin = regles.depot + 10_000_000;
     println!("Trésorerie du propriétaire : {} unités (il en faut {} pour la démo)", unites(tresorerie_avant as i64), unites(besoin as i64));
     if tresorerie_avant < besoin {
-        return Err(format!("trésorerie insuffisante : approvisionnez {} sur le réseau de test (distributeur : https://faucet-tn10.kaspanet.io/)", address(&owner)).into());
+        attendre_fonds(&c, &owner, besoin).await?;
     }
     let service = address(&payee(&owner));
     c.disconnect().await?;

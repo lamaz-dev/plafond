@@ -464,7 +464,13 @@ pub fn garde_diffusion(tx: &Transaction) -> Res<kaspa_rpc_core::RpcTransaction> 
 static COFFRE_COURANT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 static OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Dossier de travail imposé (démo à clé jetable : tout reste dans `demo-jetable/`).
+pub static ETAT_DEFAUT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 pub fn etat_par_defaut() -> String {
+    if let Some(e) = ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return e;
+    }
     env::var("ETAT").unwrap_or_else(|_| "testnet/etat-coffre.json".into())
 }
 
@@ -502,12 +508,9 @@ fn origine_path() -> String {
 
 /// Mode survie : retrouve le coffre courant depuis son origine, via l'indexeur public, en
 /// vérifiant chaque saut, puis confirme auprès du nœud que la sortie existe bien.
-/// Interdit le repli sur l'indexeur public (la démo le pose : elle doit prouver qu'un nœud suffit).
-pub static NOEUD_SEUL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Lignée vérifiée depuis l'origine. Source principale : le nœud lui-même (parcours de sa chaîne depuis
 /// le repère noté au déploiement) — aucune dépendance à un indexeur. Repli sur l'API REST publique
-/// seulement si le repère manque (coffre ancien) ou si le parcours du nœud échoue.
+/// seulement sur demande explicite (AVEC_INDEXEUR=1), pour un coffre ancien sans repère.
 pub async fn retrouver_lignee(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, origine: &Etat) -> Res<(retrouver::Issue, usize, Vec<retrouver::Mouvement>)> {
     let raison = match noeud::lire_repere(&state_path()) {
         None => "aucun repère de survie (coffre créé avant cette version)".to_string(),
@@ -519,10 +522,10 @@ pub async fn retrouver_lignee(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypa
             Err(e) => format!("parcours du nœud impossible : {e}"),
         },
     };
-    if env::var("SANS_INDEXEUR").is_ok() || NOEUD_SEUL.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(format!("{raison} ; indexeur désactivé (SANS_INDEXEUR)").into());
+    if env::var("AVEC_INDEXEUR").is_err() {
+        return Err(format!("{raison}. Pour un coffre ancien, autoriser le repli sur l'indexeur public : AVEC_INDEXEUR=1").into());
     }
-    eprintln!("{raison} : repli sur l'indexeur public");
+    eprintln!("{raison} : repli sur l'indexeur public (AVEC_INDEXEUR)");
     let (pk, ag, o) = (owner_pk.to_vec(), agent.clone(), origine.clone());
     Ok(tokio::task::spawn_blocking(move || retrouver::retrouver_avec_historique(&retrouver::Rest::depuis_env(), &pk, &ag, &o).map_err(|e| e.to_string())).await??)
 }
@@ -1057,8 +1060,9 @@ async fn main() -> Res<()> {
         return Ok(());
     }
 
-    let owner = charger_proprietaire()?;
-    let agent = keypair_from_env("AGENT_SK")?;
+    // Démo sans aucune clé fournie : clés jetables du réseau de test, créées sur place.
+    let jetable = cmd == "demo" && ["PROPRIETAIRE_CLE", "VAULT_PHRASE", "OWNER_SK"].iter().all(|v| env::var(v).is_err());
+    let (owner, agent) = if jetable { demo::cles_jetables()? } else { (charger_proprietaire()?, keypair_from_env("AGENT_SK")?) };
     let service = payee(&owner);
 
     match cmd {

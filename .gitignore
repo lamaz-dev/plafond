@@ -19,3 +19,5 @@ compte.json
 **/serveur-agent-demo/
 **/*-compte.json
 demo-rapport-*.json
+**/demo-jetable/
+demo-compilation.log
