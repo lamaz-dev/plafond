@@ -1,0 +1,48 @@
+{
+  "date": 1795363411,
+  "etapes": [
+    {
+      "detail": "« Démo DSI 63214 » (ag-c8aa2bcec657)",
+      "numero": 1,
+      "ok": true,
+      "titre": "Créer un agent"
+    },
+    {
+      "detail": "2 unités par jour, 0,5 au plus par achat ; perte maximale immédiate 0.5000 ; coffre ouvert : https://tn10.kaspa.stream/transactions/513c622ea5c7cf427f060cc4d4e7d39c597665bd432e7aae628e2010e75f4d91",
+      "numero": 2,
+      "ok": true,
+      "titre": "Lui attribuer un budget"
+    },
+    {
+      "detail": "clé d'API enregistrée, chiffrée pour cet agent seul ; valeur absente du fichier et des journaux",
+      "numero": 3,
+      "ok": true,
+      "titre": "Lui donner un secret"
+    },
+    {
+      "detail": "clé installée côté agent (demo-jetable\\serveur-agent-demo\\ag-c8aa2bcec657), effacée de la console ; secrets lisibles par l'agent : 1",
+      "numero": 4,
+      "ok": true,
+      "titre": "Le connecter"
+    },
+    {
+      "detail": "0,3 unité payée au service de démonstration kaspatest:qqujfug4tc0w9wjhhepeugnx6w4erqy5r5l6lhnfegj9f9mgyqx2q94u48u7m : https://tn10.kaspa.stream/transactions/c5ac822ce4fa392112856a842c51bdbf8a3ec5bc0d610817ea5d8386908512ce",
+      "numero": 5,
+      "ok": true,
+      "titre": "Payer un service"
+    },
+    {
+      "detail": "0,45 unité demandée (sous le plafond par achat, au-delà du budget restant) : REFUSÉ par le réseau : RPC Server (remote error) -> Rejected transaction a14384af1f416e19416a30cc8ee267e016fd384b10f407d14103e0fadffa1f4e: failed to verify the signature script: script ran, but verification failed",
+      "numero": 6,
+      "ok": true,
+      "titre": "Bloqué au-delà du budget"
+    },
+    {
+      "detail": "fonds rapatriés dans la trésorerie : +1.6250 unités (https://tn10.kaspa.stream/transactions/c11bf0cf1e61fc7f4c3ac2c38191385995ee5fbb556d8ea9641a8c38e70cba82)",
+      "numero": 7,
+      "ok": true,
+      "titre": "Arrêt d'urgence"
+    }
+  ],
+  "reseau": "testnet-10"
+}
