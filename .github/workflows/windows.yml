@@ -1,0 +1,36 @@
+name: windows
+
+# Binaire Windows de la démo (vault-cli.exe), compilé par GitHub, téléchargeable en artefact.
+# Lancement manuel uniquement. Aucune clé, aucun secret : la démo crée ses clés jetables au lancement.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cli
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilation (toolchain épinglée par rust-toolchain.toml)
+        run: cargo build --release --locked
+      - name: Contrat compilé = contrat publié
+        run: diff <(./target/release/vault-cli.exe empreintes | tr -d '\r') ../contracts/EMPREINTES.txt
+      - name: Le contrat refuse le dépassement (vrai moteur Kaspa, hors ligne)
+        env:
+          FUZZ_CASES: "64"
+        run: |
+          for t in fuzz::coffre_non_confirme_refuse fuzz::agent_avide_ne_depasse_jamais_la_borne; do
+            cargo test --release --locked "$t" -- --exact "$t" 2>&1 | tee /tmp/t.txt
+            grep -q "test result: ok. 1 passed" /tmp/t.txt
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vault-cli-windows
+          path: cli/target/release/vault-cli.exe
+          retention-days: 7
