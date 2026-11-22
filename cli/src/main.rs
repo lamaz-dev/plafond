@@ -39,6 +39,7 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 #[cfg(test)]
 mod fuzz;
 mod masse;
+mod noeud;
 #[cfg_attr(not(test), allow(dead_code))]
 mod agents;
 mod attaques;
@@ -501,15 +502,39 @@ fn origine_path() -> String {
 
 /// Mode survie : retrouve le coffre courant depuis son origine, via l'indexeur public, en
 /// vérifiant chaque saut, puis confirme auprès du nœud que la sortie existe bien.
+/// Interdit le repli sur l'indexeur public (la démo le pose : elle doit prouver qu'un nœud suffit).
+pub static NOEUD_SEUL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lignée vérifiée depuis l'origine. Source principale : le nœud lui-même (parcours de sa chaîne depuis
+/// le repère noté au déploiement) — aucune dépendance à un indexeur. Repli sur l'API REST publique
+/// seulement si le repère manque (coffre ancien) ou si le parcours du nœud échoue.
+pub async fn retrouver_lignee(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair, origine: &Etat) -> Res<(retrouver::Issue, usize, Vec<retrouver::Mouvement>)> {
+    let raison = match noeud::lire_repere(&state_path()) {
+        None => "aucun repère de survie (coffre créé avant cette version)".to_string(),
+        Some(rep) => match noeud::lignee(c, &rep, &origine.txid).await {
+            Ok(l) => match retrouver::retrouver_avec_historique(&l, owner_pk, agent, origine) {
+                Ok(r) => return Ok(r),
+                Err(e) => format!("lignée incomplète d'après le nœud : {e}"),
+            },
+            Err(e) => format!("parcours du nœud impossible : {e}"),
+        },
+    };
+    if env::var("SANS_INDEXEUR").is_ok() || NOEUD_SEUL.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(format!("{raison} ; indexeur désactivé (SANS_INDEXEUR)").into());
+    }
+    eprintln!("{raison} : repli sur l'indexeur public");
+    let (pk, ag, o) = (owner_pk.to_vec(), agent.clone(), origine.clone());
+    Ok(tokio::task::spawn_blocking(move || retrouver::retrouver_avec_historique(&retrouver::Rest::depuis_env(), &pk, &ag, &o).map_err(|e| e.to_string())).await??)
+}
+
 pub async fn retrouver_coffre(c: &KaspaRpcClient, owner_pk: &[u8], agent: &Keypair) -> Res<Etat> {
     let origine: Etat = serde_json::from_str(&fs::read_to_string(origine_path()).map_err(|_| "origine du coffre absente : impossible de le retrouver")?)?;
-    let (pk, ag) = (owner_pk.to_vec(), agent.clone());
-    let (issue, sauts) = tokio::task::spawn_blocking(move || retrouver::retrouver(&retrouver::Rest::depuis_env(), &pk, &ag, &origine).map_err(|e| e.to_string())).await??;
+    let (issue, sauts, _) = retrouver_lignee(c, owner_pk, agent, &origine).await?;
     match issue {
         retrouver::Issue::Ferme { txid } => Err(format!("coffre déjà fermé par le propriétaire (transaction {txid})").into()),
         retrouver::Issue::Courant(mut e) => {
             e.valeur = montant_coffre(c, owner_pk, agent, &e).await?; // le nœud fait foi, pas l'indexeur
-            creation_coffre(c, owner_pk, agent, &e).await.map_err(|_| "l'indexeur indique un coffre que le nœud ne connaît pas (non confirmé ou indexeur en retard) : réessayer")?;
+            creation_coffre(c, owner_pk, agent, &e).await.map_err(|_| "la lignée indique un coffre que le nœud ne connaît pas encore (non confirmé ou source en retard) : réessayer")?;
             println!("Coffre retrouvé après {sauts} paiement(s), chaque saut vérifié : sortie {}:{}, {} TKAS", e.txid, e.index, e.valeur as f64 / 1e8);
             save_state(&e)?;
             Ok(e)
@@ -676,7 +701,10 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
             tx.inputs[i].signature_script = ScriptBuilder::new().add_data(&s)?.drain();
         }
         tx.finalize();
+        // Repère de survie : bloc de tête AVANT diffusion, pour retrouver le coffre avec le seul nœud.
+        let repere = noeud::tete(&c).await?;
         let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
+        noeud::ecrire_repere(&state_path(), &repere)?;
         println!("Coffre déployé : {} TKAS, budget {} TKAS, lignée {}", fund as f64 / 1e8, capacite as f64 / 1e8, cov);
         println!("Transaction : {}", explorer(&txid.to_string()));
         let e0 = Etat { txid: txid.to_string(), index: 0, valeur: fund, tokens: capacite, last_daa: now, cov_id: cov.to_string() };

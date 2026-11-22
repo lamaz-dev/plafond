@@ -102,6 +102,7 @@ pub struct Mouvement {
 }
 
 /// Suit la lignée depuis l'origine jusqu'au coffre courant. Chaque saut est vérifié.
+#[allow(dead_code)] // utilisé par les tests
 pub fn retrouver(src: &dyn Source, owner_pk: &[u8], agent: &Keypair, origine: &Etat) -> Res<(Issue, usize)> {
     retrouver_avec_historique(src, owner_pk, agent, origine).map(|(i, n, _)| (i, n))
 }

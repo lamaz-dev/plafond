@@ -58,6 +58,8 @@ pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
     };
     // Paramètres : 2 unités par jour, 0,5 au plus par achat → exposition immédiate 0,5.
     let regles = Regles::calculer(200_000_000, JOUR_DAA, 50_000_000)?;
+    // Aucune dépendance à un indexeur : seule la chaîne du nœud sert à retrouver le coffre.
+    NOEUD_SEUL.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = connect().await?;
     let tresorerie_avant = solde(&c, &owner).await?;
     let besoin = regles.depot + 10_000_000;

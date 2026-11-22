@@ -135,10 +135,15 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
         fusion(&mut r, &commun);
         return Ok(r);
     };
-    // Historique vérifié depuis l'origine (indexeur public, chaque saut recalculé).
-    let (pk2, ag2, o2) = (pk.clone(), agent.clone(), orig.clone());
-    let (issue, _, historique): (retrouver::Issue, usize, Vec<Mouvement>) =
-        tokio::task::spawn_blocking(move || retrouver::retrouver_avec_historique(&retrouver::Rest::depuis_env(), &pk2, &ag2, &o2).map_err(|e| e.to_string())).await??;
+    // Historique vérifié depuis l'origine (chaîne du nœud, chaque saut recalculé ; indexeur en repli).
+    let c = connect_silencieux().await?;
+    let (issue, _, historique): (retrouver::Issue, usize, Vec<Mouvement>) = match crate::retrouver_lignee(&c, &pk, agent, &orig).await {
+        Ok(r) => r,
+        Err(e) => {
+            c.disconnect().await?;
+            return Err(e);
+        }
+    };
     // Bénéficiaire lisible : adresse plutôt que script brut ; plus récent en premier.
     let historique: Vec<Value> = historique
         .iter()
@@ -156,7 +161,6 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
             v
         })
         .collect();
-    let c = connect_silencieux().await?;
     let solde_proprio: u64 = c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
     let etat = match issue {
         retrouver::Issue::Ferme { txid } => {
