@@ -15,6 +15,9 @@ pub const PRINCIPAL: &str = "principal";
 pub struct Agent {
     pub id: String,
     pub nom: String,
+    /// Règles du coffre de cet agent ; absentes pour le principal (règles standard historiques).
+    #[serde(default)]
+    pub regles: Option<crate::Regles>,
     /// Fichier d'état du coffre de cet agent.
     pub etat: String,
     /// "env" (clé d'agent fournie par l'environnement) ou chemin d'un fichier de clé d'agent.
@@ -34,7 +37,7 @@ pub fn charger(etat_defaut: &str) -> Vec<Agent> {
     let lu: Option<Vec<Agent>> = std::fs::read_to_string(chemin_registre(etat_defaut)).ok().and_then(|t| serde_json::from_str(&t).ok());
     match lu {
         Some(v) if !v.is_empty() => v,
-        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), etat: etat_defaut.into(), cle: "env".into(), cree_le: 0 }],
+        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0 }],
     }
 }
 
@@ -56,7 +59,7 @@ pub fn nom_valide(nom: &str) -> Option<String> {
 }
 
 /// Inscrit un nouvel agent : clé tirée au hasard, écrite sans écrasement possible (0600).
-pub fn nouveau(etat_defaut: &str, nom: &str) -> Res<Agent> {
+pub fn nouveau(etat_defaut: &str, nom: &str, regles: Option<crate::Regles>) -> Res<Agent> {
     let nom = nom_valide(nom).ok_or("nom d'agent invalide (1 à 40 caractères)")?;
     let mut agents = charger(etat_defaut);
     if agents.len() >= 50 {
@@ -73,6 +76,7 @@ pub fn nouveau(etat_defaut: &str, nom: &str) -> Res<Agent> {
     let a = Agent {
         id: id.clone(),
         nom,
+        regles,
         etat: racine.join(&id).join("etat-coffre.json").to_string_lossy().into_owned(),
         cle: chemin_cle.to_string_lossy().into_owned(),
         cree_le: crate::double_auth::maintenant(),
@@ -116,6 +120,33 @@ pub fn cle(a: &Agent, principal: &Keypair) -> Res<Keypair> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{JOUR_DAA, Regles};
+
+    #[test]
+    fn regles_calculees_depuis_les_trois_reglages() {
+        let req = 40_000_000; // une requête de référence
+        // Exemple de référence : 100 requêtes par jour, 5 au plus par achat.
+        let r = Regles::calculer(100 * req, JOUR_DAA, 5 * req).unwrap();
+        assert_eq!(r.capacite, 5 * req, "exposition immédiate = plafond");
+        assert!(r.maximum_sur(JOUR_DAA) <= 100 * req, "jamais plus que le budget sur la période");
+        assert!(r.maximum_sur(JOUR_DAA) >= 95 * req, "et presque tout le budget est utilisable");
+        for periode in [36_000, JOUR_DAA, 7 * JOUR_DAA, 30 * JOUR_DAA] {
+            for (n, p) in [(1i64, 1i64), (2, 1), (7, 3), (100, 5), (1_000, 1_000), (1_000_000, 50), (1_000_000, 500_000)] {
+                let (b, pl) = (n * req, (p * req).min(n * req / 2));
+                match Regles::calculer(b, periode, pl) {
+                    Ok(r) => {
+                        assert!(r.maximum_sur(periode) <= b, "borne {n}/{p}");
+                        assert!(r.capacite >= pl && r.capacite <= i64::MAX / r.recharge_daa && r.plafond <= r.capacite);
+                    }
+                    // seule limite : la garde arithmétique du contrat (capacité × recharge sans débordement)
+                    Err(_) => assert!(pl > i64::MAX / periode, "refus injustifié {n}/{p} sur {periode}"),
+                }
+            }
+        }
+        assert!(Regles::calculer(10 * req, JOUR_DAA, 6 * req).is_err(), "plafond > moitié du budget");
+        assert!(Regles::calculer(10 * req, 12_345, req).is_err(), "période inconnue");
+        assert_eq!(Regles::standard().budget, 2 * Regles::standard().capacite);
+    }
 
     #[test]
     fn registre_principal_puis_nouveaux_agents() {
@@ -126,8 +157,8 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, PRINCIPAL);
         assert_eq!(v[0].etat, defaut, "le principal reprend le coffre historique");
-        let a = nouveau(&defaut, "  Achats API  ").unwrap();
-        let b = nouveau(&defaut, "Veille").unwrap();
+        let a = nouveau(&defaut, "  Achats API  ", None).unwrap();
+        let b = nouveau(&defaut, "Veille", Some(crate::Regles::calculer(4_000_000_000, crate::JOUR_DAA, 200_000_000).unwrap())).unwrap();
         let v = charger(&defaut);
         assert_eq!(v.iter().map(|x| x.nom.as_str()).collect::<Vec<_>>(), ["Agent principal", "Achats API", "Veille"]);
         assert_ne!(a.etat, b.etat, "un fichier d'état par coffre");
@@ -140,8 +171,9 @@ mod tests {
             assert_eq!(std::fs::metadata(&a.cle).unwrap().permissions().mode() & 0o777, 0o600);
         }
         assert!(!std::fs::read_to_string(chemin_registre(&defaut)).unwrap().contains(&hex::encode(cle(&a, &p).unwrap().secret_bytes())), "aucun secret dans le registre");
-        assert!(nouveau(&defaut, "").is_err());
-        assert!(nouveau(&defaut, &"x".repeat(41)).is_err());
+        assert!(nouveau(&defaut, "", None).is_err());
+        assert!(nouveau(&defaut, &"x".repeat(41), None).is_err());
+        assert_eq!(charger(&defaut)[2].regles, b.regles, "règles conservées dans le registre");
         renommer(&defaut, &a.id, "Achats").unwrap();
         assert_eq!(charger(&defaut)[1].nom, "Achats");
         std::fs::remove_dir_all(&d).unwrap();

@@ -99,6 +99,25 @@ fn qr(texte: &str) -> Option<String> {
     Some(format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg)))
 }
 
+/// Règles telles que l'utilisateur les lit (budget sur sa période, plafond, expositions).
+fn regles_json(r: &crate::Regles) -> Value {
+    json!({
+        "budget_sompi": r.budget,
+        "periode_daa": r.periode_daa,
+        "periode_secondes": r.periode_daa / 10,
+        "plafond_par_achat_sompi": r.plafond,
+        "exposition_immediate_max_sompi": r.capacite,
+        "maximum_24h_sompi": r.maximum_sur(crate::JOUR_DAA),
+        "maximum_periode_sompi": r.maximum_sur(r.periode_daa),
+        "recharge_secondes": r.recharge_daa / 10,
+        "depot_initial_sompi": r.depot,
+        "frais_max_par_achat_sompi": 3_000_000,
+        // compatibilité
+        "budget_garanti_par_periode_sompi": r.budget,
+        "reserve_sompi": r.capacite,
+    })
+}
+
 fn origine() -> Option<Etat> {
     serde_json::from_str(&fs::read_to_string(state_path().replace(".json", "-origine.json")).ok()?).ok()
 }
@@ -106,15 +125,8 @@ fn origine() -> Option<Etat> {
 /// Tableau de bord : tout est lu sur la chaîne (état, historique vérifié saut par saut).
 async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<Value> {
     let pk = xonly(owner);
-    let p0 = VaultParams::pour(&pk, agent, 0, 0);
-    let regles = json!({
-        "budget_garanti_par_periode_sompi": 2 * p0.capacity,
-        "reserve_sompi": p0.capacity,
-        "plafond_par_achat_sompi": p0.max_per_payment,
-        "frais_max_par_achat_sompi": p0.max_fee,
-        "periode_daa": p0.refill_period,
-        "periode_secondes": p0.refill_period / 10,
-    });
+    let rg = crate::regles();
+    let regles = regles_json(&rg);
     let cours_json = cours;
     let adresse = address(owner).to_string();
     let commun = json!({ "tarif_reference_sompi": tarif_reference(), "qr_adresse": qr(&adresse), "mot_de_passe_requis": std::env::var("PROPRIETAIRE_CLE").is_ok() });
@@ -167,16 +179,23 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let disponible = p.available(now, creation);
     let depense_periode: i64 = historique
         .iter()
-        .filter(|m| m["genre"] == "achat" && m["instant_daa"].as_i64().is_some_and(|t| t > now - p.refill_period))
+        .filter(|m| m["genre"] == "achat" && m["instant_daa"].as_i64().is_some_and(|t| t > now - rg.periode_daa))
         .map(|m| m["montant_sompi"].as_i64().unwrap_or(0) + m["frais_sompi"].as_i64().unwrap_or(0))
         .sum();
     let min_achat = 2_000_000 + FEE as i64;
-    let sante = if disponible < min_achat { "epuise" } else if disponible * 5 < p.capacity { "alerte" } else { "normal" };
+    // État vu par l'utilisateur : part du budget de la période déjà consommée (une attente de recharge
+    // de quelques minutes n'est pas une alerte).
+    let presque = depense_periode * 5 >= rg.budget * 4;
+    let sante = if presque && disponible < min_achat { "epuise" } else if presque { "alerte" } else { "normal" };
+    let expo = disponible.min(etat.valeur as i64).max(0);
+    // Au pire sur 24 h : ce qui est dépensable maintenant + la recharge de 24 h, jamais plus que le coffre.
+    let pire_24h = expo.saturating_add(((rg.capacite as i128 * crate::JOUR_DAA as i128) / rg.recharge_daa as i128).min(i64::MAX as i128) as i64).min(etat.valeur as i64);
     let mut r = json!({
         "sante": sante,
         "regles": regles,
         "solde_coffre_sompi": etat.valeur,
-        "exposition_immediate_sompi": disponible.min(etat.valeur as i64),
+        "exposition_immediate_sompi": expo,
+        "pire_24h_sompi": pire_24h,
         "depense_periode_sompi": depense_periode,
         "solde_proprietaire_sompi": solde_proprio,
         "adresse_proprietaire": adresse,
@@ -348,14 +367,14 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     let mut solde = None;
                     for a in &liste {
                         let Ok(k) = agents::cle(a, &agent_principal) else { continue };
-                        let t = avec_coffre(&a.etat, || handle.block_on(tableau(&owner, &k, c.clone())));
+                        let t = avec_coffre(&a.etat, a.regles, || handle.block_on(tableau(&owner, &k, c.clone())));
                         let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": hex::encode(xonly(&k)) });
                         match t {
                             Ok(t) => {
                                 if t["solde_proprietaire_sompi"].is_u64() {
                                     solde = t["solde_proprietaire_sompi"].as_u64();
                                 }
-                                for cle in ["sante", "solde_coffre_sompi", "exposition_immediate_sompi", "depense_periode_sompi", "regles"] {
+                                for cle in ["sante", "solde_coffre_sompi", "exposition_immediate_sompi", "pire_24h_sompi", "depense_periode_sompi", "regles"] {
                                     ligne[cle] = t[cle].clone();
                                 }
                                 ligne["achats"] = json!(t["historique"].as_array().map(|h| h.iter().filter(|m| m["genre"] == "achat").count()).unwrap_or(0));
@@ -381,7 +400,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("GET", "/api/tableau") => match (&cible, cle_cible) {
                     (Some(a), Some(Ok(k))) => {
                         let c = cours.lire();
-                        match avec_coffre(&a.etat, || handle.block_on(tableau(&owner, &k, c))) {
+                        match avec_coffre(&a.etat, a.regles, || handle.block_on(tableau(&owner, &k, c))) {
                             Ok(mut t) => {
                                 t["agent"] = json!({ "id": a.id, "nom": a.nom, "identifiant": hex::encode(xonly(&k)) });
                                 json_rep(200, t)
@@ -397,10 +416,14 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     if v["confirmation"].as_str() != Some("CREER") {
                         json_rep(400, json!({ "erreur": "confirmation requise" }))
                     } else {
-                        match agents::nouveau(&defaut, v["nom"].as_str().unwrap_or("")) {
+                        let regles = match (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) {
+                            (Some(b), Some(p), Some(m)) => crate::Regles::calculer(b, p, m).map(Some),
+                            _ => Err("règles manquantes : budget, période et plafond par achat".into()),
+                        };
+                        match regles.and_then(|r| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), r)) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                             Ok(a) => {
-                                let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, || handle.block_on(deployer(&owner, &k))));
+                                let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, || handle.block_on(deployer(&owner, &k))));
                                 journal(json!({ "nouvel_agent": a.id, "coffre": r.as_ref().map_err(|e| e.to_string()) }));
                                 match r {
                                     Ok(txid) => json_rep(200, json!({ "agent": a.id, "transaction": txid, "explorateur": explorer(&txid) })),
@@ -410,6 +433,14 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         }
                     }
                 }
+                // Aperçu des règles avant création : la plateforme calcule, l'utilisateur ne règle que 3 choses.
+                ("POST", "/api/regles") => match (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) {
+                    (Some(b), Some(p), Some(m)) => match crate::Regles::calculer(b, p, m) {
+                        Ok(r) => json_rep(200, regles_json(&r)),
+                        Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                    },
+                    _ => json_rep(400, json!({ "erreur": "budget, période et plafond par achat requis" })),
+                },
                 ("POST", "/api/renommer") => match agents::renommer(&defaut, &id, v["nom"].as_str().unwrap_or("")) {
                     Ok(()) => json_rep(200, json!({ "ok": true })),
                     Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
@@ -417,7 +448,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("POST", "/api/creer") => match (&cible, cle_cible) {
                     _ if v["confirmation"].as_str() != Some("CREER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
                     (Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, || handle.block_on(deployer(&owner, &k)));
+                        let r = avec_coffre(&a.etat, a.regles, || handle.block_on(deployer(&owner, &k)));
                         journal(json!({ "creer": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }
@@ -428,7 +459,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("POST", "/api/geler") => match (&cible, cle_cible) {
                     _ if v["confirmation"].as_str() != Some("GELER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
                     (Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, || handle.block_on(geler(&owner, &k, false, 0)));
+                        let r = avec_coffre(&a.etat, a.regles, || handle.block_on(geler(&owner, &k, false, 0)));
                         journal(json!({ "geler": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }
@@ -440,7 +471,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     } else {
                         let mut bilan = Vec::new();
                         for a in &liste {
-                            let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
+                            let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
                             bilan.push(json!({ "agent": a.id, "nom": a.nom, "transaction": r.as_ref().ok(), "erreur": r.as_ref().err().map(|e| e.to_string()) }));
                         }
                         journal(json!({ "geler_tout": bilan }));
@@ -450,7 +481,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("POST", "/api/alimenter") => match (v["montant_sompi"].as_u64().filter(|m| (10_000_000..=100_000_000_000).contains(m)), &cible, cle_cible) {
                     (None, _, _) => json_rep(400, json!({ "erreur": "montant invalide" })),
                     (Some(m), Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, || handle.block_on(recharger(&owner, &k, m)));
+                        let r = avec_coffre(&a.etat, a.regles, || handle.block_on(recharger(&owner, &k, m)));
                         journal(json!({ "alimenter": m, "agent": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }
@@ -468,7 +499,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("GET", "/api/verifier-lignee") => match (&cible, cle_cible) {
                     (Some(a), Some(Ok(k))) => {
                         let pk = xonly(&owner);
-                        match avec_coffre(&a.etat, || handle.block_on(async {
+                        match avec_coffre(&a.etat, a.regles, || handle.block_on(async {
                             let c = connect_silencieux().await?;
                             let e = retrouver_coffre(&c, &pk, &k).await;
                             c.disconnect().await?;

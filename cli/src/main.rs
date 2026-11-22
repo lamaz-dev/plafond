@@ -76,6 +76,69 @@ const MAX_FEE: i64 = 3_000_000; // frais max autorisés par paiement (0,03 TKAS)
 const FEE: u64 = 1_500_000; // frais par entrée (le testnet exige 100 sompi par unité de masse)
 const FUND: u64 = 500_000_000; // 5 TKAS déposés dans le coffre
 const LANE: i64 = 0;
+/// 24 h en score DAA (10 DAA/s sur le testnet-10).
+pub const JOUR_DAA: i64 = 864_000;
+
+/// Règles d'un coffre, calculées à partir des trois réglages de l'utilisateur : combien l'agent peut
+/// dépenser, sur quelle période, et combien au plus par achat. Le contrat est un seau à jetons :
+/// capacité C, recharge complète en R. Sur toute fenêtre de durée D, la dépense reste ≤ C + C·D/R
+/// (borne prouvée, spec/borne-de-perte.md). On choisit R = période/k et C = budget/(1+k) avec k le plus
+/// grand possible tel que C ≥ plafond : la dépense sur toute la période reste ≤ budget, et l'exposition
+/// immédiate (C) est la plus faible possible, égale au plafond par achat quand les nombres tombent juste.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Regles {
+    pub capacite: i64,
+    pub recharge_daa: i64,
+    pub plafond: i64,
+    pub depot: u64,
+    #[serde(default)]
+    pub budget: i64,
+    #[serde(default)]
+    pub periode_daa: i64,
+}
+
+impl Regles {
+    pub fn standard() -> Self {
+        Regles { capacite: CAPACITY, recharge_daa: REFILL, plafond: MAX_PER_PAYMENT, depot: FUND, budget: 2 * CAPACITY, periode_daa: REFILL }
+    }
+
+    pub fn calculer(budget: i64, periode_daa: i64, plafond: i64) -> Res<Self> {
+        const RECHARGE_MIN: i64 = 600; // un palier de recharge au plus par minute
+        if ![36_000, JOUR_DAA, 7 * JOUR_DAA, 30 * JOUR_DAA].contains(&periode_daa) {
+            return Err("période inconnue (heure, jour, semaine ou mois)".into());
+        }
+        if plafond < 1_000_000 {
+            return Err("plafond par achat trop faible".into());
+        }
+        if budget > 100_000_000_000_000 {
+            return Err("budget trop élevé".into());
+        }
+        if budget < 2 * plafond {
+            return Err("le plafond par achat ne peut pas dépasser la moitié du budget de la période".into());
+        }
+        let k = (budget / plafond - 1).min(periode_daa / RECHARGE_MIN).max(1);
+        let recharge = (periode_daa + k - 1) / k;
+        let capacite = budget / (1 + k);
+        if capacite < plafond || capacite > i64::MAX / recharge || capacite > 1 << 62 {
+            return Err("plafond par achat trop élevé pour cette période : choisissez une période plus courte ou un plafond plus faible".into());
+        }
+        // À l'ouverture, le coffre reçoit une période complète de budget (ajustable ensuite par « Ajouter des fonds »).
+        let depot = (budget as u64).max(100_000_000);
+        Ok(Regles { capacite, recharge_daa: recharge, plafond, depot, budget, periode_daa })
+    }
+
+    /// Dépense maximale possible sur une durée donnée à partir d'un coffre plein (borne prouvée).
+    pub fn maximum_sur(&self, duree_daa: i64) -> i64 {
+        self.capacite.saturating_add(((self.capacite as i128 * duree_daa as i128) / self.recharge_daa as i128).min(i64::MAX as i128) as i64)
+    }
+}
+
+static REGLES_COURANTES: std::sync::Mutex<Option<Regles>> = std::sync::Mutex::new(None);
+
+/// Règles du coffre sur lequel porte l'opération en cours (standard par défaut).
+pub fn regles() -> Regles {
+    REGLES_COURANTES.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or_else(Regles::standard)
+}
 const USE_ALLOWLIST: i64 = 0;
 const DAA_MARGIN: u64 = 100; // marge sous le score DAA du réseau (~10 s)
 
@@ -179,9 +242,9 @@ impl VaultParams {
             owner: hex::encode(owner_pk),
             agent: hex::encode(xonly(agent)),
             lane: LANE,
-            capacity: CAPACITY,
-            refill_period: REFILL,
-            max_per_payment: MAX_PER_PAYMENT,
+            capacity: regles().capacite,
+            refill_period: regles().recharge_daa,
+            max_per_payment: regles().plafond,
             max_fee: MAX_FEE,
             use_allowlist: USE_ALLOWLIST,
             payees: [zero.clone(), zero.clone(), zero],
@@ -403,13 +466,15 @@ fn state_path() -> String {
 }
 
 /// Exécute `f` avec le fichier d'état d'un coffre donné, puis revient au coffre par défaut.
-pub fn avec_coffre<T>(chemin_etat: &str, f: impl FnOnce() -> T) -> T {
+pub fn avec_coffre<T>(chemin_etat: &str, regles: Option<Regles>, f: impl FnOnce() -> T) -> T {
     let _seul = OPERATION.lock().unwrap_or_else(|e| e.into_inner());
     *COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = Some(chemin_etat.to_string());
+    *REGLES_COURANTES.lock().unwrap_or_else(|e| e.into_inner()) = regles;
     struct Retour;
     impl Drop for Retour {
         fn drop(&mut self) {
             *COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *REGLES_COURANTES.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
     let _r = Retour;
@@ -554,6 +619,7 @@ pub fn explorer(txid: &str) -> String {
 
 /// Crée un coffre (paramètres de test actuels) ; renvoie l'identifiant de transaction.
 pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
+        let (fund, capacite) = (regles().depot, regles().capacite);
         if load_state().is_ok() {
             return Err("un coffre est déjà déployé".into());
         }
@@ -565,24 +631,24 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         for u in utxos.into_iter().take(20) {
             total += u.utxo_entry.amount;
             picked.push(u);
-            if total >= FUND + 2 * FEE + 100_000_000 {
+            if total >= fund + 2 * FEE + 100_000_000 {
                 break;
             }
         }
-        if total < FUND + FEE {
-            return Err(format!("solde insuffisant : {} TKAS, il en faut {}", total as f64 / 1e8, (FUND + FEE) as f64 / 1e8).into());
+        if total < fund + FEE {
+            return Err(format!("solde insuffisant : {} TKAS, il en faut {}", total as f64 / 1e8, (fund + FEE) as f64 / 1e8).into());
         }
-        let vault = compile(&owner, &agent, CAPACITY, now)?;
+        let vault = compile(&owner, &agent, capacite, now)?;
         let entries: Vec<UtxoEntry> = picked.iter().map(|u| u.utxo_entry.clone().into()).collect();
         let inputs: Vec<TransactionInput> =
             picked.iter().map(|u| TransactionInput::new_with_compute_budget(u.outpoint.clone().into(), vec![], 0, CB_P2PK)).collect();
         let fee = FEE * picked.len() as u64;
         // Genèse de la lignée (KIP-20) : identifiant calculé depuis la première entrée et la sortie du coffre.
-        let mut vault_out = TransactionOutput::new(FUND, vault_spk(&vault));
+        let mut vault_out = TransactionOutput::new(fund, vault_spk(&vault));
         let cov = covenant_id(inputs[0].previous_outpoint, std::iter::once((0u32, &vault_out)));
         vault_out.covenant = Some(CovenantBinding { authorizing_input: 0, covenant_id: cov });
         let mut outputs = vec![vault_out];
-        let change = total - FUND - fee;
+        let change = total - fund - fee;
         if change > 0 {
             outputs.push(TransactionOutput::new(change, pay_to_address_script(&address(&owner))));
         }
@@ -593,9 +659,9 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         }
         tx.finalize();
         let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
-        println!("Coffre déployé : {} TKAS, budget {} TKAS, lignée {}", FUND as f64 / 1e8, CAPACITY as f64 / 1e8, cov);
+        println!("Coffre déployé : {} TKAS, budget {} TKAS, lignée {}", fund as f64 / 1e8, capacite as f64 / 1e8, cov);
         println!("Transaction : {}", explorer(&txid.to_string()));
-        let e0 = Etat { txid: txid.to_string(), index: 0, valeur: FUND, tokens: CAPACITY, last_daa: now, cov_id: cov.to_string() };
+        let e0 = Etat { txid: txid.to_string(), index: 0, valeur: fund, tokens: capacite, last_daa: now, cov_id: cov.to_string() };
         save_state(&e0)?;
         fs::write(origine_path(), serde_json::to_string_pretty(&e0)?)?; // à garder par le propriétaire
         c.disconnect().await?;
@@ -907,7 +973,7 @@ async fn main() -> Res<()> {
             let c = connect_silencieux().await?;
             let (now, creation) = instants(&c, &xonly(&owner), &agent, &e).await?;
             let available = VaultParams::ours(&owner, &agent, e.tokens, e.last_daa).available(now, creation);
-            if amount + FEE as i64 > available || amount > MAX_PER_PAYMENT {
+            if amount + FEE as i64 > available || amount > regles().plafond {
                 return Err(format!("coffre : budget épuisé ou plafond dépassé ({available} sompi disponibles)").into());
             }
             let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&pm)), now, creation)?;
@@ -962,7 +1028,7 @@ async fn main() -> Res<()> {
             let (now, creation) = instants(&c, &xonly(&owner), &agent, &e).await?;
             let available = VaultParams::ours(&owner, &agent, e.tokens, e.last_daa).available(now, creation);
             println!("Budget disponible : {} TKAS, paiement demandé : {} TKAS", available as f64 / 1e8, amount as f64 / 1e8);
-            if !no_check && (amount + FEE as i64 > available || amount > MAX_PER_PAYMENT) {
+            if !no_check && (amount + FEE as i64 > available || amount > regles().plafond) {
                 return Err("refusé localement : dépasse le budget ou le plafond par paiement (--sans-verif pour laisser le réseau trancher)".into());
             }
             let (tx, next_state) = build_pay(&owner, &agent, &e, amount, pay_to_address_script(&address(&service)), now, creation)?;

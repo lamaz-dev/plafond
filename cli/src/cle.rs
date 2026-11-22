@@ -51,6 +51,7 @@ fn aad(publique: &str) -> Vec<u8> {
     format!("kaspa-agent-vault/cle-proprietaire/v1/{publique}").into_bytes()
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // format v1, conservé pour la lecture et les tests
 pub fn chiffrer(k: &Keypair, mot_de_passe: &str) -> Res<Fichier> {
     if mot_de_passe.chars().count() < MOT_DE_PASSE_MIN {
         return Err(format!("mot de passe trop court ({MOT_DE_PASSE_MIN} caractères minimum)").into());
