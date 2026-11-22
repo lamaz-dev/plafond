@@ -480,6 +480,55 @@ fn coffre_non_confirme_refuse() {
     assert!(!ok);
 }
 
+/// Paiement construit avec des paramètres de coffre choisis (au lieu des réglages par défaut).
+fn payer_avec(p: &VaultParams, value: u64, created: i64, now: i64, amount: i64, fee: i64) -> bool {
+    let (agent, cov) = (k(2), Hash::from_bytes([7; 32]));
+    let cur = compile_unchecked(p).unwrap();
+    let mut suivant = p.clone();
+    let creation = created.clamp(0, i64::MAX);
+    let elapsed = (now - creation).clamp(0, p.refill_period);
+    suivant.tokens = (p.tokens + elapsed * p.capacity / p.refill_period).min(p.capacity) - amount - fee;
+    suivant.last_daa = now;
+    let next = compile_unchecked(&suivant).unwrap();
+    let entry = UtxoEntry::new(value, vault_spk(&cur), created as u64, false, Some(cov));
+    let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_VAULT);
+    let outputs = vec![
+        TransactionOutput { value: amount as u64, script_public_key: pay_to_address_script(&address(&k(10))), covenant: None },
+        TransactionOutput { value: value - (amount + fee) as u64, script_public_key: vault_spk(&next), covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: cov }) },
+    ];
+    let mut tx = Transaction::new(1, vec![input], outputs, now as u64, Default::default(), 0, vec![]);
+    let s = sign(&tx, std::slice::from_ref(&entry), 0, &agent);
+    tx.inputs[0].signature_script = vault_sigscript(&cur, "pay", &[s.into(), amount.into(), now.into()]).unwrap();
+    exec(&tx, vec![entry])
+}
+
+/// Relecture externe (22 nov. 2026) : la recharge est calculée en division entière, donc par paliers.
+/// L'arrondi se fait toujours vers le bas : l'agent reçoit un peu MOINS que la recharge continue,
+/// jamais plus. Une unité de temps sur une période plus longue que la capacité ne recharge rien.
+#[test]
+fn recharge_arrondie_vers_le_bas() {
+    let mut p = VaultParams::ours(&k(1), &k(2), 10_000_000, 1_000_000);
+    p.capacity = 200_000_000;
+    p.refill_period = 400_000_000; // capacité / période = 0,5 sompi par unité de temps
+    p.max_per_payment = 50_000_000;
+    let (valeur, cree) = (1_000_000_000, 1_000_000);
+    let (montant, frais) = (9_000_000, 1_000_000); // dépense = 10 000 000 = jetons exactement
+    // 1 unité écoulée : 1 × 200 000 000 / 400 000 000 = 0 → disponible = jetons, inchangé.
+    assert!(payer_avec(&p, valeur, cree, cree + 1, montant, frais), "dépenser exactement les jetons doit passer");
+    assert!(!payer_avec(&p, valeur, cree, cree + 1, montant + 1, frais), "1 sompi de plus que les jetons : refusé (aucune recharge après 1 unité)");
+    // 2 unités écoulées : le premier palier tombe (1 sompi).
+    assert!(payer_avec(&p, valeur, cree, cree + 2, montant + 1, frais), "après 2 unités, 1 sompi de recharge");
+    assert!(!payer_avec(&p, valeur, cree, cree + 2, montant + 2, frais));
+}
+
+/// Relecture externe (22 nov. 2026) : frais au plafond exact acceptés, un sompi de plus refusé.
+#[test]
+fn frais_au_plafond_exact() {
+    let m = Model::neuf(1_000_000_000, CAPACITY, 1_000_000, 1_000_100);
+    assert!(try_pay(&m, 10_000_000, MAX_FEE, 0, &Cheat::None).0, "frais = maxFee : accepté");
+    assert!(!try_pay(&m, 10_000_000, MAX_FEE + 1, 0, &Cheat::None).0, "frais = maxFee + 1 : refusé");
+}
+
 // ---------------------------------------------------------------- séquestre
 
 const ESCROW_VALUE: u64 = 30_000_000;
@@ -529,6 +578,29 @@ proptest! {
         let predicted = !extra_input && to_expected && fee <= sequestre::MAX_FEE
             && if claim { good_signer && same_request } else { seq >= sequestre::DEFAULT_TIMEOUT as u64 };
         prop_assert_eq!(exec(&tx, utxos), predicted);
+    }
+}
+
+/// LIMITE CONNUE (R40, relecture externe du 22 nov. 2026) : la preuve de livraison n'est liée qu'à
+/// la commande (requestHash), pas à un séquestre précis. Deux séquestres portant le même numéro de
+/// commande sont tous deux payables au vendeur avec une seule preuve. Ce test DOIT échouer le jour
+/// où le contrat lie la preuve au séquestre (v0.3) : il faudra alors l'inverser.
+#[test]
+fn limite_connue_preuve_rejouable_sur_un_second_sequestre() {
+    let merchant = pay_to_address_script(&address(&k(3)));
+    let refund = pay_to_address_script(&address(&k(1)));
+    let verifier = k(7);
+    let requete = "GET:/meteo/commande-1";
+    let (preuve, resultat) = sequestre::proof(&verifier, requete, "livré");
+    // Deux séquestres distincts pour la même commande : l'un au délai par défaut, l'autre au double.
+    for timeout in [sequestre::DEFAULT_TIMEOUT, 2 * sequestre::DEFAULT_TIMEOUT] {
+        let a = sequestre::artifact(&merchant, &refund, &verifier, requete, timeout).unwrap();
+        for (n, octet) in [(1, "ab"), (2, "cd")] {
+            let s = sequestre::Sequestre { txid: octet.repeat(32), index: 0, valeur: ESCROW_VALUE, requete: requete.into(), timeout };
+            let tx = sequestre::build_claim(&a, &s, merchant.clone(), 0, preuve.clone(), resultat).unwrap();
+            let utxo = UtxoEntry::new(ESCROW_VALUE, pay_to_script_hash_script(&bytecode(&a)), 0, false, None);
+            assert!(exec(&tx, vec![utxo]), "séquestre {n} (délai {timeout}) : la même preuve est acceptée aujourd'hui");
+        }
     }
 }
 

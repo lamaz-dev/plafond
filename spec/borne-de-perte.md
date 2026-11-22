@@ -119,6 +119,8 @@ confirmé attend la confirmation (environ une seconde).
 | `coffre_moteur_egal_modele` | le moteur et le modèle de référence décident toujours pareil (10 tricheries) |
 | `coffre_non_confirme_refuse` | H2 |
 | `parametres_aberrants_sans_danger_pour_les_fonds` | H4 |
+| `recharge_arrondie_vers_le_bas` | la recharge procède par paliers (division entière) et s'arrondit vers le bas : 1 unité de temps sur une période plus longue que la capacité ne recharge rien (relecture externe du 22 nov. 2026) |
+| `frais_au_plafond_exact` | frais = `maxFee` acceptés, `maxFee` + 1 refusés |
 
 | `faille_v04_demontree` | la faille sur le contrat v0.4 archivé : 3 × C sur une période (le test doit continuer à la montrer) |
 
