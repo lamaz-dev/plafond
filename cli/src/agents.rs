@@ -107,6 +107,17 @@ fn ecrire_secret(chemin: &Path, contenu: &str) -> Res<()> {
     Ok(())
 }
 
+/// Emplacement de référence des fichiers de l'agent (clé, secrets) ; le principal n'a pas de
+/// fichier de clé (clé fournie par l'environnement) mais a son propre coffre de secrets.
+pub fn base_fichiers(a: &Agent, etat_defaut: &str) -> String {
+    if a.cle != "env" {
+        return a.cle.clone();
+    }
+    let d = dossier(etat_defaut).join("agents");
+    let _ = std::fs::create_dir_all(&d);
+    d.join(format!("{PRINCIPAL}.key")).to_string_lossy().into_owned()
+}
+
 /// Clé de l'agent : celle de l'environnement pour le principal, sinon son fichier.
 pub fn cle(a: &Agent, principal: &Keypair) -> Res<Keypair> {
     if a.cle == "env" {

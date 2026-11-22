@@ -12,3 +12,4 @@ testnet/agents.json
 *.key
 cle-proprietaire*.json
 compte.json
+*.secrets.json

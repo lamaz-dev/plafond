@@ -354,6 +354,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
             let mut corps = String::new();
             let _ = req.as_reader().take(16 * 1024).read_to_string(&mut corps);
             let v: Value = serde_json::from_str(&corps).unwrap_or(Value::Null);
+            zeroize::Zeroize::zeroize(&mut corps); // le corps peut contenir un secret d'agent
             let liste = agents::charger(&defaut);
             // Agent visé : paramètre `agent` (URL ou corps), le principal par défaut.
             let id = param(&url, "agent").or_else(|| v["agent"].as_str().map(String::from)).unwrap_or_else(|| agents::PRINCIPAL.into());
@@ -440,6 +441,37 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                     },
                     _ => json_rep(400, json!({ "erreur": "budget, période et plafond par achat requis" })),
+                },
+                // ---------- Secrets de l'agent : écriture seule ----------
+                // La valeur est chiffrée pour la clé publique de l'agent puis effacée ; aucune route ne la
+                // renvoie, et le journal n'en garde que le nom, le fournisseur et la date.
+                ("GET", "/api/secrets") => match &cible {
+                    Some(a) => json_rep(200, json!({ "secrets": secrets::lister(&agents::base_fichiers(a, &defaut)) })),
+                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                ("POST", "/api/secrets") => match (&cible, cle_cible) {
+                    (Some(a), Some(Ok(k))) => {
+                        let valeur = zeroize::Zeroizing::new(v["valeur"].as_str().unwrap_or("").to_string());
+                        let (nom, fournisseur) = (v["nom"].as_str().unwrap_or(""), v["fournisseur"].as_str().unwrap_or(""));
+                        match secrets::enregistrer(&agents::base_fichiers(a, &defaut), &k.public_key(), nom, fournisseur, valeur) {
+                            Ok(()) => {
+                                journal(json!({ "secret": "enregistré", "agent": a.id, "nom": nom, "fournisseur": fournisseur }));
+                                json_rep(200, json!({ "ok": true }))
+                            }
+                            Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                        }
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                ("POST", "/api/secrets/supprimer") => match &cible {
+                    Some(a) => match secrets::supprimer(&agents::base_fichiers(a, &defaut), v["nom"].as_str().unwrap_or("")) {
+                        Ok(()) => {
+                            journal(json!({ "secret": "supprimé", "agent": a.id, "nom": v["nom"] }));
+                            json_rep(200, json!({ "ok": true }))
+                        }
+                        Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                    },
+                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },
                 ("POST", "/api/renommer") => match agents::renommer(&defaut, &id, v["nom"].as_str().unwrap_or("")) {
                     Ok(()) => json_rep(200, json!({ "ok": true })),

@@ -44,6 +44,7 @@ mod agents;
 mod attaques;
 mod cle;
 mod double_auth;
+mod secrets;
 mod console;
 mod retrouver;
 mod relais;
