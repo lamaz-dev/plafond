@@ -22,7 +22,8 @@ Durée : 5 à 10 minutes, plus la première compilation.
 7. arrêt d'urgence : les fonds du coffre reviennent dans la trésorerie.
 
 Avant le réseau, le script vérifie hors ligne que le contrat compilé est bien celui publié et qu'il refuse le
-dépassement. À la fin : bilan des 7 étapes et rapport `cli/demo-rapport-<date>.json` (liens vers chaque transaction).
+dépassement. À la fin : bilan des 7 étapes et rapport `cli/demo-rapport-<date>.json` (liens vers chaque transaction), écrit aussi
+en cas d'échec, avec la cause de l'interruption : joignez-le à votre retour.
 
 ## Dépendances externes
 
@@ -35,7 +36,7 @@ dépassement. À la fin : bilan des 7 étapes et rapport `cli/demo-rapport-<date
 
 - « Rust absent », « compilateur C absent » : installer ce qui est indiqué, relancer `./demo.sh`.
 - « réseau de test injoignable » (au bout de 25 s) : connexion Internet, ou indiquer un nœud avec `NOEUD_WRPC=ws://…`.
-- « console non ouverte » : une autre console occupe déjà le port 8404 ; la fermer, ou suivre la démo dans le terminal.
+- « la console ne s'est pas ouverte » : une autre console occupe déjà le port 8404 ; la fermer, puis relancer (rien n'a été fait).
 - « fonds non reçus après 20 min » : distributeur indisponible ; relancer plus tard, l'adresse reste la même.
 - Étape 6 en échec (paiement accepté) : anomalie grave, garder le rapport et ne pas relancer.
 - Repartir de zéro : supprimer `cli/demo-jetable/` (de nouvelles clés seront créées, donc de nouveaux jetons à demander).

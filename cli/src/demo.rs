@@ -116,32 +116,34 @@ pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             if let Err(e) = console::lancer(h, o, a) {
-                eprintln!("(console non ouverte : {e} ; la démo continue sans elle)");
+                eprintln!("(console non ouverte : {e})");
                 let _ = tx.send(());
             }
         });
         tokio::time::sleep(Duration::from_millis(800)).await;
         rx.try_recv().is_err()
     };
-    if console_ouverte {
-        println!("Ouvrez le lien ci-dessus dans votre navigateur : c'est l'écran à filmer.\n");
+    if !console_ouverte {
+        return Err("la console ne s'est pas ouverte (port 8404 déjà occupé par une autre console ?) : fermez-la puis relancez ; aucune opération n'a été faite".into());
     }
-    let r = derouler(owner, principal).await;
-    if let Err(e) = &r {
+    println!("Ouvrez le lien ci-dessus dans votre navigateur : c'est l'écran à filmer.\n");
+    let mut etapes: Vec<Etape> = Vec::new();
+    if let Err(e) = derouler(owner, principal, &mut etapes).await {
         eprintln!("\n✗ Démo interrompue : {e}");
+        let numero = etapes.len() as u8 + 1;
+        etapes.push(Etape { numero, titre: "Interruption", ok: false, detail: e.to_string() });
     }
-    if console_ouverte {
-        println!("\nLa console reste ouverte pour consulter le résultat. Ctrl+C pour quitter.");
-        loop {
-            tokio::time::sleep(Duration::from_secs(3600)).await;
-        }
+    let _ = bilan(&etapes);
+    println!("\nLa console reste ouverte pour consulter le résultat. Ctrl+C pour quitter.");
+    loop {
+        tokio::time::sleep(Duration::from_secs(3600)).await;
     }
-    r
 }
 
-async fn derouler(owner: Keypair, principal: Keypair) -> Res<()> {
+/// Déroule les 7 étapes en les notant dans `etapes`. Toute erreur interrompt la démo, mais l'appelant
+/// écrit toujours le bilan et le rapport (étapes faites + cause de l'interruption).
+async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -> Res<()> {
     let defaut = etat_par_defaut();
-    let mut etapes: Vec<Etape> = Vec::new();
     let mut note = |numero, titre, ok, detail: String| {
         println!("\n[{numero}/7] {titre} : {}\n      {detail}", if ok { "OK" } else { "ÉCHEC" });
         etapes.push(Etape { numero, titre, ok, detail });
@@ -173,7 +175,7 @@ async fn derouler(owner: Keypair, principal: Keypair) -> Res<()> {
         Err(e) => note(2, "Lui attribuer un budget", false, e.to_string()),
     };
     if !ok {
-        return bilan(&etapes);
+        return Ok(());
     }
 
     // 3. Lui donner un secret
@@ -209,7 +211,7 @@ async fn derouler(owner: Keypair, principal: Keypair) -> Res<()> {
         Err(e) => note(5, "Payer un service", false, e.to_string()),
     };
     if !ok {
-        return bilan(&etapes);
+        return Ok(());
     }
     avec_coffre(&etat_agent, a.regles, None, || bloquant(attendre_inscription(&owner_pk, &cle_agent, "paiement")))?;
 
@@ -226,7 +228,13 @@ async fn derouler(owner: Keypair, principal: Keypair) -> Res<()> {
     let avant = solde(&c, &owner).await?;
     c.disconnect().await?;
     let k_console = agents::cle(&agents::charger(&defaut).into_iter().find(|x| x.id == a.id).ok_or("agent disparu du registre")?, &principal)?;
-    let r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(geler(&owner, &k_console, false, 0)));
+    let mut r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(geler(&owner, &k_console, false, 0)));
+    if let Err(e) = &r {
+        // Second essai : le nœud peut ne pas encore voir la dernière inscription.
+        println!("      arrêt non abouti ({e}) ; nouvel essai dans 5 s");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(geler(&owner, &k_console, false, 0)));
+    }
     match &r {
         Ok(tx) => {
             // le gel peut mettre quelques secondes à être inscrit : on interroge jusqu'à 60 s
@@ -242,7 +250,7 @@ async fn derouler(owner: Keypair, principal: Keypair) -> Res<()> {
         }
         Err(e) => note(7, "Arrêt d'urgence", false, e.to_string()),
     };
-    bilan(&etapes)
+    Ok(())
 }
 
 fn bilan(etapes: &[Etape]) -> Res<()> {
