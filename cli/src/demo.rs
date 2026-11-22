@@ -111,6 +111,9 @@ async fn attendre_fonds(c: &KaspaRpcClient, owner: &Keypair, besoin: u64) -> Res
 
 pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
     // La console s'ouvre dans le même programme : un seul terminal, rien à recopier.
+    if std::env::var("DEMO_SANS_NAVIGATEUR").is_err() {
+        console::OUVRIR_NAVIGATEUR.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let console_ouverte = {
         let (h, o, a) = (tokio::runtime::Handle::current(), owner, principal);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -126,7 +129,7 @@ pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
     if !console_ouverte {
         return Err("la console ne s'est pas ouverte (port 8404 déjà occupé par une autre console ?) : fermez-la puis relancez ; aucune opération n'a été faite".into());
     }
-    println!("Ouvrez le lien ci-dessus dans votre navigateur : c'est l'écran à filmer.\n");
+    println!("La console s'ouvre dans votre navigateur (sinon, ouvrez le lien ci-dessus) : c'est l'écran à filmer.\n");
     let mut etapes: Vec<Etape> = Vec::new();
     if let Err(e) = derouler(owner, principal, &mut etapes).await {
         eprintln!("\n✗ Démo interrompue : {e}");

@@ -8,7 +8,7 @@ cd kaspa-agent-vault-lab
 
 Prérequis : Git, Rust (https://rustup.rs) et un compilateur C (Linux : `build-essential` ; macOS : `xcode-select --install`).
 Le script vérifie tout avant de commencer. Il ne demande aucune phrase ni aucun mot de passe : il crée des clés jetables du réseau de test.
-Ouvrez le lien de la console qu'il affiche : c'est l'écran à filmer. Si des jetons de test manquent, il affiche l'adresse, un QR code et le montant, puis reprend tout seul.
+La console s'ouvre toute seule dans votre navigateur : c'est l'écran à filmer. Si des jetons de test manquent, il affiche l'adresse, un QR code et le montant, puis reprend tout seul.
 Durée : 5 à 10 minutes, plus la première compilation.
 
 ## Ce que la démo montre (chaque étape est contrôlée)

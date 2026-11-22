@@ -239,13 +239,33 @@ fn journal(entree: Value) {
     }
 }
 
+/// La démo ouvre la console dans le navigateur par défaut (rien à recopier pour la filmer).
+pub static OUVRIR_NAVIGATEUR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ouvre un lien local dans le navigateur par défaut ; un échec n'empêche rien (le lien est affiché).
+fn ouvrir_navigateur(lien: &str) {
+    #[cfg(windows)]
+    let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", lien]).spawn();
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(lien).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(lien).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+    if r.is_err() {
+        eprintln!("(navigateur non ouvert automatiquement : ouvrez le lien ci-dessus)");
+    }
+}
+
 pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
     let mut b = [0u8; 32];
     getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
     let jeton = hex::encode(b);
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
-    println!("Console du propriétaire : ouvrez http://127.0.0.1:{PORT}/#jeton={jeton}");
+    let lien = format!("http://127.0.0.1:{PORT}/#jeton={jeton}");
+    println!("Console du propriétaire : ouvrez {lien}");
     println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
+    if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
+        ouvrir_navigateur(&lien);
+    }
     servir(&serveur, &jeton, handle, owner, agent, std::env::var("PROPRIETAIRE_CLE").ok());
     Ok(())
 }
