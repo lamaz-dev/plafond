@@ -267,6 +267,39 @@ fn ecrire_compte(chemin_cle: &str, c: &Compte) -> Res<()> {
 
 type Rep = tiny_http::Response<std::io::Cursor<Vec<u8>>>;
 
+fn connexion_json(a: &agents::Agent) -> Value {
+    if a.cle == "env" {
+        json!({ "etat": "environnement" })
+    } else if let Some(t) = a.connecte_le {
+        json!({ "etat": "connecte", "connecte_le": t })
+    } else {
+        json!({ "etat": "local" })
+    }
+}
+
+/// Kit de connexion d'un agent : sa clé, les règles et l'état de son coffre, ses secrets chiffrés.
+fn preparer_kit(a: &agents::Agent, owner: &Keypair, defaut: &str) -> Res<(connexion::Scelle, zeroize::Zeroizing<String>)> {
+    let hexa = zeroize::Zeroizing::new(fs::read_to_string(&a.cle)?);
+    let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &zeroize::Zeroizing::new(hex::decode(hexa.trim())?))?;
+    let lire = |p: &str| fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    let base = agents::base_fichiers(a, defaut);
+    let kit = connexion::Kit {
+        agent_id: a.id.clone(),
+        nom: a.nom.clone(),
+        cle_agent: hexa.trim().to_string(),
+        publique: hex::encode(k.public_key().serialize()),
+        proprietaire: hex::encode(xonly(owner)),
+        regles: a.regles,
+        origine: lire(&a.etat.replace(".json", "-origine.json")),
+        etat: lire(&a.etat),
+        secrets: lire(&base.strip_suffix(".key").map(|b| format!("{b}.secrets.json")).unwrap_or_default()).unwrap_or(json!({})),
+        reseau: "testnet-10".into(),
+        cree_le: double_auth::maintenant(),
+    };
+    let code = connexion::nouveau_code()?;
+    Ok((connexion::sceller(&kit, &code)?, code))
+}
+
 /// Garde des actions sensibles (voir la phrase, exporter la clé, activer la double authentification) :
 /// mot de passe, puis code à 6 chiffres si la double authentification est active ; 5 échecs = 60 s.
 struct Garde {
@@ -331,6 +364,8 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
     let mut garde = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
     // Secret de double authentification en cours d'activation (en mémoire seulement).
     let mut double_auth_en_attente: Option<zeroize::Zeroizing<Vec<u8>>> = None;
+    // Agent dont le kit de connexion a été remis, en attente de confirmation (mémoire seulement).
+    let mut connexion_en_attente: Option<String> = None;
     let defaut = etat_par_defaut();
     let cle_ch = chemin_cle.as_deref();
     for mut req in serveur.incoming_requests() {
@@ -368,8 +403,8 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     let mut solde = None;
                     for a in &liste {
                         let Ok(k) = agents::cle(a, &agent_principal) else { continue };
-                        let t = avec_coffre(&a.etat, a.regles, || handle.block_on(tableau(&owner, &k, c.clone())));
-                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": hex::encode(xonly(&k)) });
+                        let t = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(tableau(&owner, &k, c.clone())));
+                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a) });
                         match t {
                             Ok(t) => {
                                 if t["solde_proprietaire_sompi"].is_u64() {
@@ -401,9 +436,9 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("GET", "/api/tableau") => match (&cible, cle_cible) {
                     (Some(a), Some(Ok(k))) => {
                         let c = cours.lire();
-                        match avec_coffre(&a.etat, a.regles, || handle.block_on(tableau(&owner, &k, c))) {
+                        match avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(tableau(&owner, &k, c))) {
                             Ok(mut t) => {
-                                t["agent"] = json!({ "id": a.id, "nom": a.nom, "identifiant": hex::encode(xonly(&k)) });
+                                t["agent"] = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a) });
                                 json_rep(200, t)
                             }
                             Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
@@ -424,7 +459,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         match regles.and_then(|r| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), r)) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                             Ok(a) => {
-                                let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, || handle.block_on(deployer(&owner, &k))));
+                                let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, agents::xonly_pub(&a, &agent_principal), || handle.block_on(deployer(&owner, &k))));
                                 journal(json!({ "nouvel_agent": a.id, "coffre": r.as_ref().map_err(|e| e.to_string()) }));
                                 match r {
                                     Ok(txid) => json_rep(200, json!({ "agent": a.id, "transaction": txid, "explorateur": explorer(&txid) })),
@@ -449,11 +484,11 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     Some(a) => json_rep(200, json!({ "secrets": secrets::lister(&agents::base_fichiers(a, &defaut)) })),
                     None => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },
-                ("POST", "/api/secrets") => match (&cible, cle_cible) {
+                ("POST", "/api/secrets") => match (&cible, cible.as_ref().map(|a| agents::publique(a, &agent_principal))) {
                     (Some(a), Some(Ok(k))) => {
                         let valeur = zeroize::Zeroizing::new(v["valeur"].as_str().unwrap_or("").to_string());
                         let (nom, fournisseur) = (v["nom"].as_str().unwrap_or(""), v["fournisseur"].as_str().unwrap_or(""));
-                        match secrets::enregistrer(&agents::base_fichiers(a, &defaut), &k.public_key(), nom, fournisseur, valeur) {
+                        match secrets::enregistrer(&agents::base_fichiers(a, &defaut), &k, nom, fournisseur, valeur) {
                             Ok(()) => {
                                 journal(json!({ "secret": "enregistré", "agent": a.id, "nom": nom, "fournisseur": fournisseur }));
                                 json_rep(200, json!({ "ok": true }))
@@ -473,6 +508,46 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     },
                     None => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },
+                // ---------- Connecter l'agent ----------
+                // 1. Préparer : kit scellé par un code à usage unique (affiché une seule fois). La console
+                //    garde la clé tant que l'utilisateur n'a pas confirmé la remise.
+                ("POST", "/api/connecter/preparer") => match &cible {
+                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                    Some(a) if a.cle == "env" => json_rep(409, json!({ "erreur": "agent de test : sa clé est fournie par l'environnement, il n'y a rien à remettre" })),
+                    Some(a) if agents::est_connecte(a) => json_rep(409, json!({ "erreur": "agent déjà connecté : la console n'a plus sa clé" })),
+                    Some(a) => match preparer_kit(a, &owner, &defaut) {
+                        Ok((scelle, code)) => {
+                            connexion_en_attente = Some(a.id.clone());
+                            journal(json!({ "connexion": "kit préparé", "agent": a.id }));
+                            json_rep(200, json!({ "kit": scelle, "code": code.as_str(), "fichier": format!("kit-connexion-{}.json", a.id) }))
+                        }
+                        Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                    },
+                },
+                // 2. Confirmer : la remise est faite, la console efface sa copie de la clé privée.
+                ("POST", "/api/connecter/confirmer") => match &cible {
+                    Some(a) if connexion_en_attente.as_deref() == Some(a.id.as_str()) && v["confirmation"].as_str() == Some("CONNECTER") => {
+                        connexion_en_attente = None;
+                        match connexion::effacer_fichier(&a.cle).and_then(|_| agents::marquer_connecte(&defaut, &a.id)) {
+                            Ok(()) => {
+                                journal(json!({ "connexion": "clé remise à l'agent et effacée de la console", "agent": a.id }));
+                                json_rep(200, json!({ "ok": true }))
+                            }
+                            Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                        }
+                    }
+                    _ => json_rep(409, json!({ "erreur": "aucune connexion en cours pour cet agent" })),
+                },
+                // Secrets chiffrés à transmettre à un agent déjà connecté (seul l'agent sait les lire).
+                ("GET", "/api/secrets-chiffres") => match &cible {
+                    Some(a) => {
+                        let f = agents::base_fichiers(a, &defaut);
+                        let f = f.strip_suffix(".key").map(|b| format!("{b}.secrets.json")).unwrap_or(f);
+                        let contenu: Value = fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
+                        json_rep(200, json!({ "secrets": contenu, "fichier": format!("secrets-{}.json", a.id) }))
+                    }
+                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
                 ("POST", "/api/renommer") => match agents::renommer(&defaut, &id, v["nom"].as_str().unwrap_or("")) {
                     Ok(()) => json_rep(200, json!({ "ok": true })),
                     Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
@@ -480,7 +555,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("POST", "/api/creer") => match (&cible, cle_cible) {
                     _ if v["confirmation"].as_str() != Some("CREER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
                     (Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, a.regles, || handle.block_on(deployer(&owner, &k)));
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(deployer(&owner, &k)));
                         journal(json!({ "creer": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }
@@ -491,7 +566,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("POST", "/api/geler") => match (&cible, cle_cible) {
                     _ if v["confirmation"].as_str() != Some("GELER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
                     (Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, a.regles, || handle.block_on(geler(&owner, &k, false, 0)));
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(geler(&owner, &k, false, 0)));
                         journal(json!({ "geler": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }
@@ -503,7 +578,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     } else {
                         let mut bilan = Vec::new();
                         for a in &liste {
-                            let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
+                            let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
                             bilan.push(json!({ "agent": a.id, "nom": a.nom, "transaction": r.as_ref().ok(), "erreur": r.as_ref().err().map(|e| e.to_string()) }));
                         }
                         journal(json!({ "geler_tout": bilan }));
@@ -513,7 +588,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("POST", "/api/alimenter") => match (v["montant_sompi"].as_u64().filter(|m| (10_000_000..=100_000_000_000).contains(m)), &cible, cle_cible) {
                     (None, _, _) => json_rep(400, json!({ "erreur": "montant invalide" })),
                     (Some(m), Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, a.regles, || handle.block_on(recharger(&owner, &k, m)));
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(recharger(&owner, &k, m)));
                         journal(json!({ "alimenter": m, "agent": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }
@@ -531,7 +606,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("GET", "/api/verifier-lignee") => match (&cible, cle_cible) {
                     (Some(a), Some(Ok(k))) => {
                         let pk = xonly(&owner);
-                        match avec_coffre(&a.etat, a.regles, || handle.block_on(async {
+                        match avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(async {
                             let c = connect_silencieux().await?;
                             let e = retrouver_coffre(&c, &pk, &k).await;
                             c.disconnect().await?;

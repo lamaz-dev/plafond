@@ -43,6 +43,7 @@ mod masse;
 mod agents;
 mod attaques;
 mod cle;
+mod connexion;
 mod double_auth;
 mod secrets;
 mod console;
@@ -135,6 +136,9 @@ impl Regles {
 }
 
 static REGLES_COURANTES: std::sync::Mutex<Option<Regles>> = std::sync::Mutex::new(None);
+/// Clé publique (x-only) de l'agent du coffre en cours : permet à la console de travailler sur un
+/// coffre dont elle n'a plus la clé privée (agent connecté).
+static AGENT_COURANT: std::sync::Mutex<Option<[u8; 32]>> = std::sync::Mutex::new(None);
 
 /// Règles du coffre sur lequel porte l'opération en cours (standard par défaut).
 pub fn regles() -> Regles {
@@ -241,7 +245,7 @@ impl VaultParams {
         VaultParams {
             asset: ASSET_KAS.into(),
             owner: hex::encode(owner_pk),
-            agent: hex::encode(xonly(agent)),
+            agent: hex::encode(AGENT_COURANT.lock().unwrap_or_else(|e| e.into_inner()).map(|p| p.to_vec()).unwrap_or_else(|| xonly(agent))),
             lane: LANE,
             capacity: regles().capacite,
             refill_period: regles().recharge_daa,
@@ -467,15 +471,17 @@ fn state_path() -> String {
 }
 
 /// Exécute `f` avec le fichier d'état d'un coffre donné, puis revient au coffre par défaut.
-pub fn avec_coffre<T>(chemin_etat: &str, regles: Option<Regles>, f: impl FnOnce() -> T) -> T {
+pub fn avec_coffre<T>(chemin_etat: &str, regles: Option<Regles>, agent_pub: Option<[u8; 32]>, f: impl FnOnce() -> T) -> T {
     let _seul = OPERATION.lock().unwrap_or_else(|e| e.into_inner());
     *COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = Some(chemin_etat.to_string());
     *REGLES_COURANTES.lock().unwrap_or_else(|e| e.into_inner()) = regles;
+    *AGENT_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = agent_pub;
     struct Retour;
     impl Drop for Retour {
         fn drop(&mut self) {
             *COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = None;
             *REGLES_COURANTES.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *AGENT_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
     let _r = Retour;
@@ -873,6 +879,34 @@ async fn main() -> Res<()> {
     if args.iter().any(|a| a == "--forcer-masse") {
         masse::FORCER.store(true, std::sync::atomic::Ordering::Relaxed);
         println!("(refus local KIP-9 désactivé : le réseau tranchera)");
+    }
+    // Côté agent (sur son serveur) : installer le kit remis par la console, mettre à jour ses secrets,
+    // vérifier que tout est lisible. Le code de connexion est saisi au clavier, jamais affiché.
+    if cmd == "agent-installer" || cmd == "agent-secrets" || cmd == "agent-verifier" {
+        let dossier = env::var("AGENT_DOSSIER").unwrap_or_else(|_| "agent".into());
+        match cmd {
+            "agent-installer" => {
+                let kit: connexion::Scelle = serde_json::from_str(&fs::read_to_string(args.get(2).ok_or("fichier du kit de connexion manquant")?)?)?;
+                let code = zeroize::Zeroizing::new(rpassword::prompt_password("Code de connexion : ")?);
+                let nom = connexion::installer(&kit, &code, &dossier)?;
+                println!("Agent « {nom} » installé dans {dossier}/ (clé en 0600). Vous pouvez supprimer le fichier du kit.");
+            }
+            "agent-secrets" => {
+                let n = connexion::maj_secrets(args.get(2).ok_or("fichier de secrets manquant")?, &dossier)?;
+                println!("{n} secret(s) mis à jour dans {dossier}/.");
+            }
+            _ => {
+                let l = connexion::verifier(&dossier)?;
+                println!("Clé de l'agent : lisible.");
+                for (nom, ok) in &l {
+                    println!("  secret « {nom} » : {}", if *ok { "lisible" } else { "ILLISIBLE" });
+                }
+                if l.iter().any(|(_, ok)| !ok) {
+                    return Err("au moins un secret est illisible pour cet agent".into());
+                }
+            }
+        }
+        return Ok(());
     }
     if cmd == "cle-creer" || cmd == "cle-info" {
         // Clé du propriétaire chiffrée sur son appareil (option A, non-custodial).

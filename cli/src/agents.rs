@@ -20,9 +20,16 @@ pub struct Agent {
     pub regles: Option<crate::Regles>,
     /// Fichier d'état du coffre de cet agent.
     pub etat: String,
-    /// "env" (clé d'agent fournie par l'environnement) ou chemin d'un fichier de clé d'agent.
+    /// "env" (clé d'agent fournie par l'environnement) ou chemin d'un fichier de clé d'agent ;
+    /// après connexion, le fichier est effacé et la console ne garde que la clé publique.
     pub cle: String,
     pub cree_le: u64,
+    /// Clé publique de l'agent (33 octets, hexadécimal).
+    #[serde(default)]
+    pub publique: Option<String>,
+    /// Date de connexion : la clé privée a été remise à l'agent et effacée de la console.
+    #[serde(default)]
+    pub connecte_le: Option<u64>,
 }
 
 fn dossier(etat_defaut: &str) -> PathBuf {
@@ -37,7 +44,7 @@ pub fn charger(etat_defaut: &str) -> Vec<Agent> {
     let lu: Option<Vec<Agent>> = std::fs::read_to_string(chemin_registre(etat_defaut)).ok().and_then(|t| serde_json::from_str(&t).ok());
     match lu {
         Some(v) if !v.is_empty() => v,
-        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0 }],
+        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None }],
     }
 }
 
@@ -80,6 +87,8 @@ pub fn nouveau(etat_defaut: &str, nom: &str, regles: Option<crate::Regles>) -> R
         etat: racine.join(&id).join("etat-coffre.json").to_string_lossy().into_owned(),
         cle: chemin_cle.to_string_lossy().into_owned(),
         cree_le: crate::double_auth::maintenant(),
+        publique: Some(hex::encode(cle.public_key().serialize())),
+        connecte_le: None,
     };
     agents.push(a.clone());
     enregistrer(etat_defaut, &agents)?;
@@ -118,10 +127,48 @@ pub fn base_fichiers(a: &Agent, etat_defaut: &str) -> String {
     d.join(format!("{PRINCIPAL}.key")).to_string_lossy().into_owned()
 }
 
+/// Clé publique de l'agent (toujours connue de la console, même après connexion).
+pub fn publique(a: &Agent, principal: &Keypair) -> Res<secp256k1::PublicKey> {
+    if a.cle == "env" {
+        return Ok(principal.public_key());
+    }
+    match &a.publique {
+        Some(h) => Ok(secp256k1::PublicKey::from_slice(&hex::decode(h)?)?),
+        None => Ok(cle(a, principal)?.public_key()),
+    }
+}
+
+/// Clé publique x-only (celle inscrite dans le contrat du coffre).
+pub fn xonly_pub(a: &Agent, principal: &Keypair) -> Option<[u8; 32]> {
+    publique(a, principal).ok().map(|p| p.x_only_public_key().0.serialize())
+}
+
+pub fn est_connecte(a: &Agent) -> bool {
+    a.connecte_le.is_some()
+}
+
+/// Après connexion, la console n'a plus la clé privée de l'agent. Les opérations du propriétaire
+/// (surveiller, alimenter, geler) n'utilisent que la clé publique, transmise au contrat par
+/// `avec_coffre` ; cette clé muette ne sert qu'à garder les signatures des fonctions et ne peut rien
+/// signer de valide pour ce coffre.
+fn cle_muette() -> Keypair {
+    Keypair::from_seckey_slice(secp256k1::SECP256K1, &[0x42; 32]).expect("clé muette valide")
+}
+
+pub fn marquer_connecte(etat_defaut: &str, id: &str) -> Res<()> {
+    let mut agents = charger(etat_defaut);
+    let a = agents.iter_mut().find(|a| a.id == id).ok_or("agent inconnu")?;
+    a.connecte_le = Some(crate::double_auth::maintenant());
+    enregistrer(etat_defaut, &agents)
+}
+
 /// Clé de l'agent : celle de l'environnement pour le principal, sinon son fichier.
 pub fn cle(a: &Agent, principal: &Keypair) -> Res<Keypair> {
     if a.cle == "env" {
         return Ok(*principal);
+    }
+    if est_connecte(a) {
+        return Ok(cle_muette());
     }
     let hexa = zeroize::Zeroizing::new(std::fs::read_to_string(&a.cle)?);
     let octets = zeroize::Zeroizing::new(hex::decode(hexa.trim())?);
@@ -185,6 +232,16 @@ mod tests {
         assert!(nouveau(&defaut, "", None).is_err());
         assert!(nouveau(&defaut, &"x".repeat(41), None).is_err());
         assert_eq!(charger(&defaut)[2].regles, b.regles, "règles conservées dans le registre");
+        assert_eq!(publique(&a, &p).unwrap(), cle(&a, &p).unwrap().public_key());
+        marquer_connecte(&defaut, &a.id).unwrap();
+        let a2 = charger(&defaut).into_iter().find(|x| x.id == a.id).unwrap();
+        assert!(est_connecte(&a2));
+        assert_ne!(cle(&a2, &p).unwrap().public_key(), publique(&a2, &p).unwrap(), "plus de clé privée réelle après connexion");
+        assert_eq!(xonly_pub(&a2, &p), xonly_pub(&a, &p), "la clé publique reste connue");
+        // le contrat du coffre reste identique : la console travaille avec la clé publique seule
+        let avant = crate::VaultParams::pour(&[7; 32], &cle(&a, &p).unwrap(), 0, 0).agent;
+        let apres = crate::avec_coffre("/tmp/inexistant.json", None, xonly_pub(&a2, &p), || crate::VaultParams::pour(&[7; 32], &cle(&a2, &p).unwrap(), 0, 0).agent);
+        assert_eq!(avant, apres);
         renommer(&defaut, &a.id, "Achats").unwrap();
         assert_eq!(charger(&defaut)[1].nom, "Achats");
         std::fs::remove_dir_all(&d).unwrap();

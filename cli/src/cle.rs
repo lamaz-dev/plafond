@@ -18,9 +18,9 @@ use crate::Res;
 use zeroize::Zeroizing;
 
 /// Paramètres Argon2id (recommandation OWASP 2025 : 19 Mio, 2 passes, 1 voie ; ici 64 Mio, 3 passes).
-const M_KIO: u32 = 64 * 1024;
-const T: u32 = 3;
-const P: u32 = 1;
+pub(crate) const M_KIO: u32 = 64 * 1024;
+pub(crate) const T: u32 = 3;
+pub(crate) const P: u32 = 1;
 const MOT_DE_PASSE_MIN: usize = 12;
 
 #[derive(Serialize, Deserialize)]
@@ -39,7 +39,7 @@ pub struct Fichier {
 
 /// Clé dérivée du mot de passe : effacée de la mémoire à la sortie de portée (y compris en cas
 /// d'erreur ou de panique), grâce à `Zeroizing`.
-fn deriver(mot_de_passe: &str, sel: &[u8], m: u32, t: u32, p: u32) -> Res<Zeroizing<[u8; 32]>> {
+pub(crate) fn deriver(mot_de_passe: &str, sel: &[u8], m: u32, t: u32, p: u32) -> Res<Zeroizing<[u8; 32]>> {
     let params = Params::new(m, t, p, Some(32)).map_err(|e| format!("Argon2 : {e}"))?;
     let mut k = Zeroizing::new([0u8; 32]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params).hash_password_into(mot_de_passe.as_bytes(), sel, &mut *k).map_err(|e| format!("Argon2 : {e}"))?;
