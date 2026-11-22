@@ -558,6 +558,20 @@ pub fn save_state(e: &Etat) -> Res<()> {
 /// automatique d'un nœud public. Connexion bornée dans le temps : un réseau injoignable renvoie une
 /// erreur claire au lieu de bloquer la console.
 async fn client_testnet() -> Res<KaspaRpcClient> {
+    // Un nœud public peut ne pas répondre à un instant donné (premier passage réel du 22 nov. 2026,
+    // étape 7) : trois essais, chacun avec un nouveau client (le découvreur choisit un autre nœud).
+    for essai in 1..=3 {
+        match client_testnet_essai().await {
+            Ok(c) => return Ok(c),
+            Err(e) if essai < 3 => eprintln!("(nœud injoignable, essai {essai}/3 : {e} ; nouvel essai)"),
+            Err(e) => return Err(e),
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    unreachable!()
+}
+
+async fn client_testnet_essai() -> Res<KaspaRpcClient> {
     let net = NetworkId::with_suffix(NetworkType::Testnet, 10);
     let url = env::var("NOEUD_WRPC").ok().filter(|u| !u.trim().is_empty());
     let resolver = if url.is_some() { None } else { Some(Resolver::default()) };
@@ -565,16 +579,16 @@ async fn client_testnet() -> Res<KaspaRpcClient> {
     let opts = ConnectOptions {
         block_async_connect: true,
         strategy: ConnectStrategy::Fallback,
-        connect_timeout: Some(Duration::from_secs(20)),
+        connect_timeout: Some(Duration::from_secs(15)),
         ..Default::default()
     };
-    match tokio::time::timeout(Duration::from_secs(25), client.connect(Some(opts))).await {
+    match tokio::time::timeout(Duration::from_secs(20), client.connect(Some(opts))).await {
         Ok(r) => {
             r?;
         }
         Err(_) => {
             let _ = client.disconnect().await;
-            return Err("réseau de test injoignable (aucun nœud n'a répondu en 25 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC".into());
+            return Err("réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC".into());
         }
     }
     Ok(client)

@@ -35,7 +35,7 @@ en cas d'échec, avec la cause de l'interruption : joignez-le à votre retour.
 ## En cas de souci
 
 - « Rust absent », « compilateur C absent » : installer ce qui est indiqué, relancer `./demo.sh`.
-- « réseau de test injoignable » (au bout de 25 s) : connexion Internet, ou indiquer un nœud avec `NOEUD_WRPC=ws://…`.
+- « réseau de test injoignable » (après 3 essais) : connexion Internet, ou indiquer un nœud avec `NOEUD_WRPC=ws://…`.
 - « la console ne s'est pas ouverte » : une autre console occupe déjà le port 8404 ; la fermer, puis relancer (rien n'a été fait).
 - « fonds non reçus après 20 min » : distributeur indisponible ; relancer plus tard, l'adresse reste la même.
 - Étape 6 en échec (paiement accepté) : anomalie grave, garder le rapport et ne pas relancer.
