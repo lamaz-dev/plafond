@@ -650,3 +650,35 @@ fn coffre_non_confirme_refuse() {
     INSCRIPTION.set(1_000);
     assert!(r.is_err());
 }
+
+/// Garde-fou (relecture externe du 22/11/2026) : le contrôle `inputDaa >= lastDaa` n'est PAS
+/// redondant avec le consensus. Un paiement enchaîné sur un paiement non encore confirmé voit un
+/// score d'inscription inconnu (u64::MAX, lu −1 par le script). Sans ce contrôle, `elapsed` serait
+/// plafonné à `refillPeriod` et chaque paiement non confirmé de la chaîne recevrait une recharge
+/// complète : un agent compromis dépasserait la borne prouvée avant la première confirmation.
+/// Toute simplification future (supprimer `lastDaa`) doit garder un refus explicite de ce cas.
+#[test]
+fn paiements_enchaines_non_confirmes_ne_rechargent_pas() {
+    let c = ctx();
+    // Le paiement précédent vient de vider le coffre (jetons 0, état écrit à l'instant 2 000).
+    let vault = compile(&c, 0, 2_000);
+    let montant = CAPACITY / 4;
+    // `jetons_apres` : l'état que le script exigerait si la recharge supposée avait lieu ; ainsi un
+    // refus ne peut venir que du contrôle de l'instant d'inscription, pas d'un état incohérent.
+    let essai = |inscription: u64, now: i64, jetons_apres: i64| {
+        INSCRIPTION.set(inscription);
+        let next = compile(&c, jetons_apres, now);
+        let change = VAULT_VALUE - montant as u64 - FEE_T as u64;
+        let r = run(&vault, vec![out(montant as u64, c.payee.clone()), cont(change, pay_to_script_hash_script(&bytecode(&next)))], now as u64, &c.agent, "pay", vec![montant.into(), now.into()]);
+        INSCRIPTION.set(1_000);
+        r
+    };
+    let si_recharge_complete = CAPACITY - montant - FEE_T;
+    // Enchaîné, non confirmé : refusé, même avec l'état d'une recharge complète.
+    assert!(essai(u64::MAX, 2_000, si_recharge_complete).is_err(), "paiement enchaîné non confirmé refusé");
+    assert!(essai(u64::MAX, 2_000 + REFILL, si_recharge_complete).is_err(), "même une période plus tard");
+    // Confirmé à 2 000 et payé aussitôt : rien n'a été rechargé, refusé aussi.
+    assert!(essai(2_000, 2_000, si_recharge_complete).is_err(), "pas de recharge sans temps écoulé depuis l'inscription");
+    // Confirmé à 2 000, une demi-période plus tard : la moitié de la capacité est rechargée, accepté.
+    assert!(essai(2_000, 2_000 + REFILL / 2, CAPACITY / 2 - montant - FEE_T).is_ok(), "la recharge normale fonctionne");
+}

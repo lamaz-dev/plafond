@@ -187,15 +187,20 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     // de quelques minutes n'est pas une alerte).
     let presque = depense_periode * 5 >= rg.budget * 4;
     let sante = if presque && disponible < min_achat { "epuise" } else if presque { "alerte" } else { "normal" };
-    let expo = disponible.min(etat.valeur as i64).max(0);
+    // Réserve technique : sous ce solde, plus aucun paiement n'est diffusable (masse de stockage,
+    // KIP-9) ; elle reste dans le coffre jusqu'à ce que le propriétaire la récupère.
+    let reserve = masse::survival_floor(FEE) as i64;
+    let depensable = (etat.valeur as i64 - reserve).max(0);
+    let expo = disponible.min(depensable).max(0);
     // Au pire sur 24 h : ce qui est dépensable maintenant + la recharge de 24 h, jamais plus que le coffre.
-    let pire_24h = expo.saturating_add(((rg.capacite as i128 * crate::JOUR_DAA as i128) / rg.recharge_daa as i128).min(i64::MAX as i128) as i64).min(etat.valeur as i64);
+    let pire_24h = expo.saturating_add(((rg.capacite as i128 * crate::JOUR_DAA as i128) / rg.recharge_daa as i128).min(i64::MAX as i128) as i64).min(depensable);
     let mut r = json!({
         "sante": sante,
         "regles": regles,
         "solde_coffre_sompi": etat.valeur,
         "exposition_immediate_sompi": expo,
         "pire_24h_sompi": pire_24h,
+        "reserve_technique_sompi": reserve.min(etat.valeur as i64),
         "depense_periode_sompi": depense_periode,
         "solde_proprietaire_sompi": solde_proprio,
         "adresse_proprietaire": adresse,

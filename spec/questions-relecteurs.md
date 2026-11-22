@@ -15,3 +15,14 @@ Notées au fil du travail, à envoyer quand la relecture externe commencera.
    l'entrée (motif SompiVault) et refusons la valeur −1 (sortie non confirmée, `u64::MAX`).
    Ce score est-il garanti égal au score d'acceptation (`pov_daa_score`) dans tous les cas, y
    compris après une réorganisation ?
+3. **Simplification envisagée pour une v0.6 : remplacer `lastDaa` par `require(inputDaa >= 0)`.**
+   Une relecture externe (22 nov. 2026) propose de retirer `lastDaa` de l'état, jugé redondant avec
+   `OpTxInputDaaScore`. Notre analyse : une fois l'entrée confirmée, `inputDaa >= lastDaa` découle
+   bien du consensus (la sortie est inscrite à un score ≥ `tx.daa` ≥ `nowDaa`) ; mais pour une entrée
+   **non confirmée** (paiements enchaînés dans le mempool), le score lu est −1, et ce contrôle est ce
+   qui refuse le cas. Sans refus explicite, chaque paiement enchaîné recevrait une recharge complète
+   et la borne prouvée tomberait (test `paiements_enchaines_non_confirmes_ne_rechargent_pas`,
+   mutation M5). Questions : (a) un contrôle `require(inputDaa >= 0)` suffit-il, c'est-à-dire −1
+   est-il la seule valeur possible hors confirmation ? (b) le gain de masse justifie-t-il un
+   changement de contrat (le paiement minimal ≈ 0,02 KAS dépend surtout de la valeur des sorties,
+   KIP-9, pas de la taille du script) ? Aucun changement de contrat n'est prévu sans mesure ni avis.
