@@ -13,3 +13,9 @@ testnet/agents.json
 cle-proprietaire*.json
 compte.json
 *.secrets.json
+# Fichiers locaux de la console et de la démo (quel que soit le dossier de lancement)
+**/testnet/agents/
+**/testnet/agents.json
+**/serveur-agent-demo/
+**/*-compte.json
+demo-rapport-*.json

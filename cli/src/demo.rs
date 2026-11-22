@@ -138,9 +138,14 @@ pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
     let r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(geler(&owner, &k_console, false, 0)));
     match &r {
         Ok(tx) => {
-            tokio::time::sleep(Duration::from_secs(4)).await;
+            // le gel peut mettre quelques secondes à être inscrit : on interroge jusqu'à 60 s
             let c = connect_silencieux().await?;
-            let apres = solde(&c, &owner).await?;
+            let mut apres = solde(&c, &owner).await?;
+            let debut = Instant::now();
+            while apres <= avant && debut.elapsed() < Duration::from_secs(60) {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                apres = solde(&c, &owner).await?;
+            }
             c.disconnect().await?;
             note(7, "Arrêt d'urgence", apres > avant, format!("fonds rapatriés dans la trésorerie : +{} unités ({})", unites(apres as i64 - avant as i64), explorer(tx)))
         }
