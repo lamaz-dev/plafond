@@ -44,6 +44,7 @@ mod agents;
 mod attaques;
 mod cle;
 mod connexion;
+mod demo;
 mod double_auth;
 mod secrets;
 mod console;
@@ -686,11 +687,48 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
 }
 
 /// Ajoute des fonds au coffre (même lignée, état inchangé).
+/// Paiement de l'agent (côté agent) : seule la clé publique du propriétaire est connue. L'état local
+/// périmé est rattrapé par le mode survie (`instants`, puis `retrouver_coffre`).
+pub(crate) async fn payer_agent(owner_pk: &[u8], agent: &Keypair, montant: i64, destinataire: &Address, sans_verif: bool) -> Res<String> {
+    let c = connect_silencieux().await?;
+    let e = match load_state() {
+        Ok(e) if creation_coffre(&c, owner_pk, agent, &e).await.is_ok() => e,
+        _ => retrouver_coffre(&c, owner_pk, agent).await?,
+    };
+    let (now, creation) = instants(&c, owner_pk, agent, &e).await?;
+    let disponible = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa).available(now, creation);
+    println!("Budget disponible : {} unités, paiement demandé : {} unités", disponible, montant);
+    if !sans_verif && (montant + FEE as i64 > disponible || montant > regles().plafond) {
+        return Err("refusé localement : dépasse le budget disponible ou le plafond par achat (--sans-verif pour laisser le réseau trancher)".into());
+    }
+    // Sans vérification locale (démo du refus) : l'agent encode honnêtement l'état qui en résulterait,
+    // même impossible (budget négatif) ; c'est le réseau, par le contrat, qui refuse.
+    let (tx, suivant) = if sans_verif {
+        attaques::tx_agent(owner_pk, agent, &pay_to_address_script(destinataire), &e, montant, pay_to_address_script(destinataire), now, creation, attaques::Triche::Aucune)?
+    } else {
+        build_pay_pk(owner_pk, agent, &e, montant, pay_to_address_script(destinataire), now, creation)?
+    };
+    let r = c.submit_transaction(garde_diffusion(&tx)?, false).await;
+    c.disconnect().await?;
+    match r {
+        Ok(txid) => {
+            save_state(&suivant)?;
+            Ok(txid.to_string())
+        }
+        Err(err) => Err(format!("REFUSÉ par le réseau : {err}").into()),
+    }
+}
+
 pub async fn recharger(owner: &Keypair, agent: &Keypair, add: u64) -> Res<String> {
         // Le propriétaire ajoute des fonds au coffre en restant dans la même lignée (état inchangé).
-        let e = load_state()?;
-        let cov = e.covenant()?;
+        // Un agent connecté paie de son côté : l'état local peut être périmé ; on retrouve alors le
+        // coffre courant sur le registre public (même mécanisme que le gel).
         let c = connect().await?;
+        let e = match load_state() {
+            Ok(e) if creation_coffre(&c, &xonly(owner), agent, &e).await.is_ok() => e,
+            _ => retrouver_coffre(&c, &xonly(owner), agent).await?,
+        };
+        let cov = e.covenant()?;
         let vault = compile(&owner, &agent, e.tokens, e.last_daa)?;
         let utxos = c.get_utxos_by_addresses(vec![address(&owner)]).await?;
         let mut picked = vec![];
@@ -892,14 +930,47 @@ async fn main() -> Res<()> {
     }
     // Côté agent (sur son serveur) : installer le kit remis par la console, mettre à jour ses secrets,
     // vérifier que tout est lisible. Le code de connexion est saisi au clavier, jamais affiché.
-    if cmd == "agent-installer" || cmd == "agent-secrets" || cmd == "agent-verifier" {
+    if cmd == "agent-installer" || cmd == "agent-secrets" || cmd == "agent-verifier" || cmd == "agent-payer" {
         let dossier = env::var("AGENT_DOSSIER").unwrap_or_else(|_| "agent".into());
         match cmd {
             "agent-installer" => {
                 let kit: connexion::Scelle = serde_json::from_str(&fs::read_to_string(args.get(2).ok_or("fichier du kit de connexion manquant")?)?)?;
-                let code = zeroize::Zeroizing::new(rpassword::prompt_password("Code de connexion : ")?);
+                // Saisi au clavier ; AGENT_CODE_CONNEXION seulement pour une démo automatisée (testnet).
+                let code = zeroize::Zeroizing::new(match env::var("AGENT_CODE_CONNEXION") {
+                    Ok(c) => c,
+                    Err(_) => rpassword::prompt_password("Code de connexion : ")?,
+                });
                 let nom = connexion::installer(&kit, &code, &dossier)?;
                 println!("Agent « {nom} » installé dans {dossier}/ (clé en 0600). Vous pouvez supprimer le fichier du kit.");
+            }
+            "agent-payer" => {
+                // L'agent paie depuis son coffre avec sa propre clé (installée par le kit) ; la
+                // console n'intervient pas. --sans-verif : laisser le réseau trancher (démo du refus).
+                let dest = args.get(2).ok_or("adresse du destinataire manquante")?;
+                let montant: i64 = args.get(3).ok_or("montant en sompi manquant")?.parse()?;
+                let sans_verif = args.iter().any(|a| a == "--sans-verif");
+                let d = std::path::Path::new(&dossier);
+                let meta: serde_json::Value = serde_json::from_str(&fs::read_to_string(d.join("agent.json"))?)?;
+                let owner_pk = hex::decode(meta["proprietaire"].as_str().ok_or("agent.json : propriétaire absent")?)?;
+                let regles: Option<Regles> = serde_json::from_value(meta["regles"].clone()).unwrap_or(None);
+                let hexa = zeroize::Zeroizing::new(fs::read_to_string(d.join("agent.key"))?);
+                let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &zeroize::Zeroizing::new(hex::decode(hexa.trim())?))?;
+                let destinataire = Address::try_from(dest.as_str()).map_err(|e| format!("adresse invalide : {e}"))?;
+                if destinataire.prefix != Prefix::Testnet {
+                    return Err("réseau de test uniquement : adresse kaspatest: attendue".into());
+                }
+                let etat = d.join("etat-coffre.json").to_string_lossy().into_owned();
+                let r = avec_coffre(&etat, regles, None, || {
+                    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(payer_agent(&owner_pk, &k, montant, &destinataire, sans_verif)))
+                });
+                match r {
+                    Ok(txid) => println!("Paiement accepté par le réseau : {}", explorer(&txid)),
+                    Err(e) if e.to_string().starts_with("REFUSÉ") => {
+                        println!("Paiement {e}");
+                        std::process::exit(2);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             "agent-secrets" => {
                 let n = connexion::maj_secrets(args.get(2).ok_or("fichier de secrets manquant")?, &dossier)?;
@@ -1172,6 +1243,9 @@ async fn main() -> Res<()> {
         }
         "tableau" => {
             println!("{}", serde_json::to_string_pretty(&console::tableau_json(&owner, &agent).await?)?);
+        }
+        "demo" => {
+            demo::lancer(owner, agent).await?;
         }
         "console" => {
             // Console du propriétaire, sur SON ordinateur (127.0.0.1) ; la clé est déjà déverrouillée.

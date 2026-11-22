@@ -283,7 +283,7 @@ fn connexion_json(a: &agents::Agent) -> Value {
 }
 
 /// Kit de connexion d'un agent : sa clé, les règles et l'état de son coffre, ses secrets chiffrés.
-fn preparer_kit(a: &agents::Agent, owner: &Keypair, defaut: &str) -> Res<(connexion::Scelle, zeroize::Zeroizing<String>)> {
+pub(crate) fn preparer_kit(a: &agents::Agent, owner: &Keypair, defaut: &str) -> Res<(connexion::Scelle, zeroize::Zeroizing<String>)> {
     let hexa = zeroize::Zeroizing::new(fs::read_to_string(&a.cle)?);
     let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &zeroize::Zeroizing::new(hex::decode(hexa.trim())?))?;
     let lire = |p: &str| fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
