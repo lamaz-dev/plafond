@@ -525,31 +525,41 @@ pub fn save_state(e: &Etat) -> Res<()> {
     Ok(())
 }
 
-pub async fn connect() -> Res<KaspaRpcClient> {
+/// Client du testnet-10 : nœud choisi par NOEUD_WRPC (ex. ws://127.0.0.1:17210), sinon découverte
+/// automatique d'un nœud public. Connexion bornée dans le temps : un réseau injoignable renvoie une
+/// erreur claire au lieu de bloquer la console.
+async fn client_testnet() -> Res<KaspaRpcClient> {
     let net = NetworkId::with_suffix(NetworkType::Testnet, 10);
-    let client = KaspaRpcClient::new_with_args(WrpcEncoding::Borsh, None, Some(Resolver::default()), Some(net), None)?;
+    let url = env::var("NOEUD_WRPC").ok().filter(|u| !u.trim().is_empty());
+    let resolver = if url.is_some() { None } else { Some(Resolver::default()) };
+    let client = KaspaRpcClient::new_with_args(WrpcEncoding::Borsh, url.as_deref(), resolver, Some(net), None)?;
     let opts = ConnectOptions {
         block_async_connect: true,
         strategy: ConnectStrategy::Fallback,
-        connect_timeout: Some(Duration::from_secs(30)),
+        connect_timeout: Some(Duration::from_secs(20)),
         ..Default::default()
     };
-    client.connect(Some(opts)).await?;
+    match tokio::time::timeout(Duration::from_secs(25), client.connect(Some(opts))).await {
+        Ok(r) => {
+            r?;
+        }
+        Err(_) => {
+            let _ = client.disconnect().await;
+            return Err("réseau de test injoignable (aucun nœud n'a répondu en 25 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC".into());
+        }
+    }
+    Ok(client)
+}
+
+pub async fn connect() -> Res<KaspaRpcClient> {
+    let client = client_testnet().await?;
     println!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
     Ok(client)
 }
 
 /// Connexion sans message sur la sortie standard (les commandes du relais y écrivent du JSON).
 pub async fn connect_silencieux() -> Res<KaspaRpcClient> {
-    let net = NetworkId::with_suffix(NetworkType::Testnet, 10);
-    let client = KaspaRpcClient::new_with_args(WrpcEncoding::Borsh, None, Some(Resolver::default()), Some(net), None)?;
-    let opts = ConnectOptions {
-        block_async_connect: true,
-        strategy: ConnectStrategy::Fallback,
-        connect_timeout: Some(Duration::from_secs(30)),
-        ..Default::default()
-    };
-    client.connect(Some(opts)).await?;
+    let client = client_testnet().await?;
     eprintln!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
     Ok(client)
 }
