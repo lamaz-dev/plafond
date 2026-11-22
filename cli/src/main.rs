@@ -40,8 +40,10 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 mod fuzz;
 mod masse;
 #[cfg_attr(not(test), allow(dead_code))]
+mod agents;
 mod attaques;
 mod cle;
+mod double_auth;
 mod console;
 mod retrouver;
 mod relais;
@@ -387,8 +389,31 @@ pub fn garde_diffusion(tx: &Transaction) -> Res<kaspa_rpc_core::RpcTransaction> 
     Ok(rpc)
 }
 
-fn state_path() -> String {
+/// Coffre sur lequel porte l'opération en cours (console à plusieurs agents : un fichier d'état par
+/// coffre). La console traite les requêtes une par une ; `avec_coffre` sérialise de toute façon.
+static COFFRE_COURANT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static OPERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn etat_par_defaut() -> String {
     env::var("ETAT").unwrap_or_else(|_| "testnet/etat-coffre.json".into())
+}
+
+fn state_path() -> String {
+    COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(etat_par_defaut)
+}
+
+/// Exécute `f` avec le fichier d'état d'un coffre donné, puis revient au coffre par défaut.
+pub fn avec_coffre<T>(chemin_etat: &str, f: impl FnOnce() -> T) -> T {
+    let _seul = OPERATION.lock().unwrap_or_else(|e| e.into_inner());
+    *COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = Some(chemin_etat.to_string());
+    struct Retour;
+    impl Drop for Retour {
+        fn drop(&mut self) {
+            *COFFRE_COURANT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+    let _r = Retour;
+    f()
 }
 
 pub fn load_state() -> Res<Etat> {

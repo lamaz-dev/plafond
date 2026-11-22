@@ -94,6 +94,21 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
 .outils{display:flex;gap:10px;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap}
 .blocs{display:grid;gap:14px}
 #tarif-champ{width:110px}
+.bandeau{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:12px 28px;background:rgba(240,180,76,.1);border-bottom:1px solid rgba(240,180,76,.35);color:var(--ambre);font-size:14px}
+.bandeau .btn{background:var(--ambre);color:#2A1C05}
+.sante.petite{font-size:12px;padding:3px 9px}
+.pastille{font-size:12px;border-radius:999px;padding:3px 10px;border:1px solid var(--ligne);color:var(--doux)}
+.pastille.ok{color:var(--accent);border-color:rgba(61,219,184,.4)}.pastille.ko{color:var(--ambre);border-color:rgba(240,180,76,.45)}
+.ligne-titre,.tete-agent{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap}
+.tete-agent{margin-bottom:14px;justify-content:flex-start}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.agent .chiffres{margin-top:12px}
+.mots{columns:3;column-gap:22px;background:var(--carte2);border-radius:10px;padding:14px 14px 14px 38px;margin:10px 0;font-size:14px;line-height:1.9}
+.secret{background:var(--carte2);border:1px solid rgba(255,122,102,.4);border-radius:10px;padding:12px;word-break:break-all;margin:6px 0}
+textarea{width:100%;background:var(--carte2);border:1px solid var(--ligne);border-radius:10px;padding:10px 12px;color:var(--texte);font:inherit}
+#s-corps .champ input{width:100%}
+details summary{cursor:pointer;margin:0}
+#m-lignee .msg{white-space:pre-line}
 [hidden]{display:none!important}
 @media (max-width:640px){header,nav,main{padding-left:16px;padding-right:16px}.req{font-size:26px}.chiffres{grid-template-columns:1fr}}
 </style>
@@ -111,21 +126,68 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   </select>
   <button id="b-param" class="btn-param" aria-pressed="false"><span aria-hidden="true">⚙</span> <span data-t="parametres">Paramètres</span></button>
 </header>
+<div id="bandeau" class="bandeau" role="alert" hidden>
+  <span><b>⚠ <span data-t="sauv_non">Sauvegarde non effectuée</span></b> — <span data-t="sauv_non_txt">Sans elle, un mot de passe oublié signifie des fonds perdus : personne, pas même nous, ne peut les récupérer.</span></span>
+  <button id="b-bandeau" class="btn petit" data-t="sauv_btn">Sauvegarder ma récupération</button>
+</div>
 <nav role="tablist">
-  <button role="tab" data-p="tableau" aria-selected="true" data-t="t_tableau">Tableau de bord</button>
+  <button role="tab" data-p="tresorerie" aria-selected="true" data-t="t_tresorerie">Trésorerie</button>
+  <button role="tab" data-p="agents" aria-selected="false" data-t="t_agents">Agents</button>
   <button role="tab" data-p="historique" aria-selected="false" data-t="t_historique">Historique</button>
   <button role="tab" data-p="urgence" aria-selected="false" class="urgence" data-t="t_urgence">Arrêt d'urgence</button>
 </nav>
 <main>
   <div id="erreur" class="msg err" hidden></div>
 
-  <!-- ===================== Tableau de bord ===================== -->
-  <section id="p-tableau">
+  <!-- ===================== Trésorerie ===================== -->
+  <section id="p-tresorerie">
+    <div class="grille">
+      <div class="carte">
+        <div class="etiq" data-t="treso_dispo">Trésorerie disponible</div>
+        <div class="req mono" id="t-dispo-r">–</div><div class="sous mono" id="t-dispo-v">–</div>
+        <div class="sous" data-t="treso_txt">Vos fonds, détenus par vous seul.</div>
+        <button id="b-ajouter-treso" class="btn ajouter">+ <span data-t="ajouter_fonds">Ajouter des fonds</span></button>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="dans_coffres">Dans les coffres des agents</div>
+        <div class="req mono" id="t-coffres-r">–</div><div class="sous mono" id="t-coffres-v">–</div>
+        <div class="sous" id="t-coffres-txt"></div>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="expo_totale">Exposition maximale immédiate</div>
+        <div class="req mono" id="t-expo-r">–</div><div class="sous mono" id="t-expo-v">–</div>
+        <div class="sous" data-t="expo_totale_txt">Ce que l'ensemble de vos agents pourrait dépenser à l'instant, au plus.</div>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="agents_l">Agents</div>
+        <div class="req mono" id="t-agents">–</div>
+        <div class="sous" id="t-agents-txt"></div>
+        <button class="btn sec ajouter" data-creer-agent>+ <span data-t="creer_agent">Créer un agent</span></button>
+      </div>
+    </div>
+    <h2 data-t="vos_agents">Vos agents</h2>
+    <div class="carte" id="t-liste"></div>
+    <p class="note"><span id="tarif-txt"></span> <button class="lienbtn" id="b-tarif" data-t="modifier">modifier</button>
+      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0" step="any" class="sel" aria-label="Tarif"> <span id="tarif-devise" class="mono"></span> <button class="btn sec petit" id="b-tarif-ok">OK</button></span></p>
+    <p id="cours" class="note"></p>
+  </section>
+
+  <!-- ===================== Agents ===================== -->
+  <section id="p-agents" hidden>
+    <div class="outils"><button class="btn" data-creer-agent>+ <span data-t="creer_agent">Créer un agent</span></button></div>
+    <div class="grille" id="a-cartes"></div>
+    <p class="note" data-t="agents_txt">Chaque agent a son propre coffre : ses limites sont garanties par le registre public, hors de votre infrastructure. Un agent ne peut jamais dépenser plus que les fonds de son coffre.</p>
+  </section>
+
+  <!-- ===================== Détail d'un agent ===================== -->
+  <section id="p-agent" hidden>
+    <p><button class="lienbtn" id="b-retour-agents" data-t="retour_agents">← Agents</button></p>
+    <div class="tete-agent"><div class="val" id="d-nom">–</div><span id="d-sante" class="sante s-aucun"><b></b><span id="d-sante-txt"></span></span><span class="esp"></span><button class="btn sec petit" id="b-renommer" data-t="renommer">Renommer</button></div>
     <div id="sans-coffre" class="carte" hidden>
-      <div class="val" data-t="aucun_titre">Aucun budget d'agent actif</div>
-      <p class="note" data-t="aucun_txt">Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.</p>
+      <div class="val" data-t="aucun_titre">Aucun budget actif</div>
+      <p class="note" data-t="coffre_ferme">Coffre non ouvert ou gelé : l'agent ne peut rien dépenser.</p>
       <div id="regles-creer" class="note"></div>
-      <p><button id="b-creer" class="btn" data-t="creer">Créer le coffre</button></p>
+      <p><button id="b-creer" class="btn" data-t="ouvrir_coffre">Ouvrir le coffre</button></p>
       <div id="m-creer"></div>
     </div>
     <div id="avec-coffre">
@@ -155,17 +217,17 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       </div>
       <h2 data-t="derniers">Derniers achats de l'agent</h2>
       <div class="carte" id="derniers"></div>
+      <p><button id="b-geler-agent" class="btn rouge" data-t="arreter_agent">Arrêter cet agent</button></p>
+      <div id="m-geler-agent"></div>
     </div>
-    <p class="note"><span id="tarif-txt"></span> <button class="lienbtn" id="b-tarif" data-t="modifier">modifier</button>
-      <span id="tarif-edit" hidden><input id="tarif-champ" type="number" min="0" step="any" class="sel" aria-label="Tarif"> <span id="tarif-devise" class="mono"></span> <button class="btn sec petit" id="b-tarif-ok">OK</button></span></p>
-    <p id="cours" class="note"></p>
+    <details class="carte" style="margin-top:14px"><summary class="etiq" data-t="details_tech">Détails techniques</summary><dl id="tech" style="margin-top:10px"></dl></details>
   </section>
 
   <!-- ===================== Historique ===================== -->
   <section id="p-historique" hidden>
-    <div class="outils"><button id="b-csv" class="btn sec petit" data-t="export_csv">Exporter le rapport (CSV)</button><button id="b-json" class="btn sec petit" data-t="export_json">Exporter le rapport (JSON)</button></div>
+    <div class="outils"><select id="h-agent" class="sel" aria-label="Agent"></select><span class="esp"></span><button id="b-csv" class="btn sec petit" data-t="export_csv">Exporter le rapport (CSV)</button><button id="b-json" class="btn sec petit" data-t="export_json">Exporter le rapport (JSON)</button></div>
     <div class="carte"><table>
-      <thead><tr><th data-t="h_type">Opération</th><th class="n" data-t="h_req">Requêtes</th><th class="n" data-t="h_montant">Montant</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
+      <thead><tr><th data-t="h_agent">Agent</th><th data-t="h_type">Opération</th><th class="n" data-t="h_req">Requêtes</th><th class="n" data-t="h_montant">Montant</th><th data-t="h_dest">Bénéficiaire</th><th data-t="h_preuve">Preuve</th></tr></thead>
       <tbody id="histo"></tbody>
     </table></div>
     <p class="note" data-t="histo_txt">Chaque ligne est reconstituée depuis le registre public et vérifiée ; elle ne peut pas être modifiée après coup.</p>
@@ -175,42 +237,83 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   <section id="p-urgence" hidden>
     <div class="carte">
       <div class="val" data-t="urg_titre">Arrêter immédiatement toutes les dépenses</div>
-      <p class="note" data-t="urg_txt">Tous les fonds du coffre reviennent dans votre trésorerie. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.</p>
-      <button id="b-geler" class="btn rouge grand" data-t="geler">Geler maintenant</button>
-      <div id="m-geler"></div>
+      <p class="note" data-t="urg_txt_tous">Les fonds de tous les coffres reviennent dans votre trésorerie. Aucun agent ne peut plus rien dépenser. Cette opération ne dépend ni des serveurs des agents ni d'aucun prestataire.</p>
+      <button id="b-geler-tout" class="btn rouge grand" data-t="urg_tout">Tout arrêter maintenant</button>
+      <div id="m-geler-tout"></div>
     </div>
+    <h2 data-t="par_agent">Arrêter un seul agent</h2>
+    <div class="carte" id="u-liste"></div>
   </section>
 
-  <!-- ===================== Paramètres > Sécurité (vue avancée) ===================== -->
+  <!-- ===================== Paramètres > Sécurité ===================== -->
   <section id="p-securite" hidden>
     <div class="etiq"><span data-t="parametres">Paramètres</span> › <span data-t="securite">Sécurité</span></div>
     <div class="blocs">
       <div class="carte">
-        <div class="etiq" data-t="adr_tresorerie">Adresse de trésorerie</div>
+        <div class="ligne-titre"><div class="etiq" data-t="recup_titre">Sauvegarde de récupération</div><span id="s-sauv-etat" class="pastille"></span></div>
+        <p class="note" data-t="recup_txt">24 mots qui permettent de retrouver votre trésorerie sur n'importe quel appareil, même si cette application disparaît. Ils ne sont affichés qu'à votre demande.</p>
+        <p class="note" id="s-recup-note" hidden></p>
+        <button id="b-recup" class="btn" data-t="sauv_btn">Sauvegarder ma récupération</button>
+        <button id="b-sauvegarde" class="btn sec" data-t="sauv_fichier" hidden>Sauvegarder le fichier de clé chiffré</button>
+        <div id="m-sauvegarde"></div>
+      </div>
+      <div class="carte">
+        <div class="ligne-titre"><div class="etiq" data-t="dfa_titre">Double authentification</div><span id="s-2fa-etat" class="pastille"></span></div>
+        <p class="note" data-t="dfa_txt">Un code à 6 chiffres, généré par une application sur votre téléphone, est demandé pour afficher votre phrase de récupération ou exporter votre clé. L'arrêt d'urgence reste toujours en un clic.</p>
+        <button id="b-2fa" class="btn sec" data-t="activer">Activer</button>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="export_titre">Exporter ma clé</div>
+        <p class="note" data-t="export_txt">Affiche la clé privée du propriétaire en clair, pour l'importer dans un autre outil. À ne faire que si vous savez pourquoi : quiconque la voit contrôle vos fonds.</p>
+        <button id="b-export" class="btn sec" data-t="exporter">Exporter</button>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="restaurer_titre">Restaurer un compte</div>
+        <p class="note" data-t="restaurer_txt">Retrouvez une trésorerie à partir de sa phrase de récupération de 24 mots. Un nouveau fichier de clé est créé sur cet ordinateur ; rien n'est écrasé.</p>
+        <button id="b-restaurer" class="btn sec" data-t="restaurer">Restaurer</button>
+      </div>
+      <div class="carte">
+        <div class="etiq" data-t="adr_proprio">Adresse propriétaire</div>
+        <p class="note" data-t="adr_proprio_txt">L'adresse où vos fonds sont détenus, à votre nom. Vous pouvez la vérifier sur n'importe quel explorateur du registre public.</p>
         <div class="adr"><img id="s-qr" class="qr" alt="QR" hidden>
           <div><div class="mono" id="s-adresse" style="word-break:break-all">–</div>
-          <p><button class="btn sec petit" data-copier="s-adresse" data-t="copier">Copier</button> <span class="note" aria-live="polite" data-retour="s-adresse"></span></p></div></div>
+          <p><button class="btn sec petit" data-copier="s-adresse" data-t="copier">Copier</button> <span class="note" aria-live="polite" data-retour="s-adresse"></span></p>
+          <p class="note mono" id="s-deriv"></p></div></div>
       </div>
       <div class="carte">
         <div class="etiq" data-t="chiffrement">État du chiffrement local</div>
         <div id="s-chiffrement" class="note">–</div>
       </div>
       <div class="carte">
-        <div class="etiq" data-t="sauvegarde">Exporter / sauvegarder la clé</div>
-        <p class="note" data-t="sauvegarde_txt">Télécharge le fichier de clé tel qu'il est stocké : chiffré par votre mot de passe. La clé n'est jamais exportée en clair. Conservez cette sauvegarde hors de cet ordinateur.</p>
-        <button id="b-sauvegarde" class="btn sec" data-t="sauvegarder">Sauvegarder la clé chiffrée</button>
-        <div id="m-sauvegarde"></div>
-      </div>
-      <div class="carte">
         <div class="etiq" data-t="lignee_titre">Vérification de lignée (v0.5.1)</div>
-        <p class="note" data-t="lignee_txt">Retrouve le coffre courant depuis son origine sur le registre public et vérifie qu'il porte bien sa lignée, sans faire confiance à aucun serveur.</p>
-        <button id="b-lignee" class="btn sec" data-t="verifier">Vérifier maintenant</button>
+        <p class="note" data-t="lignee_txt">Retrouve chaque coffre depuis son origine sur le registre public et vérifie qu'il porte bien sa lignée, sans faire confiance à aucun serveur.</p>
+        <button id="b-lignee" class="btn sec" data-t="lignee_tous">Vérifier tous les coffres</button>
         <div id="m-lignee"></div>
-        <dl id="tech" style="margin-top:14px"></dl>
       </div>
     </div>
   </section>
 </main>
+
+<!-- Création d'un agent -->
+<div id="m-agent" class="modale" role="dialog" aria-modal="true" aria-labelledby="a-titre">
+  <div class="carte">
+    <div class="tete"><div class="val" id="a-titre" data-t="nouvel_agent">Nouvel agent</div><button class="fermer" id="a-fermer" aria-label="Fermer">×</button></div>
+    <div class="champ"><input id="a-nom" maxlength="40" autocomplete="off" style="width:100%" aria-label="Nom"></div>
+    <p class="note" id="a-regles"></p>
+    <p class="note" data-t="budget_perso">Budget personnalisé par agent : prochaine étape.</p>
+    <p><button id="a-creer" class="btn" data-t="creer_l_agent">Créer l'agent</button> <button id="a-annuler" class="btn sec" data-t="annuler">Annuler</button></p>
+    <div id="a-msg"></div>
+  </div>
+</div>
+
+<!-- Actions de sécurité (contenu construit à la demande) -->
+<div id="m-secu" class="modale" role="dialog" aria-modal="true" aria-labelledby="s-titre">
+  <div class="carte">
+    <div class="tete"><div class="val" id="s-titre"></div><button class="fermer" id="s-fermer" aria-label="Fermer">×</button></div>
+    <div id="s-corps"></div>
+  </div>
+</div>
+
 
 <!-- ===================== Modale « Ajouter des fonds » ===================== -->
 <div id="m-fonds" class="modale" role="dialog" aria-modal="true" aria-labelledby="f-titre">
@@ -226,7 +329,6 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
       <div class="champ"><input id="f-montant" type="number" min="0" step="any" inputmode="decimal" aria-label="Montant">
         <select id="f-devise" class="sel mono" aria-label="Devise du montant"></select></div>
       <div class="note mono" id="f-apercu" aria-live="polite">&nbsp;</div>
-      <div class="champ" id="f-mdp-champ"><input id="f-mdp" type="password" autocomplete="current-password" aria-label="Mot de passe"></div>
       <p><button id="f-valider" class="btn" data-t="ajouter_coffre" disabled>Ajouter au coffre</button>
         <button id="f-vers-n2" class="lienbtn" data-t="approvisionner_lien">Ajouter des fonds à votre trésorerie</button></p>
       <div id="f-msg1"></div>
@@ -314,9 +416,7 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
   <div class="carte">
     <div class="val" id="mod-titre"></div>
     <p class="note" id="mod-txt"></p>
-    <div class="champ" id="mod-mdp-champ" hidden><input id="mod-mdp" type="password" autocomplete="current-password" aria-label="Mot de passe"></div>
-    <div class="champ" id="mod-saisie-champ"><input id="mod-saisie" autocomplete="off" aria-label="Confirmation"></div>
-    <p><button id="mod-ok" class="btn rouge"></button> <button id="mod-annuler" class="btn sec" data-t="annuler">Annuler</button></p>
+    <p><button id="mod-ok" class="btn"></button> <button id="mod-annuler" class="btn sec" data-t="annuler">Annuler</button></p>
   </div>
 </div>
 
@@ -329,17 +429,18 @@ dt{color:var(--doux)}dd{margin:0;word-break:break-all}
 <script>
 "use strict";
 const T={
- fr:{titre:"Trésorerie des agents",t_tableau:"Tableau de bord",t_historique:"Historique",t_urgence:"Arrêt d'urgence",parametres:"Paramètres",securite:"Sécurité",
+ fr:{t_tresorerie:"Trésorerie",t_agents:"Agents",sauv_non:"Sauvegarde non effectuée",sauv_non_txt:"Sans elle, un mot de passe oublié signifie des fonds perdus : personne, pas même nous, ne peut les récupérer.",sauv_btn:"Sauvegarder ma récupération",treso_dispo:"Trésorerie disponible",treso_txt:"Vos fonds, détenus par vous seul.",dans_coffres:"Dans les coffres des agents",repartis:"Répartis entre {n} coffre(s) actif(s).",expo_totale:"Exposition maximale immédiate",expo_totale_txt:"Ce que l'ensemble de vos agents pourrait dépenser à l'instant, au plus.",agents_l:"Agents",agents_detail:"{a} actif(s) · {g} à l'arrêt",creer_agent:"Créer un agent",vos_agents:"Vos agents",agents_txt:"Chaque agent a son propre coffre : ses limites sont garanties par le registre public, hors de votre infrastructure. Un agent ne peut jamais dépenser plus que les fonds de son coffre.",aucun_agent:"Aucun agent pour l'instant.",aucun_agent_actif:"Aucun agent actif",dispo_l:"Disponible",details:"Détails",arreter:"Arrêter",arreter_agent:"Arrêter cet agent",ouvrir_coffre:"Ouvrir le coffre",coffre_ferme:"Coffre non ouvert ou gelé : l'agent ne peut rien dépenser.",aucun_titre:"Aucun budget actif",retour_agents:"← Agents",renommer:"Renommer",renommer_titre:"Nouveau nom de l'agent",details_tech:"Détails techniques",identifiant_agent:"Identifiant de l'agent",tous_agents:"Tous les agents",h_agent:"Agent",aucun_mouvement:"Aucun mouvement pour l'instant.",urg_txt_tous:"Les fonds de tous les coffres reviennent dans votre trésorerie. Aucun agent ne peut plus rien dépenser. Cette opération ne dépend ni des serveurs des agents ni d'aucun prestataire.",urg_tout:"Tout arrêter maintenant",par_agent:"Arrêter un seul agent",conf_gel_agent:"Arrêter « {n} » ?",conf_gel_agent_txt:"Les fonds de son coffre reviennent dans votre trésorerie. L'agent ne peut plus rien dépenser.",conf_gel_tout:"Tout arrêter ?",gel_bilan:"{ok} coffre(s) arrêté(s) ; {ko} sans coffre ouvert ou en échec.",conf_creer:"Ouvrir le coffre de cet agent ?",nouvel_agent:"Nouvel agent",nom_exemple:"Nom de l'agent (ex. : Achats API, Veille, Support)",regles_std:"{r}",budget_perso:"Budget personnalisé par agent : prochaine étape.",creer_l_agent:"Créer l'agent",agent_cree:"Agent créé, coffre ouvert.",agent_sans_coffre:"Agent créé, mais son coffre n'a pas pu être ouvert ({d}). Ajoutez des fonds à la trésorerie, puis ouvrez-le depuis sa fiche.",ajouter_a:"Ajouter des fonds à « {n} »",recup_titre:"Sauvegarde de récupération",sauv_ok:"✓ Effectuée",sauv_ko:"⚠ Non effectuée",mode_test_court:"Mode test",recup_txt:"24 mots qui permettent de retrouver votre trésorerie sur n'importe quel appareil, même si cette application disparaît. Ils ne sont affichés qu'à votre demande.",sauv_fichier:"Sauvegarder le fichier de clé chiffré",phrase_indispo:"Ce compte a été créé avant les phrases de récupération : sauvegardez le fichier de clé chiffré.",mode_test_secu:"Mode test : clés de démonstration, rien à sauvegarder.",auth_txt:"Confirmez votre identité.",mdp:"Mot de passe",code2fa:"Code à 6 chiffres",continuer_btn:"Continuer",phrase_avert:"Écrivez ces 24 mots sur papier, dans l'ordre, et rangez-les en lieu sûr. Ne les photographiez pas. Quiconque les possède contrôle vos fonds.",phrase_notee:"J'ai noté ma phrase",verif_txt:"Vérification : saisissez les mots demandés.",mot_n:"Mot n° {n}",verifier_btn:"Vérifier",sauv_confirmee:"Sauvegarde confirmée : votre trésorerie est récupérable.",dfa_titre:"Double authentification",dfa_on:"✓ Active",dfa_off:"Inactive",dfa_txt:"Un code à 6 chiffres, généré par une application sur votre téléphone, est demandé pour afficher votre phrase de récupération ou exporter votre clé. L'arrêt d'urgence reste toujours en un clic.",activer:"Activer",dfa_scan:"Scannez ce QR code avec votre application d'authentification (ou saisissez la clé), puis entrez le code affiché.",dfa_cle:"Clé",dfa_activee:"Double authentification activée.",export_titre:"Exporter ma clé",export_txt:"Affiche la clé privée du propriétaire en clair, pour l'importer dans un autre outil. À ne faire que si vous savez pourquoi : quiconque la voit contrôle vos fonds.",exporter:"Exporter",cle_privee:"Clé privée",masquer:"Masquer",restaurer_titre:"Restaurer un compte",restaurer_txt:"Retrouvez une trésorerie à partir de sa phrase de récupération de 24 mots. Un nouveau fichier de clé est créé sur cet ordinateur ; rien n'est écrasé.",restaurer:"Restaurer",phrase_saisie:"Les 24 mots, séparés par des espaces",nouveau_mdp:"Nouveau mot de passe (12 caractères minimum)",confirmer_mdp:"Confirmer le mot de passe",mdp_differents:"Les deux mots de passe diffèrent.",restaure_meme:"Phrase valide : c'est bien ce compte. Copie de la clé créée : {f}.",restaure_autre:"Phrase valide : compte {a}. Fichier de clé créé : {f}. Relancez la console avec ce fichier pour l'ouvrir.",adr_proprio:"Adresse propriétaire",adr_proprio_txt:"L'adresse où vos fonds sont détenus, à votre nom. Vous pouvez la vérifier sur n'importe quel explorateur du registre public.",derivation:"Clé dérivée de votre phrase selon le chemin standard Kaspa {c}.",lignee_tous:"Vérifier tous les coffres",lignee_txt:"Retrouve chaque coffre depuis son origine sur le registre public et vérifie qu'il porte bien sa lignée, sans faire confiance à aucun serveur.",
+  titre:"Trésorerie des agents",t_tableau:"Tableau de bord",t_historique:"Historique",t_urgence:"Arrêt d'urgence",parametres:"Paramètres",securite:"Sécurité",
   normal:"Sous contrôle",alerte:"Réserve à plus de 80 % consommée",epuise:"Réserve épuisée : l'agent attend la recharge",gele:"Gelé : dépenses arrêtées",aucun:"Aucun coffre",
-  aucun_titre:"Aucun budget d'agent actif",aucun_txt:"Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.",creer:"Créer le coffre",
+  aucun_txt:"Créez un coffre : l'agent pourra payer seul, dans les limites ci-dessous, garanties hors de votre infrastructure.",creer:"Créer le coffre",
   budget:"Budget garanti par période",depense:"Dépensé sur la période",exposition:"Exposition maximale immédiate",exposition_txt:"Ce qu'un agent compromis pourrait dépenser à l'instant, au plus.",
   solde:"Fonds dans le coffre",solde_txt:"Jamais plus ne peut être perdu.",plafond:"Plafond par achat",periode:"Période",derniers:"Derniers achats de l'agent",
   ajouter_fonds:"Ajouter des fonds",solde_dispo:"Solde disponible",manque:"Manque",ajouter_coffre:"Ajouter au coffre",approvisionner_lien:"Ajouter des fonds à votre trésorerie",
-  apercu:"+ {n} ajoutées",apercu_insuffisant:"Trésorerie insuffisante pour ce montant.",mdp:"Mot de passe maître",
+  apercu:"+ {n} ajoutées",apercu_insuffisant:"Trésorerie insuffisante pour ce montant.",
   tresorerie_titre:"Ajouter des fonds à votre trésorerie",raison_manque:"Il manque {m} dans votre trésorerie pour ajouter {x} au coffre.",libre:"Montant libre",
   mode_carte:"Carte bancaire",mode_virement:"Virement bancaire",mode_crypto:"Crypto",
   txt_carte:"Payez par carte Visa ou Mastercard. Votre trésorerie est créditée dès la validation.",txt_virement:"Réglez par virement SEPA ou international à partir d'un bon de virement. Votre trésorerie est créditée à réception.",txt_crypto:"Choisissez la crypto. Vous recevrez une adresse et un QR code à scanner depuis l'application de votre téléphone ; le paiement est détecté automatiquement.",
-  continuer:"Continuer vers le paiement →",choisir_montant:"Choisissez un montant ci-dessus.",montant_exact:"Montant exact à envoyer",adr_paiement:"Adresse de paiement",scanner:"Scannez le QR code avec l'application de votre téléphone, ou copiez l'adresse. Le paiement est détecté automatiquement.",adr_demo:"Adresse de démonstration : n'envoyez aucun fonds réel.",attente_paiement:"En attente du paiement…",montant_exact:"Exact amount to send",adr_paiement:"Payment address",scanner:"Scan the QR code with your phone app, or copy the address. The payment is detected automatically.",adr_demo:"Demo address: do not send real funds.",attente_paiement:"Waiting for the payment…",montant_exact:"Montant exact à envoyer",adr_paiement:"Adresse de paiement",scanner:"Scannez le QR code avec l'application de votre téléphone, ou copiez l'adresse. Le paiement est détecté automatiquement.",adr_demo:"Adresse de démonstration : n'envoyez aucun fonds réel.",attente_paiement:"En attente du paiement…",choisir_crypto:"Choisissez une crypto.",
+  continuer:"Continuer vers le paiement →",choisir_montant:"Choisissez un montant ci-dessus.",montant_exact:"Montant exact à envoyer",adr_paiement:"Adresse de paiement",scanner:"Scannez le QR code avec l'application de votre téléphone, ou copiez l'adresse. Le paiement est détecté automatiquement.",adr_demo:"Adresse de démonstration : n'envoyez aucun fonds réel.",attente_paiement:"En attente du paiement…",choisir_crypto:"Choisissez une crypto.",
   reglement:"Règlement",confirmation:"Confirmation",demo:"Démonstration : aucun paiement réel n'est effectué",a_regler:"Montant à régler",moyen:"Moyen de paiement",
   carte_titre:"Carte bancaire",titulaire:"Titulaire",titulaire_demo:"Entreprise de démonstration",expire:"Expire",carte_note:"Formulaire de démonstration : aucune donnée de carte n'est saisie ni transmise.",
   beneficiaire:"Bénéficiaire",benef_val:"Trésorerie des agents (démonstration)",reference:"Référence à indiquer",montant_l:"Montant",virement_note:"Bon de virement de démonstration : coordonnées fictives. Les vraies coordonnées seront communiquées à l'ouverture du compte.",
@@ -353,7 +454,7 @@ const T={
   urg_titre:"Arrêter immédiatement toutes les dépenses",urg_txt:"Tous les fonds du coffre reviennent dans votre trésorerie. L'agent ne peut plus rien dépenser. Cette opération ne dépend ni du serveur de l'agent ni d'aucun prestataire.",
   geler:"Geler maintenant",annuler:"Annuler",fermer:"Fermer",
   conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_gel_mdp:"Saisissez votre mot de passe maître, puis tapez GELER.",
-  conf_creer:"Confirmer la création",conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",conf_sauvegarde:"Sauvegarder la clé chiffrée",conf_sauvegarde_txt:"Saisissez votre mot de passe maître pour télécharger le fichier de clé chiffré.",
+  conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",conf_sauvegarde:"Sauvegarder la clé chiffrée",conf_sauvegarde_txt:"Saisissez votre mot de passe maître pour télécharger le fichier de clé chiffré.",
   en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Lien de session invalide : rouvrez le lien affiché dans le terminal.",
   cours_note:"Montants en devises indicatifs ({src}). Sur le réseau de test, ils n'ont pas de valeur réelle.",cours_absent:"Cours indisponible : seuls les nombres de requêtes sont affichés.",sans_cours:"Cours indisponible : réessayez dans un instant.",
   regles:"Règles : budget garanti {b} par période de {p}, plafond par achat {m}.",heure:"heure",heures:"heures",minutes:"minutes",
@@ -363,17 +464,18 @@ const T={
   copier:"Copier",copie:"Copié.",copie_ko:"Copie impossible : sélectionnez le texte.",
   adr_tresorerie:"Adresse de trésorerie",chiffrement:"État du chiffrement local",sauvegarde:"Exporter / sauvegarder la clé",
   sauvegarde_txt:"Télécharge le fichier de clé tel qu'il est stocké : chiffré par votre mot de passe. La clé n'est jamais exportée en clair. Conservez cette sauvegarde hors de cet ordinateur.",
-  sauvegarder:"Sauvegarder la clé chiffrée",lignee_titre:"Vérification de lignée (v0.5.1)",lignee_txt:"Retrouve le coffre courant depuis son origine sur le registre public et vérifie qu'il porte bien sa lignée, sans faire confiance à aucun serveur.",
+  sauvegarder:"Sauvegarder la clé chiffrée",lignee_titre:"Vérification de lignée (v0.5.1)",
   verifier:"Vérifier maintenant",lignee_ok:"Lignée vérifiée : le coffre courant descend bien de son origine.",lignee_ko:"Vérification impossible : {d}",
   chiffre_ok:"Clé chiffrée sur cet ordinateur ({a}, {m} Mio, {p} passes).",chiffre_test:"Mode test : clés dérivées d'une phrase de test, sans fichier chiffré. À ne jamais utiliser avec des fonds réels.",
   reseau:"Réseau",contrat:"Contrat",lignee:"Lignée",sortie:"Sortie courante",empreinte:"Empreinte du contrat"},
- en:{titre:"Agent treasury",t_tableau:"Dashboard",t_historique:"History",t_urgence:"Emergency stop",parametres:"Settings",securite:"Security",
+ en:{t_tresorerie:"Treasury",t_agents:"Agents",sauv_non:"Backup not done",sauv_non_txt:"Without it, a forgotten password means lost funds: nobody, not even us, can recover them.",sauv_btn:"Back up my recovery",treso_dispo:"Available treasury",treso_txt:"Your funds, held by you alone.",dans_coffres:"In agent vaults",repartis:"Spread across {n} active vault(s).",expo_totale:"Maximum immediate exposure",expo_totale_txt:"The most all your agents together could spend right now.",agents_l:"Agents",agents_detail:"{a} active · {g} stopped",creer_agent:"Create an agent",vos_agents:"Your agents",agents_txt:"Each agent has its own vault: its limits are guaranteed by the public ledger, outside your infrastructure. An agent can never spend more than the funds in its vault.",aucun_agent:"No agent yet.",aucun_agent_actif:"No active agent",dispo_l:"Available",details:"Details",arreter:"Stop",arreter_agent:"Stop this agent",ouvrir_coffre:"Open the vault",coffre_ferme:"Vault not open or frozen: the agent cannot spend anything.",aucun_titre:"No active budget",retour_agents:"← Agents",renommer:"Rename",renommer_titre:"New agent name",details_tech:"Technical details",identifiant_agent:"Agent identifier",tous_agents:"All agents",h_agent:"Agent",aucun_mouvement:"No activity yet.",urg_txt_tous:"Funds from every vault return to your treasury. No agent can spend anything anymore. This does not depend on the agents' servers or on any provider.",urg_tout:"Stop everything now",par_agent:"Stop a single agent",conf_gel_agent:"Stop “{n}”?",conf_gel_agent_txt:"The funds in its vault return to your treasury. The agent can no longer spend anything.",conf_gel_tout:"Stop everything?",gel_bilan:"{ok} vault(s) stopped; {ko} with no open vault or failed.",conf_creer:"Open this agent's vault?",nouvel_agent:"New agent",nom_exemple:"Agent name (e.g. API purchases, Monitoring, Support)",regles_std:"{r}",budget_perso:"Custom per-agent budget: next step.",creer_l_agent:"Create the agent",agent_cree:"Agent created, vault open.",agent_sans_coffre:"Agent created, but its vault could not be opened ({d}). Add funds to the treasury, then open it from its page.",ajouter_a:"Add funds to “{n}”",recup_titre:"Recovery backup",sauv_ok:"✓ Done",sauv_ko:"⚠ Not done",mode_test_court:"Test mode",recup_txt:"24 words that let you recover your treasury on any device, even if this application disappears. They are shown only when you ask.",sauv_fichier:"Back up the encrypted key file",phrase_indispo:"This account was created before recovery phrases: back up the encrypted key file.",mode_test_secu:"Test mode: demo keys, nothing to back up.",auth_txt:"Confirm your identity.",mdp:"Password",code2fa:"6-digit code",continuer_btn:"Continue",phrase_avert:"Write these 24 words on paper, in order, and keep them somewhere safe. Do not photograph them. Anyone who has them controls your funds.",phrase_notee:"I've written down my phrase",verif_txt:"Check: enter the requested words.",mot_n:"Word #{n}",verifier_btn:"Check",sauv_confirmee:"Backup confirmed: your treasury is recoverable.",dfa_titre:"Two-factor authentication",dfa_on:"✓ On",dfa_off:"Off",dfa_txt:"A 6-digit code from an app on your phone is required to show your recovery phrase or export your key. The emergency stop always stays one click away.",activer:"Turn on",dfa_scan:"Scan this QR code with your authenticator app (or type the key), then enter the code shown.",dfa_cle:"Key",dfa_activee:"Two-factor authentication is on.",export_titre:"Export my key",export_txt:"Shows the owner's private key in clear, to import it into another tool. Only do this if you know why: anyone who sees it controls your funds.",exporter:"Export",cle_privee:"Private key",masquer:"Hide",restaurer_titre:"Restore an account",restaurer_txt:"Recover a treasury from its 24-word recovery phrase. A new key file is created on this computer; nothing is overwritten.",restaurer:"Restore",phrase_saisie:"The 24 words, separated by spaces",nouveau_mdp:"New password (at least 12 characters)",confirmer_mdp:"Confirm the password",mdp_differents:"The two passwords differ.",restaure_meme:"Valid phrase: this is the same account. Key copy created: {f}.",restaure_autre:"Valid phrase: account {a}. Key file created: {f}. Restart the console with this file to open it.",adr_proprio:"Owner address",adr_proprio_txt:"The address where your funds are held, in your name. You can check it on any public ledger explorer.",derivation:"Key derived from your phrase along the standard Kaspa path {c}.",lignee_tous:"Check all vaults",lignee_txt:"Finds each vault from its origin on the public ledger and checks it carries its lineage, trusting no server.",
+  titre:"Agent treasury",t_tableau:"Dashboard",t_historique:"History",t_urgence:"Emergency stop",parametres:"Settings",securite:"Security",
   normal:"Under control",alerte:"Over 80% of the reserve used",epuise:"Reserve exhausted: the agent waits for the refill",gele:"Frozen: spending stopped",aucun:"No vault",
-  aucun_titre:"No active agent budget",aucun_txt:"Create a vault: the agent will pay on its own, within the limits below, enforced outside your infrastructure.",creer:"Create the vault",
+  aucun_txt:"Create a vault: the agent will pay on its own, within the limits below, enforced outside your infrastructure.",creer:"Create the vault",
   budget:"Guaranteed budget per period",depense:"Spent this period",exposition:"Maximum immediate exposure",exposition_txt:"The most a compromised agent could spend right now.",
   solde:"Funds in the vault",solde_txt:"Never more can be lost.",plafond:"Cap per purchase",periode:"Period",derniers:"Latest agent purchases",
   ajouter_fonds:"Add funds",solde_dispo:"Available balance",manque:"Missing",ajouter_coffre:"Add to the vault",approvisionner_lien:"Add funds to your treasury",
-  apercu:"+ {n} added",apercu_insuffisant:"Not enough in your treasury for this amount.",mdp:"Master password",
+  apercu:"+ {n} added",apercu_insuffisant:"Not enough in your treasury for this amount.",
   tresorerie_titre:"Add funds to your treasury",raison_manque:"Your treasury is short of {m} to add {x} to the vault.",libre:"Custom amount",
   mode_carte:"Bank card",mode_virement:"Bank transfer",mode_crypto:"Crypto",
   txt_carte:"Pay by Visa or Mastercard. Your treasury is credited as soon as you confirm.",txt_virement:"Pay by SEPA or international transfer using a payment slip. Your treasury is credited on receipt.",txt_crypto:"Choose the crypto. You will get an address and a QR code to scan from your phone app; the payment is detected automatically.",
@@ -391,7 +493,7 @@ const T={
   urg_titre:"Stop all spending immediately",urg_txt:"All vault funds return to your treasury. The agent can no longer spend anything. This does not depend on the agent's server or on any provider.",
   geler:"Freeze now",annuler:"Cancel",fermer:"Close",
   conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_gel_mdp:"Enter your master password, then type GELER.",
-  conf_creer:"Confirm creation",conf_creer_txt:"Type CREER to create the vault with these rules.",conf_sauvegarde:"Back up the encrypted key",conf_sauvegarde_txt:"Enter your master password to download the encrypted key file.",
+  conf_creer_txt:"Type CREER to create the vault with these rules.",conf_sauvegarde:"Back up the encrypted key",conf_sauvegarde_txt:"Enter your master password to download the encrypted key file.",
   en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Invalid session link: reopen the link shown in the terminal.",
   cours_note:"Currency amounts are indicative ({src}). On the test network they have no real value.",cours_absent:"Rate unavailable: only request counts are shown.",sans_cours:"Rate unavailable: try again in a moment.",
   regles:"Rules: guaranteed budget {b} per period of {p}, cap per purchase {m}.",heure:"hour",heures:"hours",minutes:"minutes",
@@ -401,17 +503,18 @@ const T={
   copier:"Copy",copie:"Copied.",copie_ko:"Copy failed: select the text.",
   adr_tresorerie:"Treasury address",chiffrement:"Local encryption status",sauvegarde:"Export / back up the key",
   sauvegarde_txt:"Downloads the key file as stored: encrypted with your password. The key is never exported in clear. Keep this backup off this computer.",
-  sauvegarder:"Back up the encrypted key",lignee_titre:"Lineage check (v0.5.1)",lignee_txt:"Finds the current vault from its origin on the public ledger and checks it carries its lineage, trusting no server.",
+  sauvegarder:"Back up the encrypted key",lignee_titre:"Lineage check (v0.5.1)",
   verifier:"Check now",lignee_ok:"Lineage verified: the current vault descends from its origin.",lignee_ko:"Check failed: {d}",
   chiffre_ok:"Key encrypted on this computer ({a}, {m} MiB, {p} passes).",chiffre_test:"Test mode: keys derived from a test phrase, no encrypted file. Never use with real funds.",
   reseau:"Network",contrat:"Contract",lignee:"Lineage",sortie:"Current output",empreinte:"Contract fingerprint"},
- ja:{titre:"エージェント資金管理",t_tableau:"ダッシュボード",t_historique:"履歴",t_urgence:"緊急停止",parametres:"設定",securite:"セキュリティ",
+ ja:{t_tresorerie:"資金管理",t_agents:"エージェント",sauv_non:"バックアップ未完了",sauv_non_txt:"バックアップがないと、パスワードを忘れた場合に資金を失います。私たちを含め、誰も復元できません。",sauv_btn:"復元用フレーズをバックアップ",treso_dispo:"利用可能な資金",treso_txt:"お客様だけが保有する資金です。",dans_coffres:"エージェントの金庫内",repartis:"{n} 件の稼働中の金庫に分散。",expo_totale:"即時最大エクスポージャー",expo_totale_txt:"すべてのエージェントが今この瞬間に使える最大額。",agents_l:"エージェント",agents_detail:"稼働中 {a} · 停止中 {g}",creer_agent:"エージェントを作成",vos_agents:"エージェント一覧",agents_txt:"各エージェントには専用の金庫があり、その上限はお客様のインフラの外にある公開台帳で保証されます。エージェントが金庫内の資金を超えて支出することはありません。",aucun_agent:"まだエージェントはいません。",aucun_agent_actif:"稼働中のエージェントなし",dispo_l:"利用可能",details:"詳細",arreter:"停止",arreter_agent:"このエージェントを停止",ouvrir_coffre:"金庫を開設",coffre_ferme:"金庫が未開設または凍結中：エージェントは何も支出できません。",aucun_titre:"有効な予算はありません",retour_agents:"← エージェント",renommer:"名前を変更",renommer_titre:"エージェントの新しい名前",details_tech:"技術的な詳細",identifiant_agent:"エージェント識別子",tous_agents:"すべてのエージェント",h_agent:"エージェント",aucun_mouvement:"まだ取引はありません。",urg_txt_tous:"すべての金庫の資金が資金管理口座に戻ります。どのエージェントも何も支出できなくなります。この操作はエージェントのサーバーにも、いかなる事業者にも依存しません。",urg_tout:"今すぐすべて停止",par_agent:"エージェントを個別に停止",conf_gel_agent:"「{n}」を停止しますか？",conf_gel_agent_txt:"金庫の資金は資金管理口座に戻り、エージェントは何も支出できなくなります。",conf_gel_tout:"すべて停止しますか？",gel_bilan:"{ok} 件の金庫を停止しました。{ko} 件は金庫未開設または失敗。",conf_creer:"このエージェントの金庫を開設しますか？",nouvel_agent:"新しいエージェント",nom_exemple:"エージェント名（例：API購入、監視、サポート）",regles_std:"{r}",budget_perso:"エージェントごとのカスタム予算：次のステップ。",creer_l_agent:"エージェントを作成",agent_cree:"エージェントを作成し、金庫を開設しました。",agent_sans_coffre:"エージェントを作成しましたが、金庫を開設できませんでした（{d}）。資金管理口座に入金してから、エージェントのページで開設してください。",ajouter_a:"「{n}」に資金を追加",recup_titre:"復元用バックアップ",sauv_ok:"✓ 完了",sauv_ko:"⚠ 未完了",mode_test_court:"テストモード",recup_txt:"このアプリがなくなっても、どの端末でも資金管理口座を復元できる24語です。ご要望時にのみ表示されます。",sauv_fichier:"暗号化された鍵ファイルをバックアップ",phrase_indispo:"このアカウントは復元用フレーズ導入前に作成されました。暗号化された鍵ファイルをバックアップしてください。",mode_test_secu:"テストモード：デモ用の鍵のため、バックアップは不要です。",auth_txt:"本人確認を行ってください。",mdp:"パスワード",code2fa:"6桁のコード",continuer_btn:"続ける",phrase_avert:"この24語を順番どおりに紙に書き、安全な場所に保管してください。写真は撮らないでください。これを持つ人は誰でも資金を操作できます。",phrase_notee:"フレーズを書き留めました",verif_txt:"確認：指定された単語を入力してください。",mot_n:"{n} 番目の単語",verifier_btn:"確認",sauv_confirmee:"バックアップを確認しました。資金管理口座は復元可能です。",dfa_titre:"二要素認証",dfa_on:"✓ 有効",dfa_off:"無効",dfa_txt:"復元用フレーズの表示や鍵のエクスポートには、スマートフォンのアプリが生成する6桁のコードが必要です。緊急停止は常にワンクリックのままです。",activer:"有効にする",dfa_scan:"認証アプリでこのQRコードを読み取り（または鍵を入力し）、表示されたコードを入力してください。",dfa_cle:"鍵",dfa_activee:"二要素認証を有効にしました。",export_titre:"鍵をエクスポート",export_txt:"所有者の秘密鍵を平文で表示し、他のツールに取り込めるようにします。理由がわかっている場合のみ行ってください。これを見た人は誰でも資金を操作できます。",exporter:"エクスポート",cle_privee:"秘密鍵",masquer:"隠す",restaurer_titre:"アカウントを復元",restaurer_txt:"24語の復元用フレーズから資金管理口座を復元します。このコンピューターに新しい鍵ファイルが作成され、既存のものは上書きされません。",restaurer:"復元",phrase_saisie:"24語をスペース区切りで",nouveau_mdp:"新しいパスワード（12文字以上）",confirmer_mdp:"パスワードの確認",mdp_differents:"2つのパスワードが一致しません。",restaure_meme:"有効なフレーズです：同じアカウントです。鍵のコピーを作成しました：{f}。",restaure_autre:"有効なフレーズです：アカウント {a}。鍵ファイルを作成しました：{f}。このファイルでコンソールを再起動して開いてください。",adr_proprio:"所有者アドレス",adr_proprio_txt:"お客様名義で資金が保管されているアドレスです。公開台帳のエクスプローラーで確認できます。",derivation:"鍵はKaspa標準の導出パス {c} に従ってフレーズから導出されています。",lignee_tous:"すべての金庫を検証",lignee_txt:"各金庫を公開台帳上の起点からたどり、系譜を正しく持っているかを、いかなるサーバーも信頼せずに検証します。",
+  titre:"エージェント資金管理",t_tableau:"ダッシュボード",t_historique:"履歴",t_urgence:"緊急停止",parametres:"設定",securite:"セキュリティ",
   normal:"管理下にあります",alerte:"準備金の80%以上を使用済み",epuise:"準備金が枯渇：補充待ち",gele:"凍結済み：支出は停止しています",aucun:"金庫なし",
-  aucun_titre:"有効なエージェント予算はありません",aucun_txt:"金庫を作成すると、エージェントは以下の上限内で単独で支払えます。上限はお客様のインフラの外で保証されます。",creer:"金庫を作成",
+  aucun_txt:"金庫を作成すると、エージェントは以下の上限内で単独で支払えます。上限はお客様のインフラの外で保証されます。",creer:"金庫を作成",
   budget:"期間ごとの保証予算",depense:"今期間の支出",exposition:"即時最大エクスポージャー",exposition_txt:"侵害されたエージェントが今この瞬間に使える最大額。",
   solde:"金庫内の資金",solde_txt:"これ以上を失うことはありません。",plafond:"1回あたりの上限",periode:"期間",derniers:"エージェントの最近の購入",
   ajouter_fonds:"資金を追加",solde_dispo:"利用可能残高",manque:"不足額",ajouter_coffre:"金庫に追加",approvisionner_lien:"資金管理口座に入金",
-  apercu:"+ {n} 追加",apercu_insuffisant:"この金額には資金管理口座の残高が不足しています。",mdp:"マスターパスワード",
+  apercu:"+ {n} 追加",apercu_insuffisant:"この金額には資金管理口座の残高が不足しています。",
   tresorerie_titre:"資金管理口座に入金",raison_manque:"金庫に {x} を追加するには、資金管理口座に {m} が不足しています。",libre:"任意の金額",
   mode_carte:"クレジットカード",mode_virement:"銀行振込",mode_crypto:"暗号資産",
   txt_carte:"Visa または Mastercard でお支払いください。確定後すぐに資金管理口座に入金されます。",txt_virement:"振込依頼書を使って国内・海外送金でお支払いください。着金後に資金管理口座に入金されます。",txt_crypto:"暗号資産を選んでください。スマートフォンのアプリで読み取るアドレスとQRコードが表示され、支払いは自動で検出されます。",
@@ -429,7 +532,7 @@ const T={
   urg_titre:"すべての支出を直ちに停止",urg_txt:"金庫の資金はすべて資金管理口座に戻ります。エージェントはもう何も使えません。この操作はエージェントのサーバーにも、いかなる事業者にも依存しません。",
   geler:"今すぐ凍結",annuler:"キャンセル",fermer:"閉じる",
   conf_gel:"凍結の確認",conf_gel_txt:"GELER と入力すると、すべての支出を停止し資金を戻します。",conf_gel_mdp:"マスターパスワードを入力し、GELER と入力してください。",
-  conf_creer:"作成の確認",conf_creer_txt:"CREER と入力すると、このルールで金庫を作成します。",conf_sauvegarde:"暗号化された鍵をバックアップ",conf_sauvegarde_txt:"暗号化された鍵ファイルをダウンロードするには、マスターパスワードを入力してください。",
+  conf_creer_txt:"CREER と入力すると、このルールで金庫を作成します。",conf_sauvegarde:"暗号化された鍵をバックアップ",conf_sauvegarde_txt:"暗号化された鍵ファイルをダウンロードするには、マスターパスワードを入力してください。",
   en_cours:"処理中です。数秒お待ちください…",fait:"完了しました。",preuve:"公開証明",jeton:"セッションリンクが無効です。ターミナルに表示されたリンクを開き直してください。",
   cours_note:"通貨建ての金額は参考値です（{src}）。テストネットワーク上では実際の価値はありません。",cours_absent:"レートを取得できません：リクエスト数のみ表示しています。",sans_cours:"レートを取得できません。しばらくしてから再度お試しください。",
   regles:"ルール：期間 {p} ごとの保証予算 {b}、1回あたりの上限 {m}。",heure:"時間",heures:"時間",minutes:"分",
@@ -439,12 +542,12 @@ const T={
   copier:"コピー",copie:"コピーしました。",copie_ko:"コピーできません。テキストを選択してください。",
   adr_tresorerie:"資金管理口座のアドレス",chiffrement:"ローカル暗号化の状態",sauvegarde:"鍵のエクスポート／バックアップ",
   sauvegarde_txt:"保存されている鍵ファイルを、パスワードで暗号化されたままダウンロードします。鍵が平文で書き出されることはありません。このバックアップはこのコンピューター以外の場所に保管してください。",
-  sauvegarder:"暗号化された鍵をバックアップ",lignee_titre:"系譜の検証（v0.5.1）",lignee_txt:"公開台帳上で金庫をその起点からたどり、系譜を正しく持っているかを、いかなるサーバーも信頼せずに検証します。",
+  sauvegarder:"暗号化された鍵をバックアップ",lignee_titre:"系譜の検証（v0.5.1）",
   verifier:"今すぐ検証",lignee_ok:"系譜を検証しました：現在の金庫は起点から正しく続いています。",lignee_ko:"検証できません：{d}",
   chiffre_ok:"鍵はこのコンピューター上で暗号化されています（{a}、{m} MiB、{p} 回）。",chiffre_test:"テストモード：テスト用フレーズから導出した鍵で、暗号化ファイルはありません。実際の資金には絶対に使用しないでください。",
   reseau:"ネットワーク",contrat:"コントラクト",lignee:"系譜",sortie:"現在の出力",empreinte:"コントラクトの指紋"}
 };
-const etat={jeton:null,donnees:null,securite:null,langue:"fr",devise:"usd",deviseSaisie:null,page:"tableau",suivi:null,soldeAvant:null,manque:null};
+const etat={jeton:null,donnees:null,securite:null,langue:"fr",devise:"usd",deviseSaisie:null,page:"tresorerie",vue:null,agent:null,agentFonds:null,histo:null,suivi:null,soldeAvant:null,manque:null};
 const DEVISES=["usd","eur","jpy","gbp","usdt","usdc","btc","eth","sol"];
 const $=id=>document.getElementById(id);
 const t=k=>(T[etat.langue]||T.fr)[k]??(T.fr[k]??k);
@@ -459,7 +562,7 @@ const LOC={fr:"fr-FR",en:"en-US",ja:"ja-JP"};
 const loc=()=>LOC[etat.langue]||"en-US";
 const FIAT=["usd","eur","jpy","gbp"],DECIMALES={btc:8,eth:6,sol:4,usdt:2,usdc:2};
 const pos=x=>Math.max(0,Number(x)||0); // aucun solde ni montant négatif n'est jamais affiché
-function cours(dv){const c=etat.donnees&&etat.donnees.cours,d=dv||etat.devise;return c&&c[d]!=null?c[d]:null}
+function cours(dv){const c=(etat.vue&&etat.vue.cours)||(etat.donnees&&etat.donnees.cours),d=dv||etat.devise;return c&&c[d]!=null?c[d]:null}
 function formater(v,d){
   v=pos(v);
   if(FIAT.includes(d))return new Intl.NumberFormat(loc(),{style:"currency",currency:d.toUpperCase(),maximumFractionDigits:d==="jpy"?(v<100?2:0):(v<10?4:2)}).format(v);
@@ -468,7 +571,9 @@ function formater(v,d){
 function montant(sompi,dv){const d=dv||etat.devise,c=cours(d);if(sompi==null||c==null)return "–";return formater(pos(sompi)/1e8*c,d)}
 const versSompi=(v,dv)=>{const c=cours(dv);return c?Math.round(pos(v)/c*1e8):null};
 const deSompi=(x,dv)=>{const c=cours(dv);return c?pos(x)/1e8*c:null};
-function tarif(){let v=null;try{v=Number(localStorage.getItem("tarif"))}catch(e){}return v>0?v:((etat.donnees&&etat.donnees.tarif_reference_sompi)||40000000)}
+function tarif(){let v=null;try{v=Number(localStorage.getItem("tarif"))}catch(e){}return v>0?v:((etat.vue&&etat.vue.tarif_reference_sompi)||(etat.donnees&&etat.donnees.tarif_reference_sompi)||40000000)}
+const soldeTreso=()=>pos(etat.vue?etat.vue.solde_proprietaire_sompi:(etat.donnees&&etat.donnees.solde_proprietaire_sompi));
+function majSoldeTreso(x){if(etat.vue)etat.vue.solde_proprietaire_sompi=x;if(etat.donnees)etat.donnees.solde_proprietaire_sompi=x}
 function reqParts(sompi,sens){
   const x=pos(sompi)/tarif(),n=sens==="haut"?Math.ceil(x-1e-9):Math.floor(x+1e-9),exact=Math.abs(x-n)<1e-9;
   return [(exact?"":"~")+new Intl.NumberFormat(loc()).format(n),n===1?t("req1"):t("reqN")];
@@ -491,21 +596,77 @@ async function api(chemin,corps){
 }
 
 // ---------- affichage ----------
+function el(tag,attrs,...enfants){const e=document.createElement(tag);for(const [k,v] of Object.entries(attrs||{})){if(k==="class")e.className=v;else if(k.startsWith("on"))e[k]=v;else if(v!=null)e.setAttribute(k,v)}for(const c of enfants)if(c!=null)e.append(c);return e}
+function pastille(sante){return el("span",{class:"sante petite s-"+sante},el("b"),el("span",{},t(sante)))}
+const actif=a=>["normal","alerte","epuise"].includes(a.sante);
 function traduire(){
   document.documentElement.lang=etat.langue;
   document.querySelectorAll("[data-t]").forEach(e=>{e.textContent=t(e.dataset.t)});
-  $("f-mdp").placeholder=$("mod-mdp").placeholder=t("mdp");$("f-libre").placeholder=t("libre");
+  $("f-libre").placeholder=t("libre");$("a-nom").placeholder=t("nom_exemple");
   $("langue").value=etat.langue;$("devise").value=etat.devise;
-  if(etat.donnees)afficher();
-  if(etat.securite)afficherSecurite();
+  toutAfficher();
+}
+function toutAfficher(){if(etat.vue)afficherVue();if(etat.donnees)afficher();if(etat.securite)afficherSecurite();if(etat.histo)afficherHisto()}
+
+// Trésorerie, liste des agents, arrêt d'urgence, bandeau de sauvegarde
+function afficherVue(){
+  const v=etat.vue,ags=v.agents||[];
+  const rang={epuise:3,alerte:2,normal:1};
+  const pire=ags.filter(actif).sort((a,b)=>rang[b.sante]-rang[a.sante])[0];
+  const g=pire?pire.sante:"aucun";$("sante").className="sante s-"+g;$("sante-txt").textContent=pire?t(g):t("aucun_agent_actif");
+  const c=v.compte||{};$("bandeau").hidden=!(c.mode==="fichier_chiffre"&&!c.sauvegarde_faite);
+  afficherReq($("t-dispo-r"),v.solde_proprietaire_sompi,"bas");$("t-dispo-v").textContent=montant(v.solde_proprietaire_sompi);
+  const somme=k=>ags.filter(actif).reduce((s,a)=>s+pos(a[k]),0);
+  afficherReq($("t-coffres-r"),somme("solde_coffre_sompi"),"bas");$("t-coffres-v").textContent=montant(somme("solde_coffre_sompi"));
+  $("t-coffres-txt").textContent=t("repartis").replace("{n}",ags.filter(actif).length);
+  afficherReq($("t-expo-r"),somme("exposition_immediate_sompi"),"haut");$("t-expo-v").textContent=montant(somme("exposition_immediate_sompi"));
+  $("t-agents").textContent=String(ags.length);
+  $("t-agents-txt").textContent=t("agents_detail").replace("{a}",ags.filter(actif).length).replace("{g}",ags.length-ags.filter(actif).length);
+  // liste compacte (trésorerie) et cartes (agents)
+  const liste=$("t-liste");liste.replaceChildren();
+  if(!ags.length)liste.append(el("div",{class:"vide"},t("aucun_agent")));
+  else{const tb=el("table");for(const a of ags){const tr=tb.insertRow();
+    tr.insertCell().append(el("button",{class:"lienbtn",onclick:()=>voirAgent(a.id)},a.nom));
+    tr.insertCell().append(pastille(a.sante||"aucun"));
+    const r=tr.insertCell();r.className="n mono";r.textContent=actif(a)?t("dispo_l")+" : "+requetes(a.exposition_immediate_sompi,"haut"):"–";
+    const m=tr.insertCell();m.className="n mono note";m.textContent=actif(a)?montant(a.solde_coffre_sompi):"–"}liste.append(tb)}
+  const cartes=$("a-cartes");cartes.replaceChildren();
+  for(const a of ags)cartes.append(carteAgent(a));
+  if(!ags.length)cartes.append(el("div",{class:"carte vide"},t("aucun_agent")));
+  const u=$("u-liste");u.replaceChildren();
+  const tb=el("table");for(const a of ags){const tr=tb.insertRow();tr.insertCell().textContent=a.nom;tr.insertCell().append(pastille(a.sante||"aucun"));
+    const cel=tr.insertCell();cel.className="n";if(actif(a))cel.append(el("button",{class:"btn rouge petit",onclick:()=>arreterAgent(a)},t("arreter")))}
+  u.append(tb);
+  const sel=$("h-agent"),avant=sel.value||"tous";sel.replaceChildren(el("option",{value:"tous"},t("tous_agents")));for(const a of ags)sel.append(el("option",{value:a.id},a.nom));sel.value=[...sel.options].some(o=>o.value===avant)?avant:"tous";
+  $("tarif-txt").textContent=t("tarif").replace("{t}",montant(tarif()));$("tarif-devise").textContent=etat.devise.toUpperCase();$("b-tarif").hidden=cours()==null;
+  $("cours").textContent=v.cours?t("cours_note").replace("{src}",v.cours.source):t("cours_absent");
+  if($("m-fonds").classList.contains("ouverte"))majFonds();
+}
+function carteAgent(a){
+  const r=a.regles||{},carte=el("div",{class:"carte agent"});
+  carte.append(el("div",{class:"ligne-titre"},el("div",{class:"val"},a.nom),pastille(a.sante||"aucun")));
+  if(actif(a)){
+    const pct=Math.min(100,100*pos(a.depense_periode_sompi)/(r.budget_garanti_par_periode_sompi||1));
+    const req=el("div",{class:"req mono"});afficherReq(req,r.budget_garanti_par_periode_sompi,"bas");
+    carte.append(el("div",{class:"etiq",style:"margin-top:10px"},t("budget")),req,
+      el("div",{class:"jauge"},el("span",{style:"width:"+pct+"%;background:"+(pct>80?"var(--ambre)":"var(--accent)")})),
+      el("div",{class:"sous"},t("depense")+" : "+requetes(a.depense_periode_sompi??0,"haut")),
+      el("div",{class:"chiffres"},el("div",{},el("div",{class:"etiq"},t("solde")),el("div",{class:"mono"},requetes(a.solde_coffre_sompi,"bas")),el("div",{class:"sous mono"},montant(a.solde_coffre_sompi))),
+        el("div",{},el("div",{class:"etiq"},t("exposition")),el("div",{class:"mono"},requetes(a.exposition_immediate_sompi,"haut")),el("div",{class:"sous mono"},montant(a.exposition_immediate_sompi)))));
+  }else carte.append(el("p",{class:"note"},a.erreur||t("coffre_ferme")));
+  const act=el("div",{class:"actions"},el("button",{class:"btn sec petit",onclick:()=>voirAgent(a.id)},t("details")));
+  if(actif(a))act.append(el("button",{class:"btn petit",onclick:()=>ouvrirFonds(a.id)},"+ "+t("ajouter_fonds")),el("button",{class:"btn rouge petit",onclick:()=>arreterAgent(a)},t("arreter")));
+  else act.append(el("button",{class:"btn petit",onclick:()=>ouvrirCoffre(a)},t("ouvrir_coffre")));
+  carte.append(act);return carte;
 }
 
+// Détail d'un agent
 function afficher(){
-  const d=etat.donnees,r=d.regles;
-  $("sante").className="sante s-"+d.sante;$("sante-txt").textContent=t(d.sante);
+  const d=etat.donnees,r=d.regles,ag=d.agent||{};
+  $("d-nom").textContent=ag.nom||"–";$("d-sante").className="sante s-"+d.sante;$("d-sante-txt").textContent=t(d.sante);
   const sans=d.sante==="aucun"||d.sante==="gele";
   $("sans-coffre").hidden=!sans;$("avec-coffre").hidden=sans;
-  $("regles-creer").textContent=t("regles").replace("{b}",requetes(r.budget_garanti_par_periode_sompi,"bas")).replace("{p}",duree(r.periode_secondes)).replace("{m}",requetes(r.plafond_par_achat_sompi,"bas"));
+  $("regles-creer").textContent=reglesTexte(r);
   afficherReq($("r-budget"),r.budget_garanti_par_periode_sompi,"bas");$("v-budget").textContent=montant(r.budget_garanti_par_periode_sompi);
   $("r-depense").textContent=requetes(d.depense_periode_sompi??0,"haut");$("v-depense").textContent=montant(d.depense_periode_sompi??0);
   const pct=Math.min(100,100*pos(d.depense_periode_sompi)/r.budget_garanti_par_periode_sompi);
@@ -515,67 +676,94 @@ function afficher(){
   afficherReq($("r-solde"),d.solde_coffre_sompi,"bas");$("v-solde").textContent=montant(d.solde_coffre_sompi);
   afficherReq($("r-plafond"),r.plafond_par_achat_sompi,"bas");$("v-plafond").textContent=montant(r.plafond_par_achat_sompi);
   $("v-periode").textContent=duree(r.periode_secondes);
-  $("tarif-txt").textContent=t("tarif").replace("{t}",montant(tarif()));
-  $("tarif-devise").textContent=etat.devise.toUpperCase();$("b-tarif").hidden=cours()==null;
   const achats=(d.historique||[]).filter(m=>m.genre==="achat").slice(0,5);
   const der=$("derniers");der.replaceChildren();
-  if(!achats.length){const p=document.createElement("div");p.className="vide";p.textContent=t("aucun_achat");der.append(p)}
-  else{const tb=document.createElement("table");for(const m of achats){const tr=tb.insertRow();tr.insertCell().textContent=court(m.destinataire);const c=tr.insertCell();c.className="n mono";c.textContent=reqCourt(m.montant_sompi+m.frais_sompi);const c2=tr.insertCell();c2.className="n mono note";c2.textContent=montant(m.montant_sompi+m.frais_sompi)}der.append(tb)}
+  if(!achats.length)der.append(el("div",{class:"vide"},t("aucun_achat")));
+  else{const tb=el("table");for(const m of achats){const tr=tb.insertRow();tr.insertCell().textContent=court(m.destinataire);const c=tr.insertCell();c.className="n mono";c.textContent=reqCourt(m.montant_sompi+m.frais_sompi);const c2=tr.insertCell();c2.className="n mono note";c2.textContent=montant(m.montant_sompi+m.frais_sompi)}der.append(tb)}
+  const tech=$("tech");tech.replaceChildren();
+  const k=d.technique||{};
+  for(const [cle,val] of [["identifiant_agent",ag.identifiant],["reseau",k.reseau],["contrat",k.contrat],["lignee",k.lignee],["sortie",k.sortie_courante],["empreinte",k.empreinte_source_contrat]])if(val)tech.append(el("dt",{},t(cle)),el("dd",{class:"mono"},val));
+}
+function reglesTexte(r){return t("regles").replace("{b}",requetes(r.budget_garanti_par_periode_sompi,"bas")).replace("{p}",duree(r.periode_secondes)).replace("{m}",requetes(r.plafond_par_achat_sompi,"bas"))}
+
+// Historique (un agent ou tous)
+async function chargerHisto(){
+  const sel=$("h-agent").value||"tous",ags=(etat.vue&&etat.vue.agents)||[];
+  const cibles=sel==="tous"?ags:ags.filter(a=>a.id===sel);
+  const lignes=[];
+  for(const a of cibles){if(!a.sante||a.sante==="aucun")continue;try{const d=await api("/api/tableau?agent="+encodeURIComponent(a.id));for(const m of d.historique||[])lignes.push(Object.assign({agent:a.nom},m))}catch(e){}}
+  lignes.sort((x,y)=>(y.instant_daa||0)-(x.instant_daa||0));
+  etat.histo=lignes;afficherHisto();
+}
+function afficherHisto(){
   const h=$("histo");h.replaceChildren();
-  for(const m of d.historique||[]){const tr=h.insertRow();tr.insertCell().textContent=t(m.genre);
+  if(!etat.histo.length){const tr=h.insertRow();const c=tr.insertCell();c.colSpan=6;c.className="vide";c.textContent=t("aucun_mouvement");return}
+  for(const m of etat.histo){const tr=h.insertRow();tr.insertCell().textContent=m.agent;tr.insertCell().textContent=t(m.genre);
     const tot=m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0);
     const a=tr.insertCell();a.className="n mono";a.textContent=reqCourt(tot);
     const b0=tr.insertCell();b0.className="n mono note";b0.textContent=montant(tot);
     tr.insertCell().textContent=m.destinataire?court(m.destinataire):"–";
-    const b=document.createElement("button");b.className="lienbtn";b.textContent=t("voir");b.onclick=()=>detail(m);tr.insertCell().append(b)}
-  $("cours").textContent=d.cours?t("cours_note").replace("{src}",d.cours.source):t("cours_absent");
-  if($("m-fonds").classList.contains("ouverte"))majFonds();
+    tr.insertCell().append(el("button",{class:"lienbtn",onclick:()=>detail(m)},t("voir")))}
 }
 
 function afficherSecurite(){
   const s=etat.securite;if(!s)return;
+  const c=s.chiffrement||{},fichier=c.mode==="fichier_chiffre",phrase=fichier&&c.phrase_disponible;
   $("s-adresse").textContent=s.adresse;if(s.qr){$("s-qr").src=s.qr;$("s-qr").hidden=false}
-  const c=s.chiffrement||{};
-  $("s-chiffrement").textContent=c.mode==="fichier_chiffre"?t("chiffre_ok").replace("{a}",c.algorithme).replace("{m}",Math.round(c.memoire_kio/1024)).replace("{p}",c.passes):(c.mode==="cles_de_test"?t("chiffre_test"):(c.detail||"–"));
-  $("b-sauvegarde").disabled=c.mode!=="fichier_chiffre";
-  const tech=$("tech");tech.replaceChildren();
-  const k=etat.donnees&&etat.donnees.technique;if(k){for(const [cle,val] of [["reseau",k.reseau],["contrat",k.contrat],["lignee",k.lignee],["sortie",k.sortie_courante],["empreinte",k.empreinte_source_contrat]]){const dt=document.createElement("dt");dt.textContent=t(cle);const dd=document.createElement("dd");dd.className="mono";dd.textContent=val;tech.append(dt,dd)}}
+  $("s-deriv").textContent=phrase?t("derivation").replace("{c}",s.chemin_derivation):"";
+  $("s-chiffrement").textContent=fichier?t("chiffre_ok").replace("{a}",c.algorithme).replace("{m}",Math.round(c.memoire_kio/1024)).replace("{p}",c.passes):(c.mode==="cles_de_test"?t("chiffre_test"):(c.detail||"–"));
+  const sp=$("s-sauv-etat");sp.className="pastille "+(s.sauvegarde_faite?"ok":"ko");sp.textContent=!fichier?t("mode_test_court"):(s.sauvegarde_faite?t("sauv_ok"):t("sauv_ko"));
+  $("b-recup").hidden=!phrase;$("b-sauvegarde").hidden=!fichier||phrase;
+  $("s-recup-note").hidden=phrase;$("s-recup-note").textContent=!fichier?t("mode_test_secu"):t("phrase_indispo");
+  const dp=$("s-2fa-etat");dp.className="pastille "+(s.double_auth?"ok":"");dp.textContent=s.double_auth?t("dfa_on"):t("dfa_off");
+  $("b-2fa").hidden=s.double_auth||!phrase;
+  for(const id of ["b-export","b-restaurer"])$(id).disabled=!fichier&&id==="b-export";
 }
 
 function detail(m){
   $("det-titre").textContent=t(m.genre);
   const dl=$("det-dl");dl.replaceChildren();
   const tot=m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0);
-  for(const [k,v] of [["h_req",reqCourt(tot)],["d_montant",montant(m.montant_sompi)],["d_frais",m.frais_sompi?montant(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]]){
-    const dt=document.createElement("dt");dt.textContent=t(k);const dd=document.createElement("dd");dd.className="mono";dd.textContent=String(v);dl.append(dt,dd)}
-  $("det-lien").replaceChildren(lien("https://tn10.kaspa.stream/transactions/"+encodeURIComponent(m.txid),t("preuve")));
+  for(const [k,v] of [["h_agent",m.agent||"–"],["h_req",reqCourt(tot)],["d_montant",montant(m.montant_sompi)],["d_frais",m.frais_sompi?montant(m.frais_sompi):"–"],["d_txid",m.txid],["d_instant",m.instant_daa??"–"],["d_dest",m.destinataire||"–"]])
+    dl.append(el("dt",{},t(k)),el("dd",{class:"mono"},String(v)));
+  $("det-lien").replaceChildren(...(/^[0-9a-f]{64}$/.test(m.txid||"")?[lien("https://tn10.kaspa.stream/transactions/"+m.txid,t("preuve"))]:[]));
   $("detail").classList.add("ouverte");$("det-fermer").focus();
 }
 
-async function charger(){
-  try{etat.donnees=await api("/api/tableau");$("erreur").hidden=true;afficher()}
+async function chargerVue(){
+  try{etat.vue=await api("/api/agents");$("erreur").hidden=true;afficherVue()}
   catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}
 }
+async function chargerAgent(id){
+  try{etat.donnees=await api("/api/tableau?agent="+encodeURIComponent(id));etat.agent=id;afficher()}
+  catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}
+}
+async function charger(){await chargerVue();if(etat.page==="agent"&&etat.agent)await chargerAgent(etat.agent)}
 async function chargerSecurite(){try{etat.securite=await api("/api/securite");afficherSecurite()}catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}}
+function voirAgent(id){etat.agent=id;page("agent");chargerAgent(id)}
 
 // ---------- Ajouter des fonds (3 niveaux) ----------
 const deviseSaisie=()=>etat.deviseSaisie||etat.devise;
-function ouvrirFonds(){
+function preparerFonds(){
   const sel=$("f-devise");if(!sel.options.length)for(const o of $("devise").options)sel.add(new Option(o.text,o.value));
   for(const o of sel.options)o.disabled=cours(o.value)==null;
-  sel.value=deviseSaisie();$("f-montant").value="";$("f-mdp").value="";$("f-msg1").replaceChildren();etat.manque=null;
-  $("f-mdp-champ").hidden=!(etat.donnees&&etat.donnees.mot_de_passe_requis);
-  niveau(1);$("m-fonds").classList.add("ouverte");$("f-montant").focus();majFonds();
+  sel.value=deviseSaisie();$("f-montant").value="";$("f-msg1").replaceChildren();etat.manque=null;
+  $("m-fonds").classList.add("ouverte");
 }
-function fermerFonds(){$("m-fonds").classList.remove("ouverte");$("f-mdp").value="";arreterSuivi();clearTimeout(etat.retourAuto)}
+// Depuis un agent : ajouter au coffre de cet agent (niveau 1).
+function ouvrirFonds(id){etat.agentFonds=id;preparerFonds();$("f-retour").hidden=false;niveau(1);$("f-montant").focus();majFonds()}
+// Depuis la trésorerie : approvisionner la trésorerie elle-même (niveau 2 directement).
+function ouvrirTresorerie(){etat.agentFonds=null;preparerFonds();$("f-retour").hidden=true;niveau(2)}
+function nomAgentFonds(){const a=((etat.vue&&etat.vue.agents)||[]).find(x=>x.id===etat.agentFonds);return a?a.nom:""}
+function fermerFonds(){$("m-fonds").classList.remove("ouverte");arreterSuivi();clearTimeout(etat.retourAuto)}
 function niveau(n,raison){
   for(const k of [1,2,3,4])$("f-n"+k).hidden=k!==n;
-  $("f-titre").textContent=t(["","ajouter_fonds","tresorerie_titre","reglement","confirmation"][n]);
+  $("f-titre").textContent=n===1&&nomAgentFonds()?t("ajouter_a").replace("{n}",nomAgentFonds()):t(["","ajouter_fonds","tresorerie_titre","reglement","confirmation"][n]);
   clearTimeout(etat.retourAuto);
   if(n===2){$("f-n2-raison").hidden=!raison;if(raison)$("f-n2-raison").textContent=raison;etat.montantDepot=null;remplirRapides();mode(etat.mode||"carte")}else if(n!==3)arreterSuivi();
 }
 function majFonds(){
-  const d=etat.donnees||{},dv=deviseSaisie(),dispo=pos(d.solde_proprietaire_sompi);
+  const dv=deviseSaisie(),dispo=soldeTreso();
   $("f-dispo").textContent=montant(dispo,dv);
   const m=lu($("f-montant").value),x=m>0?versSompi(m,dv):null;
   if(!(m>0)){$("f-apercu").textContent=" ";$("f-manque-bloc").hidden=true;$("f-valider").disabled=true;etat.manque=null;return}
@@ -649,9 +837,9 @@ async function depotCrypto(x){
   catch(e){$("p-adr").textContent="–";message("f-msg3","err",e.message)}
 }
 function suivreSolde(){
-  arreterSuivi();etat.soldeAvant=pos(etat.donnees&&etat.donnees.solde_proprietaire_sompi);
+  arreterSuivi();etat.soldeAvant=soldeTreso();
   etat.suivi=setInterval(async()=>{try{const r=await api("/api/solde");const gain=pos(r.solde_proprietaire_sompi)-etat.soldeAvant;
-    if(gain>0){arreterSuivi();if(etat.donnees)etat.donnees.solde_proprietaire_sompi=r.solde_proprietaire_sompi;paiementRecu(gain,r.solde_proprietaire_sompi)}}catch(e){}},4000);
+    if(gain>0){arreterSuivi();majSoldeTreso(r.solde_proprietaire_sompi);paiementRecu(gain,r.solde_proprietaire_sompi)}}catch(e){}},4000);
 }
 function paiementRecu(credite,solde){
   niveau(4);$("c-credit").textContent=montant(credite,deviseSaisie());$("c-solde").textContent=montant(solde,deviseSaisie());
@@ -662,74 +850,165 @@ async function payer(){
   $("f-payer").disabled=true;message("f-msg3","ok",t("en_cours"));
   try{
     const r=await api("/api/paiement",{moyen:etat.mode,montant_sompi:x});
-    if(etat.donnees)etat.donnees.solde_proprietaire_sompi=r.solde_proprietaire_sompi;
+    majSoldeTreso(r.solde_proprietaire_sompi);
     paiementRecu(r.credite_sompi,r.solde_proprietaire_sompi);
   }catch(e){message("f-msg3","err",e.message);$("f-payer").disabled=false}
 }
-function versCoffre(){clearTimeout(etat.retourAuto);if($("m-fonds").classList.contains("ouverte")){niveau(1);majFonds();$("f-montant").focus()}}
+function versCoffre(){clearTimeout(etat.retourAuto);if(!$("m-fonds").classList.contains("ouverte"))return;
+  if(etat.agentFonds){niveau(1);majFonds();$("f-montant").focus()}else{fermerFonds();if(etat.vue)afficherVue()}}
 async function demarrerSuivi(){
   arreterSuivi();
   if(!etat.securite)await chargerSecurite();
   const s=etat.securite;if(s)$("f-adresse").textContent=s.adresse;
-  etat.soldeAvant=pos(etat.donnees&&etat.donnees.solde_proprietaire_sompi);
+  etat.soldeAvant=soldeTreso();
   const p=document.createElement("span");p.className="point";const tx=document.createElement("span");tx.textContent=t("attente");$("f-attente").replaceChildren(p,tx);
   etat.suivi=setInterval(async()=>{
     try{const r=await api("/api/solde");const gain=pos(r.solde_proprietaire_sompi)-etat.soldeAvant;
-      if(gain>0){arreterSuivi();etat.donnees.solde_proprietaire_sompi=r.solde_proprietaire_sompi;
+      if(gain>0){arreterSuivi();majSoldeTreso(r.solde_proprietaire_sompi);
         paiementRecu(gain,r.solde_proprietaire_sompi)}}catch(e){}
   },5000);
 }
 function arreterSuivi(){if(etat.suivi){clearInterval(etat.suivi);etat.suivi=null}}
 async function ajouterAuCoffre(){
   const x=versSompi(lu($("f-montant").value),deviseSaisie());if(!x||etat.manque)return;
-  const mdp=$("f-mdp").value;$("f-mdp").value="";$("f-valider").disabled=true;message("f-msg1","ok",t("en_cours"));
-  try{const r=await api("/api/alimenter",{montant_sompi:x,mot_de_passe:mdp});message("f-msg1","ok",t("fait"),r.explorateur);await charger()}
+  $("f-valider").disabled=true;message("f-msg1","ok",t("en_cours"));
+  try{const r=await api("/api/alimenter",{agent:etat.agentFonds,montant_sompi:x});message("f-msg1","ok",t("fait"),r.explorateur);await charger()}
   catch(e){message("f-msg1","err",e.message)}finally{majFonds()}
 }
 
-// ---------- confirmations, sécurité ----------
-function confirmer(titre,texte,mot,action,avecMdp){
+// ---------- confirmations ----------
+function confirmer(titre,texte,action){
   return new Promise(res=>{
-    $("mod-titre").textContent=titre;$("mod-txt").textContent=texte;$("mod-ok").textContent=action;$("mod-saisie").value="";$("mod-mdp").value="";
-    $("mod-mdp-champ").hidden=!avecMdp;$("mod-saisie-champ").hidden=!mot;
-    $("modale").classList.add("ouverte");(avecMdp?$("mod-mdp"):$("mod-saisie")).focus();
-    const fin=v=>{const mdp=$("mod-mdp").value;$("mod-mdp").value="";$("modale").classList.remove("ouverte");$("mod-ok").onclick=$("mod-annuler").onclick=null;res(v?{mdp}:false)};
-    $("mod-ok").onclick=()=>fin(!mot||$("mod-saisie").value.trim().toUpperCase()===mot);
-    $("mod-annuler").onclick=()=>fin(false);
+    $("mod-titre").textContent=titre;$("mod-txt").textContent=texte;$("mod-ok").textContent=action;
+    $("modale").classList.add("ouverte");$("mod-ok").focus();
+    const fin=v=>{$("modale").classList.remove("ouverte");$("mod-ok").onclick=$("mod-annuler").onclick=null;res(v)};
+    $("mod-ok").onclick=()=>fin(true);$("mod-annuler").onclick=()=>fin(false);
   });
-}
-async function agir(bouton,cible,chemin,corps){
-  bouton.disabled=true;message(cible,"ok",t("en_cours"));
-  try{const r=await api(chemin,corps);message(cible,"ok",t("fait"),r.explorateur);await charger();return r}
-  catch(e){message(cible,"err",e.message)}
-  finally{bouton.disabled=false}
 }
 function telecharger(nom,type,contenu){const u=URL.createObjectURL(new Blob([contenu],{type}));const a=document.createElement("a");a.href=u;a.download=nom;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
 function rapport(){
-  const d=etat.donnees||{};
-  return {titre:t("rapport"),genere_le:new Date().toISOString(),sante:d.sante,regles:d.regles,tarif_reference_sompi:tarif(),devise_affichage:etat.devise,cours_utilise:cours(),
-    solde_coffre_sompi:d.solde_coffre_sompi,exposition_immediate_sompi:d.exposition_immediate_sompi,depense_periode_sompi:d.depense_periode_sompi,technique:d.technique,mouvements:d.historique||[],
+  const v=etat.vue||{};
+  return {titre:t("rapport"),genere_le:new Date().toISOString(),tarif_reference_sompi:tarif(),devise_affichage:etat.devise,cours_utilise:cours(),
+    tresorerie_sompi:v.solde_proprietaire_sompi,agents:(v.agents||[]).map(a=>({id:a.id,nom:a.nom,sante:a.sante,regles:a.regles,solde_coffre_sompi:a.solde_coffre_sompi,exposition_immediate_sompi:a.exposition_immediate_sompi,depense_periode_sompi:a.depense_periode_sompi})),
+    mouvements:etat.histo||[],
     note:"Montants exacts en unités du registre (100 000 000 unités = 1 jeton du réseau). Équivalents en devise indicatifs, au cours indiqué. Chaque mouvement est vérifiable avec son identifiant de transaction sur le registre public."};
 }
 function csv(){
-  const dv=etat.devise,lignes=[["operation","requetes","montant_"+dv,"frais_"+dv,"montant_unites_registre","frais_unites_registre","beneficiaire","instant_daa","transaction"]];
-  for(const m of (etat.donnees&&etat.donnees.historique)||[])lignes.push([m.genre,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),deSompi(m.montant_sompi)??"",deSompi(m.frais_sompi)??"",m.montant_sompi,m.frais_sompi,m.destinataire||"",m.instant_daa??"",m.txid]);
+  const dv=etat.devise,lignes=[["agent","operation","requetes","montant_"+dv,"frais_"+dv,"montant_unites_registre","frais_unites_registre","beneficiaire","instant_daa","transaction"]];
+  for(const m of etat.histo||[])lignes.push([m.agent,m.genre,(m.montant_sompi+(m.genre==="achat"?m.frais_sompi:0))/tarif(),deSompi(m.montant_sompi)??"",deSompi(m.frais_sompi)??"",m.montant_sompi,m.frais_sompi,m.destinataire||"",m.instant_daa??"",m.txid]);
   return lignes.map(l=>l.map(x=>{const s=String(x);return /[",;\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(",")).join("\n")+"\n";
+}
+
+// ---------- agents : créer, ouvrir le coffre, arrêter, renommer ----------
+function ouvrirCreation(){
+  const a=(etat.vue&&etat.vue.agents||[]).find(x=>x.regles);
+  $("a-regles").textContent=a?t("regles_std").replace("{r}",reglesTexte(a.regles)):"";
+  $("a-nom").value="";$("a-msg").replaceChildren();$("a-creer").disabled=false;$("m-agent").classList.add("ouverte");$("a-nom").focus();
+}
+async function creerAgent(){
+  const nom=$("a-nom").value.trim();if(!nom){$("a-nom").focus();return}
+  $("a-creer").disabled=true;message("a-msg","ok",t("en_cours"));
+  try{const r=await api("/api/agents",{nom,confirmation:"CREER"});
+    if(r.coffre_ouvert===false)message("a-msg","info",t("agent_sans_coffre").replace("{d}",r.detail||""));
+    else{message("a-msg","ok",t("agent_cree"),r.explorateur);setTimeout(()=>$("m-agent").classList.remove("ouverte"),1500)}
+    await chargerVue();
+  }catch(e){message("a-msg","err",e.message);$("a-creer").disabled=false}
+}
+async function ouvrirCoffre(a){
+  if(!await confirmer(t("conf_creer"),reglesTexte(a.regles||etat.donnees.regles),t("ouvrir_coffre")))return;
+  try{await api("/api/creer",{agent:a.id,confirmation:"CREER"});await charger()}catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}
+}
+async function arreterAgent(a){
+  if(!await confirmer(t("conf_gel_agent").replace("{n}",a.nom),t("conf_gel_agent_txt"),t("arreter")))return;
+  const cible=etat.page==="agent"?"m-geler-agent":null;if(cible)message(cible,"ok",t("en_cours"));
+  try{const r=await api("/api/geler",{agent:a.id,confirmation:"GELER"});if(cible)message(cible,"ok",t("fait"),r.explorateur);await charger()}
+  catch(e){if(cible)message(cible,"err",e.message);else{$("erreur").hidden=false;$("erreur").textContent=e.message}}
+}
+
+// ---------- sécurité ----------
+function ouvrirSecu(titre){$("s-titre").textContent=titre;$("s-corps").replaceChildren();$("m-secu").classList.add("ouverte")}
+function fermerSecu(){$("m-secu").classList.remove("ouverte");$("s-corps").replaceChildren()}
+function corps(...e){$("s-corps").replaceChildren(...e)}
+function boite(){return el("div",{id:"s-msg"})}
+// Étape d'identification : mot de passe, et code à 6 chiffres si la double authentification est active.
+function identification(texte,suite,avecCode){
+  const mdp=el("input",{type:"password",autocomplete:"current-password",placeholder:t("mdp"),"aria-label":t("mdp")});
+  const code=el("input",{inputmode:"numeric",autocomplete:"one-time-code",maxlength:"6",placeholder:t("code2fa"),"aria-label":t("code2fa")});
+  const besoinCode=avecCode&&etat.securite&&etat.securite.double_auth;
+  const ok=el("button",{class:"btn"},t("continuer_btn"));
+  ok.onclick=async()=>{ok.disabled=true;message("s-msg","ok",t("en_cours"));
+    try{await suite(mdp.value,code.value)}catch(e){message("s-msg","err",e.message);ok.disabled=false}finally{mdp.value="";code.value=""}};
+  corps(el("p",{class:"note"},texte),el("div",{class:"champ"},mdp),besoinCode?el("div",{class:"champ"},code):null,el("p",{},ok),boite());mdp.focus();
+}
+function sauvegarderRecup(){
+  ouvrirSecu(t("recup_titre"));
+  let secret=null; // gardé en mémoire le temps de la vérification, puis effacé
+  identification(t("auth_txt"),async(mdp,code)=>{
+    const r=await api("/api/recuperation",{mot_de_passe:mdp,code});secret=mdp;
+    const grille=el("ol",{class:"mots mono"});r.mots.forEach(m=>grille.append(el("li",{},m)));
+    const suite=el("button",{class:"btn"},t("phrase_notee"));
+    corps(el("p",{class:"msg info"},t("phrase_avert")),grille,el("p",{},suite));
+    suite.onclick=()=>{
+      const pos=[];while(pos.length<3){const p=Math.floor(Math.random()*24);if(!pos.includes(p))pos.push(p)}pos.sort((a,b)=>a-b);
+      const champs=pos.map(p=>el("input",{autocomplete:"off",spellcheck:"false",placeholder:t("mot_n").replace("{n}",p+1),"aria-label":t("mot_n").replace("{n}",p+1)}));
+      const verif=el("button",{class:"btn"},t("verifier_btn"));
+      corps(el("p",{class:"note"},t("verif_txt")),...champs.map(c=>el("div",{class:"champ"},c)),el("p",{},verif),boite());champs[0].focus();
+      verif.onclick=async()=>{verif.disabled=true;
+        try{await api("/api/recuperation/confirmer",{mot_de_passe:secret,positions:pos,mots:champs.map(c=>c.value)});secret=null;
+          corps(el("div",{class:"coche"},"✓"),el("p",{style:"text-align:center"},t("sauv_confirmee")));await chargerSecurite();await chargerVue()}
+        catch(e){message("s-msg","err",e.message);verif.disabled=false}};
+    };
+  },true);
+}
+function activerDoubleAuth(){
+  ouvrirSecu(t("dfa_titre"));
+  identification(t("auth_txt"),async mdp=>{
+    const r=await api("/api/double-auth/preparer",{mot_de_passe:mdp});const garde=mdp;
+    const code=el("input",{inputmode:"numeric",autocomplete:"one-time-code",maxlength:"6",placeholder:t("code2fa"),"aria-label":t("code2fa")});
+    const ok=el("button",{class:"btn"},t("activer"));
+    corps(el("p",{class:"note"},t("dfa_scan")),el("div",{class:"adr"},el("img",{class:"qr",src:r.qr,alt:"QR"}),el("div",{},el("div",{class:"etiq"},t("dfa_cle")),el("div",{class:"mono",style:"word-break:break-all"},r.secret))),el("div",{class:"champ"},code),el("p",{},ok),boite());code.focus();
+    ok.onclick=async()=>{ok.disabled=true;try{await api("/api/double-auth/activer",{mot_de_passe:garde,code:code.value});corps(el("div",{class:"coche"},"✓"),el("p",{style:"text-align:center"},t("dfa_activee")));await chargerSecurite()}
+      catch(e){message("s-msg","err",e.message);ok.disabled=false}};
+  },false);
+}
+function exporterCle(){
+  ouvrirSecu(t("export_titre"));
+  identification(t("export_txt"),async(mdp,code)=>{
+    const r=await api("/api/cle-export",{mot_de_passe:mdp,code});
+    const v=el("div",{class:"mono secret",id:"s-cle"},r.cle_privee);
+    corps(el("p",{class:"msg err"},t("export_txt")),el("div",{class:"etiq"},t("cle_privee")),v,
+      el("p",{},el("button",{class:"btn sec petit",onclick:async()=>{try{await navigator.clipboard.writeText(r.cle_privee)}catch(e){}}},t("copier")),"  ",el("button",{class:"btn sec petit",onclick:fermerSecu},t("masquer"))),
+      el("p",{class:"note mono"},r.adresse));
+  },true);
+}
+function restaurerCompte(){
+  ouvrirSecu(t("restaurer_titre"));
+  const phrase=el("textarea",{rows:"4",class:"mono",spellcheck:"false",autocomplete:"off",placeholder:t("phrase_saisie"),"aria-label":t("phrase_saisie")});
+  const m1=el("input",{type:"password",autocomplete:"new-password",placeholder:t("nouveau_mdp"),"aria-label":t("nouveau_mdp")});
+  const m2=el("input",{type:"password",autocomplete:"new-password",placeholder:t("confirmer_mdp"),"aria-label":t("confirmer_mdp")});
+  const ok=el("button",{class:"btn"},t("restaurer"));
+  corps(el("p",{class:"note"},t("restaurer_txt")),phrase,el("div",{class:"champ"},m1),el("div",{class:"champ"},m2),el("p",{},ok),boite());phrase.focus();
+  ok.onclick=async()=>{if(m1.value!==m2.value){message("s-msg","err",t("mdp_differents"));return}ok.disabled=true;
+    try{const r=await api("/api/restaurer",{phrase:phrase.value,nouveau_mot_de_passe:m1.value});phrase.value=m1.value=m2.value="";
+      message("s-msg","ok",(r.meme_compte?t("restaure_meme"):t("restaure_autre").replace("{a}",r.adresse)).replace("{f}",r.fichier))}
+    catch(e){message("s-msg","err",e.message);ok.disabled=false}};
 }
 
 // ---------- navigation ----------
 function page(p){
-  etat.page=p;
-  document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",String(x.dataset.p===p)));
+  etat.page=p;const onglet=p==="agent"?"agents":p;
+  document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",String(x.dataset.p===onglet)));
   $("b-param").setAttribute("aria-pressed",String(p==="securite"));
-  for(const q of ["tableau","historique","urgence","securite"])$("p-"+q).hidden=q!==p;
+  for(const q of ["tresorerie","agents","agent","historique","urgence","securite"])$("p-"+q).hidden=q!==p;
   if(p==="securite"){if(!etat.securite)chargerSecurite();else afficherSecurite()}
+  if(p==="historique")chargerHisto();
 }
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>page(b.dataset.p));
-$("b-param").onclick=()=>page(etat.page==="securite"?"tableau":"securite");
+$("b-param").onclick=()=>page(etat.page==="securite"?"tresorerie":"securite");
 $("langue").onchange=e=>{etat.langue=e.target.value;try{localStorage.setItem("langue",etat.langue)}catch(x){}traduire()};
-$("devise").onchange=e=>{etat.devise=e.target.value;etat.deviseSaisie=null;try{localStorage.setItem("devise",etat.devise)}catch(x){}if(etat.donnees)afficher()};
-$("b-ajouter").onclick=ouvrirFonds;
+$("devise").onchange=e=>{etat.devise=e.target.value;etat.deviseSaisie=null;try{localStorage.setItem("devise",etat.devise)}catch(x){}toutAfficher()};
+$("b-ajouter").onclick=()=>ouvrirFonds(etat.agent);
+$("b-ajouter-treso").onclick=ouvrirTresorerie;
 $("f-fermer").onclick=fermerFonds;
 $("f-montant").oninput=surSaisie;
 $("f-devise").onchange=e=>{etat.deviseSaisie=e.target.value;majFonds()};
@@ -741,23 +1020,34 @@ $("f-libre").oninput=()=>afficherAEnvoyer(lu($("f-libre").value));
 document.querySelectorAll(".modes button").forEach(b=>b.onclick=()=>mode(b.dataset.mode));
 document.querySelectorAll("[data-copier]").forEach(b=>b.onclick=async()=>{const id=b.dataset.copier,ret=document.querySelector('[data-retour="'+id+'"]');
   try{await navigator.clipboard.writeText($(id).textContent);if(ret)ret.textContent=t("copie")}catch(e){if(ret)ret.textContent=t("copie_ko")}});
-$("b-geler").onclick=async()=>{const avec=!!(etat.donnees&&etat.donnees.mot_de_passe_requis);
-  const r=await confirmer(t("conf_gel"),avec?t("conf_gel_mdp"):t("conf_gel_txt"),"GELER",t("geler"),avec);
-  if(r)agir($("b-geler"),"m-geler","/api/geler",{confirmation:"GELER",mot_de_passe:r.mdp})};
-$("b-creer").onclick=async()=>{if(await confirmer(t("conf_creer"),t("conf_creer_txt"),"CREER",t("creer"),false))agir($("b-creer"),"m-creer","/api/creer",{confirmation:"CREER"})};
-$("b-sauvegarde").onclick=async()=>{const r=await confirmer(t("conf_sauvegarde"),t("conf_sauvegarde_txt"),null,t("sauvegarder"),true);if(!r)return;
-  try{const j=await api("/api/cle-chiffree",{mot_de_passe:r.mdp});telecharger("cle-proprietaire-chiffree.json","application/json",JSON.stringify(j.fichier,null,2));message("m-sauvegarde","ok",t("fait"))}catch(e){message("m-sauvegarde","err",e.message)}};
+document.querySelectorAll("[data-creer-agent]").forEach(b=>b.onclick=ouvrirCreation);
+$("a-creer").onclick=creerAgent;$("a-annuler").onclick=$("a-fermer").onclick=()=>$("m-agent").classList.remove("ouverte");
+$("a-nom").onkeydown=e=>{if(e.key==="Enter")creerAgent()};
+$("b-retour-agents").onclick=()=>page("agents");
+$("b-creer").onclick=()=>ouvrirCoffre({id:etat.agent,regles:etat.donnees&&etat.donnees.regles});
+$("b-geler-agent").onclick=()=>{const a=(etat.vue.agents||[]).find(x=>x.id===etat.agent);if(a)arreterAgent(a)};
+$("b-renommer").onclick=async()=>{const nom=prompt(t("renommer_titre"),$("d-nom").textContent);if(!nom)return;try{await api("/api/renommer",{agent:etat.agent,nom});await charger()}catch(e){$("erreur").hidden=false;$("erreur").textContent=e.message}};
+$("b-geler-tout").onclick=async()=>{if(!await confirmer(t("conf_gel_tout"),t("urg_txt_tous"),t("urg_tout")))return;
+  $("b-geler-tout").disabled=true;message("m-geler-tout","ok",t("en_cours"));
+  try{const r=await api("/api/geler-tout",{confirmation:"GELER"});const ok=r.bilan.filter(x=>x.transaction).length;
+    message("m-geler-tout","ok",t("gel_bilan").replace("{ok}",ok).replace("{ko}",r.bilan.length-ok));await charger()}
+  catch(e){message("m-geler-tout","err",e.message)}finally{$("b-geler-tout").disabled=false}};
+$("b-bandeau").onclick=()=>{page("securite");setTimeout(sauvegarderRecup,50)};
+$("b-recup").onclick=sauvegarderRecup;$("b-2fa").onclick=activerDoubleAuth;$("b-export").onclick=exporterCle;$("b-restaurer").onclick=restaurerCompte;$("s-fermer").onclick=fermerSecu;
+$("b-sauvegarde").onclick=()=>{ouvrirSecu(t("sauv_fichier"));identification(t("auth_txt"),async mdp=>{const j=await api("/api/cle-chiffree",{mot_de_passe:mdp});telecharger("cle-proprietaire-chiffree.json","application/json",JSON.stringify(j.fichier,null,2));message("s-msg","ok",t("fait"))},false)};
 $("b-lignee").onclick=async()=>{$("b-lignee").disabled=true;message("m-lignee","ok",t("en_cours"));
-  try{const r=await api("/api/verifier-lignee");message("m-lignee",r.ok?"ok":"err",r.ok?t("lignee_ok"):t("lignee_ko").replace("{d}",r.detail||""));if(r.ok)await charger();afficherSecurite()}catch(e){message("m-lignee","err",e.message)}finally{$("b-lignee").disabled=false}};
+  const res=[];for(const a of (etat.vue&&etat.vue.agents)||[]){if(!actif(a))continue;try{const r=await api("/api/verifier-lignee?agent="+encodeURIComponent(a.id));res.push(a.nom+" : "+(r.ok?t("lignee_ok"):t("lignee_ko").replace("{d}",r.detail||"")))}catch(e){res.push(a.nom+" : "+e.message)}}
+  message("m-lignee","ok",res.length?res.join("\n"):t("aucun_agent_actif"));$("b-lignee").disabled=false};
+$("h-agent").onchange=chargerHisto;
 $("b-csv").onclick=()=>telecharger("rapport-controle.csv","text/csv;charset=utf-8",csv());
 $("b-json").onclick=()=>telecharger("rapport-controle.json","application/json",JSON.stringify(rapport(),null,2));
 $("det-fermer").onclick=()=>$("detail").classList.remove("ouverte");
 $("b-tarif").onclick=()=>{const x=deSompi(tarif());if(x==null)return;$("tarif-edit").hidden=false;$("tarif-champ").value=Number(x.toPrecision(4));$("tarif-champ").focus()};
-$("b-tarif-ok").onclick=()=>{const v=versSompi(lu($("tarif-champ").value));if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;if(etat.donnees)afficher()};
-document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte");if($("m-fonds").classList.contains("ouverte"))fermerFonds()});
+$("b-tarif-ok").onclick=()=>{const v=versSompi(lu($("tarif-champ").value));if(v>0){try{localStorage.setItem("tarif",String(v))}catch(e){}}$("tarif-edit").hidden=true;toutAfficher()};
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if($("modale").classList.contains("ouverte"))$("mod-annuler").click();$("detail").classList.remove("ouverte");$("m-agent").classList.remove("ouverte");if($("m-secu").classList.contains("ouverte"))fermerSecu();if($("m-fonds").classList.contains("ouverte"))fermerFonds()});
 
 traduire();
-if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t("jeton")}else{charger();setInterval(charger,20000)}
+if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t("jeton")}else{chargerVue();chargerSecurite();setInterval(charger,20000)}
 </script>
 </body>
 </html>

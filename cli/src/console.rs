@@ -99,13 +99,6 @@ fn qr(texte: &str) -> Option<String> {
     Some(format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg)))
 }
 
-/// Le mot de passe saisi déverrouille-t-il bien le fichier de clé du propriétaire chargé ?
-/// `None` : pas de fichier de clé (clés de test), aucun mot de passe à vérifier.
-fn verifier_mot_de_passe(chemin_cle: Option<&str>, owner: &Keypair, mdp: &str) -> Option<bool> {
-    let chemin = chemin_cle?;
-    Some(cle::lire(chemin).ok().and_then(|f| cle::dechiffrer(&f, mdp).ok()).is_some_and(|k| k.x_only_public_key() == owner.x_only_public_key()))
-}
-
 fn origine() -> Option<Etat> {
     serde_json::from_str(&fs::read_to_string(state_path().replace(".json", "-origine.json")).ok()?).ok()
 }
@@ -229,36 +222,104 @@ pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
     Ok(())
 }
 
+/// Indicateurs non secrets du compte (à côté du fichier de clé) : affichage seulement. Ce qui fait
+/// foi pour la double authentification est le fichier de clé chiffré lui-même.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Compte {
+    sauvegarde_faite: bool,
+    double_auth: bool,
+}
+
+fn chemin_compte(chemin_cle: &str) -> String {
+    match chemin_cle.strip_suffix(".json") {
+        Some(base) => format!("{base}-compte.json"),
+        None => format!("{chemin_cle}-compte.json"),
+    }
+}
+
+fn lire_compte(chemin_cle: Option<&str>) -> Compte {
+    chemin_cle.and_then(|c| fs::read_to_string(chemin_compte(c)).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn ecrire_compte(chemin_cle: &str, c: &Compte) -> Res<()> {
+    fs::write(chemin_compte(chemin_cle), serde_json::to_string_pretty(c)?)?;
+    Ok(())
+}
+
+type Rep = tiny_http::Response<std::io::Cursor<Vec<u8>>>;
+
+/// Garde des actions sensibles (voir la phrase, exporter la clé, activer la double authentification) :
+/// mot de passe, puis code à 6 chiffres si la double authentification est active ; 5 échecs = 60 s.
+struct Garde {
+    echecs: u32,
+    verrou: Option<Instant>,
+    dernier_pas: u64,
+}
+
+impl Garde {
+    fn ouvrir(&mut self, chemin_cle: Option<&str>, owner: &Keypair, v: &Value, exiger_code: bool) -> Result<(Keypair, Option<cle::Coffret>), Rep> {
+        let Some(chemin) = chemin_cle else {
+            return Err(json_rep(409, json!({ "erreur": "mode test : clés dérivées d'une phrase de test, aucun fichier de clé" })));
+        };
+        if self.verrou.is_some_and(|t| Instant::now() < t) {
+            return Err(json_rep(429, json!({ "erreur": "trop d'essais : réessayez dans une minute" })));
+        }
+        let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+        let ouvert = cle::lire(chemin).and_then(|f| cle::ouvrir_tout(&f, &mdp)).ok().filter(|(k, _)| k.x_only_public_key() == owner.x_only_public_key());
+        let Some((k, coffret)) = ouvert else {
+            return Err(self.echec("mot de passe incorrect"));
+        };
+        if exiger_code {
+            if let Some(secret) = coffret.as_ref().and_then(|c| c.totp.as_ref()) {
+                match double_auth::verifier(secret, v["code"].as_str().unwrap_or(""), double_auth::maintenant(), self.dernier_pas) {
+                    Some(pas) => self.dernier_pas = pas,
+                    None => return Err(self.echec("code de double authentification incorrect ou expiré")),
+                }
+            }
+        }
+        self.echecs = 0;
+        Ok((k, coffret))
+    }
+
+    fn echec(&mut self, quoi: &str) -> Rep {
+        self.echecs += 1;
+        if self.echecs >= 5 {
+            self.verrou = Some(Instant::now() + Duration::from_secs(60));
+            self.echecs = 0;
+        }
+        journal(json!({ "action_sensible": "refusée", "motif": quoi }));
+        json_rep(403, json!({ "erreur": quoi }))
+    }
+}
+
+fn param(url: &str, nom: &str) -> Option<String> {
+    url::Url::parse(&format!("http://h{url}")).ok()?.query_pairs().find(|(k, _)| k == nom).map(|(_, v)| v.into_owned())
+}
+
+fn resultat(r: Res<String>) -> Rep {
+    match r {
+        Ok(txid) => json_rep(200, json!({ "transaction": txid, "explorateur": explorer(&txid) })),
+        Err(e) => json_rep(502, json!({ "erreur": e.to_string() })),
+    }
+}
+
 /// Boucle de la console (séparée pour être testée sur un port libre).
-pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: Keypair, agent: Keypair, chemin_cle: Option<String>) {
+pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: Keypair, agent_principal: Keypair, chemin_cle: Option<String>) {
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
     let mut cours = Cours { valeur: None, lu: None };
-    let (mut echecs, mut verrou_jusqu_a): (u32, Option<Instant>) = (0, None);
-    // Mot de passe maître : exigé pour geler, ajouter des fonds et exporter la clé ; 5 échecs = 60 s.
-    let mut controle_mdp = |v: &Value| -> Result<(), tiny_http::Response<std::io::Cursor<Vec<u8>>>> {
-        let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
-        if verrou_jusqu_a.is_some_and(|t| Instant::now() < t) {
-            return Err(json_rep(429, json!({ "erreur": "trop d'essais de mot de passe : réessayez dans une minute" })));
-        }
-        if verifier_mot_de_passe(chemin_cle.as_deref(), &owner, &mdp) == Some(false) {
-            echecs += 1;
-            if echecs >= 5 {
-                verrou_jusqu_a = Some(Instant::now() + Duration::from_secs(60));
-                echecs = 0;
-            }
-            journal(json!({ "mot_de_passe": "refusé" }));
-            return Err(json_rep(403, json!({ "erreur": "mot de passe incorrect" })));
-        }
-        echecs = 0;
-        Ok(())
-    };
+    let mut garde = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+    // Secret de double authentification en cours d'activation (en mémoire seulement).
+    let mut double_auth_en_attente: Option<zeroize::Zeroizing<Vec<u8>>> = None;
+    let defaut = etat_par_defaut();
+    let cle_ch = chemin_cle.as_deref();
     for mut req in serveur.incoming_requests() {
         let entetes: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
         let entete = |nom: &str| entetes.iter().find(|(k, _)| k == &nom.to_ascii_lowercase()).map(|(_, v)| v.clone());
         let hote_ok = entete("Host").is_some_and(|h| hotes.contains(&h));
-        let chemin = req.url().split('?').next().unwrap_or("").to_string();
+        let url = req.url().to_string();
+        let chemin = url.split('?').next().unwrap_or("").to_string();
         let methode = req.method().as_str().to_string();
         let jeton_ok = entete("X-Jeton").is_some_and(|j| egal(j.as_bytes(), jeton.as_bytes()));
         let origine_ok = entete("Origin").is_none_or(|o| origines.contains(&o));
@@ -274,53 +335,127 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
             let mut corps = String::new();
             let _ = req.as_reader().take(16 * 1024).read_to_string(&mut corps);
             let v: Value = serde_json::from_str(&corps).unwrap_or(Value::Null);
+            let liste = agents::charger(&defaut);
+            // Agent visé : paramètre `agent` (URL ou corps), le principal par défaut.
+            let id = param(&url, "agent").or_else(|| v["agent"].as_str().map(String::from)).unwrap_or_else(|| agents::PRINCIPAL.into());
+            let cible = liste.iter().find(|a| a.id == id).cloned();
+            let cle_cible = cible.as_ref().map(|a| agents::cle(a, &agent_principal));
             match (methode.as_str(), chemin.as_str()) {
-                ("GET", "/api/tableau") => {
+                // ---------- Trésorerie et agents ----------
+                ("GET", "/api/agents") => {
                     let c = cours.lire();
-                    match handle.block_on(tableau(&owner, &agent, c)) {
-                        Ok(t) => json_rep(200, t),
-                        Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
+                    let mut vus = Vec::new();
+                    let mut solde = None;
+                    for a in &liste {
+                        let Ok(k) = agents::cle(a, &agent_principal) else { continue };
+                        let t = avec_coffre(&a.etat, || handle.block_on(tableau(&owner, &k, c.clone())));
+                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": hex::encode(xonly(&k)) });
+                        match t {
+                            Ok(t) => {
+                                if t["solde_proprietaire_sompi"].is_u64() {
+                                    solde = t["solde_proprietaire_sompi"].as_u64();
+                                }
+                                for cle in ["sante", "solde_coffre_sompi", "exposition_immediate_sompi", "depense_periode_sompi", "regles"] {
+                                    ligne[cle] = t[cle].clone();
+                                }
+                                ligne["achats"] = json!(t["historique"].as_array().map(|h| h.iter().filter(|m| m["genre"] == "achat").count()).unwrap_or(0));
+                            }
+                            Err(e) => ligne["erreur"] = json!(e.to_string()),
+                        }
+                        vus.push(ligne);
                     }
+                    if solde.is_none() {
+                        solde = handle.block_on(async {
+                            let c = connect_silencieux().await?;
+                            let s: u64 = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
+                            c.disconnect().await?;
+                            Ok::<u64, Box<dyn std::error::Error>>(s)
+                        }).ok();
+                    }
+                    let compte = lire_compte(cle_ch);
+                    json_rep(200, json!({
+                        "agents": vus, "solde_proprietaire_sompi": solde, "cours": c, "tarif_reference_sompi": tarif_reference(),
+                        "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
+                    }))
                 }
-                ("POST", "/api/geler") => {
-                    if v["confirmation"].as_str() != Some("GELER") {
-                        json_rep(400, json!({ "erreur": "confirmation requise" }))
-                    } else if let Err(r) = controle_mdp(&v) {
-                        r
-                    } else {
-                        let r = handle.block_on(geler(&owner, &agent, false, 0));
-                        journal(json!({ "geler": r.as_ref().map_err(|e| e.to_string()) }));
-                        match r {
-                            Ok(txid) => json_rep(200, json!({ "transaction": txid, "explorateur": explorer(&txid) })),
-                            Err(e) => json_rep(502, json!({ "erreur": e.to_string() })),
+                ("GET", "/api/tableau") => match (&cible, cle_cible) {
+                    (Some(a), Some(Ok(k))) => {
+                        let c = cours.lire();
+                        match avec_coffre(&a.etat, || handle.block_on(tableau(&owner, &k, c))) {
+                            Ok(mut t) => {
+                                t["agent"] = json!({ "id": a.id, "nom": a.nom, "identifiant": hex::encode(xonly(&k)) });
+                                json_rep(200, t)
+                            }
+                            Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
                         }
                     }
-                }
-                ("POST", "/api/alimenter") => match v["montant_sompi"].as_u64().filter(|m| (10_000_000..=100_000_000_000).contains(m)) {
-                    None => json_rep(400, json!({ "erreur": "montant invalide" })),
-                    Some(_) if controle_mdp(&v).is_err() => controle_mdp_reponse(),
-                    Some(m) => {
-                        let r = handle.block_on(recharger(&owner, &agent, m));
-                        journal(json!({ "alimenter": m, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
-                        match r {
-                            Ok(txid) => json_rep(200, json!({ "transaction": txid, "explorateur": explorer(&txid) })),
-                            Err(e) => json_rep(502, json!({ "erreur": e.to_string() })),
-                        }
-                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },
-                ("POST", "/api/creer") => {
+                // Créer un agent = l'inscrire (clé neuve) puis ouvrir son coffre. Si l'ouverture échoue
+                // (trésorerie vide), l'agent reste inscrit et son coffre pourra être ouvert ensuite.
+                ("POST", "/api/agents") => {
                     if v["confirmation"].as_str() != Some("CREER") {
                         json_rep(400, json!({ "erreur": "confirmation requise" }))
                     } else {
-                        let r = handle.block_on(deployer(&owner, &agent));
-                        journal(json!({ "creer": r.as_ref().map_err(|e| e.to_string()) }));
-                        match r {
-                            Ok(txid) => json_rep(200, json!({ "transaction": txid, "explorateur": explorer(&txid) })),
-                            Err(e) => json_rep(502, json!({ "erreur": e.to_string() })),
+                        match agents::nouveau(&defaut, v["nom"].as_str().unwrap_or("")) {
+                            Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                            Ok(a) => {
+                                let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, || handle.block_on(deployer(&owner, &k))));
+                                journal(json!({ "nouvel_agent": a.id, "coffre": r.as_ref().map_err(|e| e.to_string()) }));
+                                match r {
+                                    Ok(txid) => json_rep(200, json!({ "agent": a.id, "transaction": txid, "explorateur": explorer(&txid) })),
+                                    Err(e) => json_rep(200, json!({ "agent": a.id, "coffre_ouvert": false, "detail": e.to_string() })),
+                                }
+                            }
                         }
                     }
                 }
-                // Solde de la trésorerie (adresse du propriétaire), interrogé pendant l'attente d'un dépôt.
+                ("POST", "/api/renommer") => match agents::renommer(&defaut, &id, v["nom"].as_str().unwrap_or("")) {
+                    Ok(()) => json_rep(200, json!({ "ok": true })),
+                    Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                },
+                ("POST", "/api/creer") => match (&cible, cle_cible) {
+                    _ if v["confirmation"].as_str() != Some("CREER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                    (Some(a), Some(Ok(k))) => {
+                        let r = avec_coffre(&a.etat, || handle.block_on(deployer(&owner, &k)));
+                        journal(json!({ "creer": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                        resultat(r)
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                // Arrêt d'urgence : sans mot de passe, pour qu'il ne soit jamais freiné. Il ne peut que
+                // rapatrier les fonds vers la trésorerie du propriétaire (imposé par le contrat).
+                ("POST", "/api/geler") => match (&cible, cle_cible) {
+                    _ if v["confirmation"].as_str() != Some("GELER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                    (Some(a), Some(Ok(k))) => {
+                        let r = avec_coffre(&a.etat, || handle.block_on(geler(&owner, &k, false, 0)));
+                        journal(json!({ "geler": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                        resultat(r)
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                ("POST", "/api/geler-tout") => {
+                    if v["confirmation"].as_str() != Some("GELER") {
+                        json_rep(400, json!({ "erreur": "confirmation requise" }))
+                    } else {
+                        let mut bilan = Vec::new();
+                        for a in &liste {
+                            let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
+                            bilan.push(json!({ "agent": a.id, "nom": a.nom, "transaction": r.as_ref().ok(), "erreur": r.as_ref().err().map(|e| e.to_string()) }));
+                        }
+                        journal(json!({ "geler_tout": bilan }));
+                        json_rep(200, json!({ "bilan": bilan }))
+                    }
+                }
+                ("POST", "/api/alimenter") => match (v["montant_sompi"].as_u64().filter(|m| (10_000_000..=100_000_000_000).contains(m)), &cible, cle_cible) {
+                    (None, _, _) => json_rep(400, json!({ "erreur": "montant invalide" })),
+                    (Some(m), Some(a), Some(Ok(k))) => {
+                        let r = avec_coffre(&a.etat, || handle.block_on(recharger(&owner, &k, m)));
+                        journal(json!({ "alimenter": m, "agent": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                        resultat(r)
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
                 ("GET", "/api/solde") => match handle.block_on(async {
                     let c = connect_silencieux().await?;
                     let s: u64 = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
@@ -330,49 +465,149 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     Ok(s) => json_rep(200, json!({ "solde_proprietaire_sompi": s })),
                     Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
                 },
-                // Paramètres > Sécurité : adresse, état du chiffrement local.
+                ("GET", "/api/verifier-lignee") => match (&cible, cle_cible) {
+                    (Some(a), Some(Ok(k))) => {
+                        let pk = xonly(&owner);
+                        match avec_coffre(&a.etat, || handle.block_on(async {
+                            let c = connect_silencieux().await?;
+                            let e = retrouver_coffre(&c, &pk, &k).await;
+                            c.disconnect().await?;
+                            e
+                        })) {
+                            Ok(e) => json_rep(200, json!({ "ok": true, "lignee": e.cov_id, "sortie": format!("{}:{}", e.txid, e.index), "contrat": "AgentBudget v0.5.1" })),
+                            Err(e) => json_rep(200, json!({ "ok": false, "detail": e.to_string() })),
+                        }
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                // ---------- Ajout de fonds à la trésorerie ----------
+                // Dépôt crypto : seul Kaspa est réellement encaissable aujourd'hui ; les autres monnaies
+                // demandent un prestataire (phase 2) : refus explicite, jamais d'adresse inventée.
+                ("POST", "/api/depot") => match v["monnaie"].as_str() {
+                    Some("kas") => {
+                        let adresse = address(&owner).to_string();
+                        json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "demo": false }))
+                    }
+                    Some(m) => json_rep(501, json!({ "erreur": format!("Paiement en {} : disponible en phase 2. Utilisez Kaspa.", m.to_uppercase()) })),
+                    None => json_rep(400, json!({ "erreur": "monnaie manquante" })),
+                },
+                // Carte / virement : aucun prestataire branché ; la console ne crédite jamais un solde fictif.
+                ("POST", "/api/paiement") => json_rep(501, json!({ "erreur": "Paiement par carte ou virement : disponible en phase 2. Utilisez Kaspa ou les fonds de test." })),
+                // ---------- Paramètres > Sécurité ----------
                 ("GET", "/api/securite") => {
                     let adresse = address(&owner).to_string();
-                    let chiffrement = match chemin_cle.as_deref().map(cle::lire) {
-                        Some(Ok(f)) => json!({ "mode": "fichier_chiffre", "algorithme": "Argon2id + XChaCha20-Poly1305", "memoire_kio": f.m_kio, "passes": f.t, "version": f.version }),
+                    let compte = lire_compte(cle_ch);
+                    let chiffrement = match cle_ch.map(cle::lire) {
+                        Some(Ok(f)) => json!({ "mode": "fichier_chiffre", "algorithme": "Argon2id + XChaCha20-Poly1305", "memoire_kio": f.m_kio, "passes": f.t, "version": f.version, "phrase_disponible": f.version >= 2 }),
                         Some(Err(e)) => json!({ "mode": "erreur", "detail": e.to_string() }),
                         None => json!({ "mode": "cles_de_test" }),
                     };
-                    json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "chiffrement": chiffrement, "reseau": "testnet-10" }))
+                    json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "chiffrement": chiffrement, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth, "chemin_derivation": cle::CHEMIN_DERIVATION, "reseau": "testnet-10" }))
                 }
-                // Sauvegarde : le fichier de clé CHIFFRÉ (jamais la clé en clair), après mot de passe.
-                ("POST", "/api/cle-chiffree") => match chemin_cle.as_deref() {
-                    None => json_rep(409, json!({ "erreur": "clés de test : aucun fichier de clé à sauvegarder" })),
-                    Some(_) if controle_mdp(&v).is_err() => controle_mdp_reponse(),
-                    Some(ch) => match fs::read_to_string(ch) {
-                        Ok(t) => {
-                            journal(json!({ "export_cle": "fichier chiffré exporté" }));
-                            json_rep(200, json!({ "fichier": serde_json::from_str::<Value>(&t).unwrap_or(Value::Null) }))
+                // Phrase de récupération : mot de passe + code si la double authentification est active.
+                ("POST", "/api/recuperation") => match garde.ouvrir(cle_ch, &owner, &v, true) {
+                    Err(r) => r,
+                    Ok((_, None)) => json_rep(409, json!({ "erreur": "compte créé avant les phrases de récupération : sauvegardez le fichier de clé chiffré" })),
+                    Ok((_, Some(c))) => match cle::phrase(&c) {
+                        Ok(p) => {
+                            journal(json!({ "recuperation": "phrase affichée" }));
+                            json_rep(200, json!({ "mots": p.split(' ').collect::<Vec<_>>() }))
                         }
                         Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
                     },
                 },
-                // Vérification de lignée : le coffre courant porte-t-il bien la lignée de son origine ?
-                // Tunnel carte / virement / autres cryptos : aucun prestataire de paiement n'est branché.
-                // La console réelle ne crédite jamais un solde fictif ; seul l'aperçu de démonstration simule l'encaissement.
-                // Dépôt crypto : adresse + QR. Seul Kaspa est réellement encaissable aujourd'hui ;
-                // les autres monnaies demandent un prestataire (phase 2) : refus explicite, jamais d'adresse inventée.
-                ("POST", "/api/depot") => match v["monnaie"].as_str() {
-                    Some("kas") => { let adresse = address(&owner).to_string(); json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "demo": false })) }
-                    Some(m) => json_rep(501, json!({ "erreur": format!("Paiement en {} : disponible en phase 2. Utilisez Kaspa.", m.to_uppercase()) })),
-                    None => json_rep(400, json!({ "erreur": "monnaie manquante" })),
+                // Confirmation de la sauvegarde : 3 mots demandés au hasard par la page.
+                ("POST", "/api/recuperation/confirmer") => match garde.ouvrir(cle_ch, &owner, &v, false) {
+                    Err(r) => r,
+                    Ok((_, None)) => json_rep(409, json!({ "erreur": "aucune phrase pour ce compte" })),
+                    Ok((_, Some(c))) => {
+                        let phrase = cle::phrase(&c).unwrap_or_default();
+                        let mots: Vec<&str> = phrase.split(' ').collect();
+                        let essais: Vec<(usize, String)> = v["positions"].as_array().into_iter().flatten().zip(v["mots"].as_array().into_iter().flatten()).filter_map(|(p, m)| Some((p.as_u64()? as usize, m.as_str()?.trim().to_lowercase()))).collect();
+                        let juste = essais.len() >= 3 && essais.iter().all(|(p, m)| mots.get(*p).is_some_and(|x| *x == m));
+                        if !juste {
+                            json_rep(400, json!({ "erreur": "un ou plusieurs mots ne correspondent pas : vérifiez votre sauvegarde" }))
+                        } else {
+                            let mut compte = lire_compte(cle_ch);
+                            compte.sauvegarde_faite = true;
+                            match ecrire_compte(cle_ch.unwrap_or_default(), &compte) {
+                                Ok(()) => json_rep(200, json!({ "ok": true })),
+                                Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                            }
+                        }
+                    }
                 },
-                ("POST", "/api/paiement") => json_rep(501, json!({ "erreur": "Paiement par carte, virement ou autres cryptos : disponible en phase 2. Utilisez Kaspa ou les fonds de test." })),
-                ("GET", "/api/verifier-lignee") => {
-                    let pk = xonly(&owner);
-                    match handle.block_on(async {
-                        let c = connect_silencieux().await?;
-                        let e = retrouver_coffre(&c, &pk, &agent).await;
-                        c.disconnect().await?;
-                        e
+                // Export de la clé privée en clair : mot de passe + double authentification ; journalisé.
+                ("POST", "/api/cle-export") => match garde.ouvrir(cle_ch, &owner, &v, true) {
+                    Err(r) => r,
+                    Ok((k, _)) => {
+                        journal(json!({ "export_cle": "clé privée exportée" }));
+                        json_rep(200, json!({ "cle_privee": hex::encode(k.secret_bytes()), "adresse": address(&k).to_string(), "chemin_derivation": cle::CHEMIN_DERIVATION }))
+                    }
+                },
+                ("POST", "/api/cle-chiffree") => match garde.ouvrir(cle_ch, &owner, &v, false) {
+                    Err(r) => r,
+                    Ok(_) => match fs::read_to_string(cle_ch.unwrap_or_default()) {
+                        Ok(t) => json_rep(200, json!({ "fichier": serde_json::from_str::<Value>(&t).unwrap_or(Value::Null) })),
+                        Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                    },
+                },
+                ("POST", "/api/double-auth/preparer") => match garde.ouvrir(cle_ch, &owner, &v, true) {
+                    Err(r) => r,
+                    Ok((_, None)) => json_rep(409, json!({ "erreur": "double authentification : nécessite un compte avec phrase de récupération" })),
+                    Ok((_, Some(c))) if c.totp.is_some() => json_rep(409, json!({ "erreur": "double authentification déjà active" })),
+                    Ok(_) => match double_auth::nouveau_secret() {
+                        Ok(s) => {
+                            let lien = double_auth::lien(&s, "proprietaire");
+                            let r = json_rep(200, json!({ "qr": qr(&lien), "secret": double_auth::base32(&s) }));
+                            double_auth_en_attente = Some(zeroize::Zeroizing::new(s));
+                            r
+                        }
+                        Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                    },
+                },
+                ("POST", "/api/double-auth/activer") => match (double_auth_en_attente.take(), garde.ouvrir(cle_ch, &owner, &v, false)) {
+                    (None, _) => json_rep(409, json!({ "erreur": "aucune activation en cours" })),
+                    (_, Err(r)) => r,
+                    (Some(_), Ok((_, None))) => json_rep(409, json!({ "erreur": "aucune phrase pour ce compte" })),
+                    (Some(s), Ok((_, Some(mut c)))) => {
+                        if double_auth::verifier(&s, v["code"].as_str().unwrap_or(""), double_auth::maintenant(), 0).is_none() {
+                            double_auth_en_attente = Some(s);
+                            json_rep(400, json!({ "erreur": "code incorrect : vérifiez l'heure de votre téléphone et réessayez" }))
+                        } else {
+                            c.totp = Some(s);
+                            let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+                            let ch = cle_ch.unwrap_or_default();
+                            match cle::chiffrer_coffret(&c, &mdp).and_then(|f| cle::remplacer(ch, &f)) {
+                                Ok(()) => {
+                                    let mut compte = lire_compte(cle_ch);
+                                    compte.double_auth = true;
+                                    let _ = ecrire_compte(ch, &compte);
+                                    journal(json!({ "double_auth": "activée" }));
+                                    json_rep(200, json!({ "ok": true }))
+                                }
+                                Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                            }
+                        }
+                    }
+                },
+                // Restaurer un compte depuis sa phrase : crée un NOUVEAU fichier de clé (jamais d'écrasement),
+                // à ouvrir au prochain lancement de la console.
+                ("POST", "/api/restaurer") => {
+                    let mdp = zeroize::Zeroizing::new(v["nouveau_mot_de_passe"].as_str().unwrap_or("").to_string());
+                    let phrase = zeroize::Zeroizing::new(v["phrase"].as_str().unwrap_or("").to_string());
+                    let base = cle_ch.and_then(|c| std::path::Path::new(c).parent().map(|p| p.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
+                    let sortie = base.join(format!("cle-proprietaire-restauree-{}.json", double_auth::maintenant()));
+                    match cle::depuis_phrase(&phrase).and_then(|c| {
+                        let k = cle::cle_du_coffret(&c)?;
+                        cle::ecrire(sortie.to_str().ok_or("chemin invalide")?, &cle::chiffrer_coffret(&c, &mdp)?)?;
+                        Ok(k)
                     }) {
-                        Ok(e) => json_rep(200, json!({ "ok": true, "lignee": e.cov_id, "sortie": format!("{}:{}", e.txid, e.index), "contrat": "AgentBudget v0.5.1" })),
-                        Err(e) => json_rep(200, json!({ "ok": false, "detail": e.to_string() })),
+                        Ok(k) => {
+                            journal(json!({ "restauration": address(&k).to_string() }));
+                            json_rep(200, json!({ "adresse": address(&k).to_string(), "meme_compte": k.x_only_public_key() == owner.x_only_public_key(), "fichier": sortie.to_string_lossy() }))
+                        }
+                        Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                     }
                 }
                 _ => json_rep(404, json!({ "erreur": "inconnu" })),
@@ -420,36 +655,41 @@ mod tests {
         fil.join().unwrap();
     }
 
-    /// Gel : mot de passe propriétaire vérifié contre le fichier de clé ; verrouillage après 5 échecs.
+    /// Actions sensibles : mot de passe puis double authentification ; verrouillage après 5 échecs ;
+    /// le gel, lui, n'exige aucun mot de passe (il ne peut que rapatrier les fonds au propriétaire).
     #[test]
-    fn gel_exige_le_mot_de_passe_et_verrouille() {
-        use std::sync::Arc;
-        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+    fn actions_sensibles_mot_de_passe_double_auth_et_verrouillage() {
+        let mdp = "le bon mot de passe";
+        let mut c = cle::nouveau_coffret().unwrap();
+        let owner = cle::cle_du_coffret(&c).unwrap();
         let chemin = std::env::temp_dir().join(format!("cle-console-{}.json", std::process::id()));
-        let _ = std::fs::remove_file(&chemin);
-        cle::ecrire(chemin.to_str().unwrap(), &cle::chiffrer(&k(1), "le bon mot de passe").unwrap()).unwrap();
-        let c = chemin.to_str().unwrap().to_string();
-        assert_eq!(verifier_mot_de_passe(Some(&c), &k(1), "le bon mot de passe"), Some(true));
-        assert_eq!(verifier_mot_de_passe(Some(&c), &k(1), "un mauvais"), Some(false));
-        assert_eq!(verifier_mot_de_passe(Some(&c), &k(9), "le bon mot de passe"), Some(false), "clé d'un autre propriétaire");
-        assert_eq!(verifier_mot_de_passe(None, &k(1), "peu importe"), None, "clés de test : rien à vérifier");
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
-        let port = serveur.server_addr().to_ip().unwrap().port();
-        let (s2, h) = (serveur.clone(), rt.handle().clone());
-        let fil = std::thread::spawn(move || servir(&s2, "jeton", h, k(1), k(2), Some(c)));
-        let geler = |mdp: &str| match ureq::post(&format!("http://127.0.0.1:{port}/api/geler")).set("X-Jeton", "jeton").send_string(&json!({ "confirmation": "GELER", "mot_de_passe": mdp }).to_string()) {
-            Ok(r) => r.status(),
-            Err(ureq::Error::Status(c, _)) => c,
-            Err(e) => panic!("{e}"),
-        };
+        let ch = chemin.to_str().unwrap();
+        let _ = std::fs::remove_file(ch);
+        cle::ecrire(ch, &cle::chiffrer_coffret(&c, mdp).unwrap()).unwrap();
+        let mut g = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+        assert!(g.ouvrir(None, &owner, &json!({}), true).is_err(), "mode test : rien à exporter");
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), true).ok().unwrap().1.is_some());
+        let autre = Keypair::from_seckey_slice(secp256k1::SECP256K1, &[9; 32]).unwrap();
+        assert!(g.ouvrir(Some(ch), &autre, &json!({ "mot_de_passe": mdp }), true).is_err(), "fichier d'un autre propriétaire");
+        // double authentification active : le code est exigé, et ne sert qu'une fois
+        let secret = vec![3u8; 20];
+        c.totp = Some(zeroize::Zeroizing::new(secret.clone()));
+        cle::remplacer(ch, &cle::chiffrer_coffret(&c, mdp).unwrap()).unwrap();
+        let mut g = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), true).is_err(), "code manquant");
+        let code = format!("{:06}", double_auth::code(&secret, double_auth::maintenant() / 30));
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": code }), true).is_ok());
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": code }), true).is_err(), "rejeu refusé");
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), false).is_ok(), "confirmation de sauvegarde : mot de passe seul");
+        let mut g = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
         for _ in 0..5 {
-            assert_eq!(geler("un mauvais"), 403);
+            assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": "mauvais" }), false).is_err());
         }
-        assert_eq!(geler("le bon mot de passe"), 429, "verrouillé après 5 échecs, même avec le bon mot de passe");
-        serveur.unblock();
-        fil.join().unwrap();
-        let _ = std::fs::remove_file(&chemin);
+        assert!(g.verrou.is_some(), "verrouillé après 5 échecs");
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), false).is_err(), "même le bon mot de passe attend une minute");
+        for f in [ch.to_string(), format!("{ch}.precedent")] {
+            let _ = std::fs::remove_file(f);
+        }
     }
 
     #[test]
@@ -470,9 +710,4 @@ mod tests {
 /// Données du tableau de bord, une fois (commande `tableau`, utile en CI et pour le support).
 pub async fn tableau_json(owner: &Keypair, agent: &Keypair) -> Res<Value> {
     tableau(owner, agent, None).await
-}
-
-/// Réponse générique après un refus de mot de passe (le détail exact est déjà journalisé).
-fn controle_mdp_reponse() -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
-    json_rep(403, json!({ "erreur": "mot de passe incorrect ou essais bloqués : réessayez" }))
 }

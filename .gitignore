@@ -7,3 +7,8 @@ secrets/
 wallet*/
 target/
 .env.*
+testnet/agents/
+testnet/agents.json
+*.key
+cle-proprietaire*.json
+compte.json
