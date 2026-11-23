@@ -7,7 +7,7 @@
 | Élément | Fichier | Taille | Statut |
 |---|---|---|---|
 | Coffre AgentBudget v0.5 | `contracts/agent_budget.sil` | 479 octets (paramètres de référence) | dans le périmètre |
-| Séquestre DeliveryEscrow v0.2 | `contracts/delivery_escrow.sil` | 242 octets | dans le périmètre |
+| Séquestre DeliveryEscrow v0.3 | `contracts/delivery_escrow.sil` | 263 octets | dans le périmètre |
 | Vérification côté vendeur (profil x402) | `cli/src/x402.rs`, fonction `verify_and_settle` | — | dans le périmètre (logiciel hors chaîne) |
 | Outil de démonstration | `cli/src/main.rs` | — | hors périmètre, sauf construction des transactions |
 
@@ -66,8 +66,8 @@ Utilisé pour récupérer le coffre (sortie unique vers le propriétaire), le re
 ### Réclamer un séquestre (vendeur, entrée `claim`)
 
 ```
-entrée  : [0] séquestre S, seule entrée (v0.2), séquence 0, budget de calcul 15
-          signature : preuve = Schnorr(vérificateur, blake2b(requestHash ‖ resultHash)), resultHash
+entrée  : [0] séquestre S, seule entrée (depuis v0.2), séquence 0, budget de calcul 15
+          signature : preuve = Schnorr(vérificateur, blake2b(requestHash ‖ resultHash ‖ txid(S) ‖ index(S))), resultHash
 sortie  : [0] S-F vers l'adresse du vendeur figée à la création, F ≤ maxFee
 ```
 Pas de signature du vendeur : la destination est figée, n'importe qui peut diffuser la réclamation une fois la preuve publiée.
@@ -75,7 +75,7 @@ Pas de signature du vendeur : la destination est figée, n'importe qui peut diff
 ### Rembourser un séquestre (n'importe qui, entrée `refund`)
 
 ```
-entrée  : [0] séquestre S, seule entrée (v0.2), séquence = timeoutDaa (verrou relatif), budget de calcul 5
+entrée  : [0] séquestre S, seule entrée (depuis v0.2), séquence = timeoutDaa (verrou relatif), budget de calcul 5
 sortie  : [0] S-F vers l'adresse de remboursement figée à la création, F ≤ maxFee
 ```
 
@@ -113,7 +113,7 @@ Signalements reçus sur l'activité récente de l'écosystème, vérifiés à la
 | Point | Vérification | Résultat |
 |---|---|---|
 | Budget de calcul remis à 0 lors d'une sérialisation JSON | Code de `kaspa-rpc-core` 2.1.0 : `compute_budget` porte `#[serde(default)]` ; test `json_sans_budget_relu_a_zero` | Risque réel pour les SDK passant par JSON. Notre chemin borsh conserve le champ (8 essais acceptés sur testnet). Garde-fou bloquant ajouté (R31) |
-| Une seule entrée sur les chemins de dépense sans le propriétaire | Sources des contrats | `pay` (coffre), `claim` et `refund` (séquestre v0.2) imposent `tx.inputs.length == 1` ; `ownerControl` accepte plusieurs entrées pour l'apport de frais (I12) |
+| Une seule entrée sur les chemins de dépense sans le propriétaire | Sources des contrats | `pay` (coffre), `claim` et `refund` (séquestre, depuis la v0.2) imposent `tx.inputs.length == 1` ; `ownerControl` accepte plusieurs entrées pour l'apport de frais (I12) |
 | Dérivation de l'identifiant de covenant (KIP-20) | `covenant_id` de rusty-kaspa 2.1.0 contre le vecteur officiel de kips#49 | Identique au vecteur ; deux genèses acceptées par le testnet-10 (lignées `7bbbb1a7…` et `b4f5c34b…`). Test rejoué à chaque envoi par la CI |
 | Éviction d'un paiement non confirmé par une transaction du propriétaire | R15 | Le vendeur livre après acceptation et ne garde aucune réservation |
 | Sortie de paiement détournée en état ambigu | Fuzzing, triche `BindPayment` | Refusée par le script (R32). Sans liste blanche, payer n'importe quel script standard reste un usage légitime du budget |

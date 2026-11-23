@@ -1291,7 +1291,7 @@ async fn main() -> Res<()> {
             let art = sequestre::artifact(&merchant, &refund, &verifier, &s.requete, s.timeout)?;
             // Le vérificateur constate la livraison et signe ; en mode fraude, l'agent signe à sa place.
             let signer = if fausse { &agent } else { &verifier };
-            let (proof, result_hash) = sequestre::proof(signer, &s.requete, &resultat);
+            let (proof, result_hash) = sequestre::proof(signer, &s, &resultat)?;
             println!("{} preuve de livraison pour « {} » : résultat {}",
                 if fausse { "(fraude) FAUSSE" } else { "Vérificateur :" }, s.requete, hex::encode(&result_hash[..8]));
             let tx = sequestre::build_claim(&art, &s, merchant, FEE, proof, result_hash)?;

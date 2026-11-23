@@ -55,13 +55,17 @@ pub fn artifact(merchant: &ScriptPublicKey, refund: &ScriptPublicKey, verifier: 
     Ok(compile_to_sil_abi_artifact_with_options(SOURCE, &args, CompileOptions::default())?)
 }
 
-/// Preuve de livraison : signature Schnorr du vérificateur sur blake2b(requestHash ‖ resultHash).
-pub fn proof(verifier: &Keypair, requete: &str, resultat: &str) -> (Vec<u8>, [u8; 32]) {
+/// Preuve de livraison (v0.3) : signature Schnorr du vérificateur sur
+/// blake2b(requestHash ‖ resultHash ‖ txid du séquestre ‖ index du séquestre, 4 octets petit-boutiste).
+/// Liée à CE séquestre : elle ne peut pas encaisser un autre séquestre de la même commande (R40).
+pub fn proof(verifier: &Keypair, s: &Sequestre, resultat: &str) -> Res<(Vec<u8>, [u8; 32])> {
     let result_hash = h(resultat.as_bytes());
-    let mut m = h(requete.as_bytes()).to_vec();
+    let mut m = h(s.requete.as_bytes()).to_vec();
     m.extend_from_slice(&result_hash);
+    m.extend_from_slice(&<[u8; 32]>::try_from(hex::decode(&s.txid)?.as_slice())?);
+    m.extend_from_slice(&s.index.to_le_bytes());
     let sig = verifier.sign_schnorr(Message::from_digest(h(&m)));
-    (sig.as_ref().to_vec(), result_hash)
+    Ok((sig.as_ref().to_vec(), result_hash))
 }
 
 fn spend(a: &SilAbiArtifact, s: &Sequestre, to: ScriptPublicKey, fee: u64, sequence: u64, cb: u16, entry: &str, args: &[ArtifactValue]) -> Res<Transaction> {
@@ -149,7 +153,7 @@ mod tests {
     #[test]
     fn reclamation_construite_par_l_outil_valide() {
         let (merchant, _, verifier, a, s) = setup();
-        let (p, r) = proof(&verifier, &s.requete, "contenu livre");
+        let (p, r) = proof(&verifier, &s, "contenu livre").unwrap();
         let tx = build_claim(&a, &s, merchant, crate::FEE, p, r).unwrap();
         exec(&tx, &a, s.valeur).unwrap();
     }
@@ -157,9 +161,29 @@ mod tests {
     #[test]
     fn fausse_preuve_refusee() {
         let (merchant, _, _, a, s) = setup();
-        let (p, r) = proof(&k(2), &s.requete, "contenu livre");
+        let (p, r) = proof(&k(2), &s, "contenu livre").unwrap();
         let tx = build_claim(&a, &s, merchant, crate::FEE, p, r).unwrap();
         assert!(exec(&tx, &a, s.valeur).is_err());
+    }
+
+    /// v0.3 : paramètres aberrants (frais négatifs, délai nul) : le vendeur ne peut jamais être payé.
+    #[test]
+    fn parametres_aberrants_refuses() {
+        let (merchant, refund, verifier, _, s) = setup();
+        for (timeout, max_fee) in [(0i64, MAX_FEE), (DEFAULT_TIMEOUT, -1)] { // délai négatif : refusé dès la compilation
+            let args: Vec<ArtifactValue> = vec![
+                spk_hash(&merchant).to_vec().into(),
+                spk_hash(&refund).to_vec().into(),
+                xonly(&verifier).into(),
+                h(s.requete.as_bytes()).to_vec().into(),
+                timeout.into(),
+                max_fee.into(),
+            ];
+            let a = compile_to_sil_abi_artifact_with_options(SOURCE, &args, CompileOptions::default()).unwrap();
+            let (p, r) = proof(&verifier, &s, "contenu livre").unwrap();
+            let tx = build_claim(&a, &s, merchant.clone(), 0, p, r).unwrap();
+            assert!(exec(&tx, &a, s.valeur).is_err(), "délai {timeout}, frais max {max_fee}");
+        }
     }
 
     #[test]
@@ -178,7 +202,7 @@ mod tests {
     #[test]
     fn masses_du_sequestre() {
         let (merchant, refund, verifier, a, s) = setup();
-        let (p, r) = proof(&verifier, &s.requete, "contenu livre");
+        let (p, r) = proof(&verifier, &s, "contenu livre").unwrap();
         let utxo = UtxoEntry::new(s.valeur, pay_to_script_hash_script(&bytecode(&a)), 0, false, None);
         for tx in [build_claim(&a, &s, merchant, crate::FEE, p, r).unwrap(), build_refund(&a, &s, refund, crate::FEE).unwrap()] {
             let m = crate::masse::masses(&tx, std::slice::from_ref(&utxo)).unwrap();

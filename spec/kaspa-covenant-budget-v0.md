@@ -35,14 +35,16 @@ account-based agent wallets cannot offer.
     "profile": "covenant-budget",
     "paymentFlow": "upfront",
     "finality": "accepted",
-    "vaultTemplate": "agent-budget-v0.4"
+    "vaultTemplate": "agent-budget-v0.5.1"
   }
 }
 ```
 
 `vaultTemplate` names the covenant source the merchant recompiles against
-(`contracts/agent_budget.sil`, version 0.4). A merchant MAY list several templates by
-offering several `accepts` entries.
+(`contracts/agent_budget.sil`, version 0.5.1). A merchant MAY list several templates by
+offering several `accepts` entries. Merchants MUST NOT offer or accept `agent-budget-v0.4`
+or `agent-budget-v0.5`: v0.4 lets an idle agent bank refill time (up to 3 × capacity in one
+period, threat model R34) and v0.5 accepts hostile parameters (R33).
 
 ## 3. Transport
 
@@ -98,8 +100,10 @@ The merchant MUST, in this order, and MUST NOT broadcast before steps 1–4 succ
 1. **Terms.** `accepted` equals the offered requirements.
 2. **Authentic vault.** Recompile the `vaultTemplate` source with `vault.params`;
    derive the P2SH script public key; the outpoint MUST exist on chain under that
-   script. Any lie about the parameters (larger budget, other agent key) yields a
-   different script and fails here.
+   script **and carry a KIP-20 covenant id** (the vault lineage). Any lie about the
+   parameters (larger budget, other agent key) yields a different script and fails here;
+   funds sent to the vault address without a lineage are not a vault and MUST be refused
+   (the covenant refuses them too; the owner recovers them with `ownerControl`).
 3. **Solvency.** With `now` = current virtual DAA score minus a small margin:
    `amount ≤ max_per_payment` and `amount ≤ min(capacity, tokens + min(now − last_daa,
    refill_period) × capacity / refill_period)`.
@@ -128,13 +132,37 @@ As in `kaspa-exact-v2`, with
   parallel requests.
 - The AgentBudget covenant is a prototype and has not been audited.
 
+### 8b. Operational notes
+
+Found in the external review of 23 Nov 2026 (threat model R41–R46). None lets anyone take funds
+beyond the loss bound; each one makes a correct integration fail or cost more than expected.
+
+- **Retries.** A client that times out MUST resend the *same* signed transaction, never sign a
+  new one from the same lane: the second would conflict with the first (one UTXO, one spend) and
+  the client could not tell which one paid. Merchants SHOULD treat a repeated `txid` as the same
+  payment (idempotent settlement).
+- **DAA margin.** The client MUST announce a `nowDaa` slightly below the current virtual DAA
+  score (the tool uses 100 DAA, about 10 s): a value at the tip can be rejected by a node that is slightly
+  behind, and the refill credited is only a few sompi smaller.
+- **Allowlist and escrow.** A vault with a payee allowlist can pay an escrow only if the escrow
+  script is in the list. Escrow scripts change with every order, so in practice an allowlisted
+  vault cannot use 9c; choose one or the other per lane.
+- **Refund destination.** Escrow refunds go to the owner's address (`refundSpkHash`), not back to
+  the vault: they leave the budget for good. An owner who wants the money back in the budget
+  refills the vault with `ownerControl`. Funds sent by mistake to the vault address are also
+  recoverable that way (no lineage, so the agent cannot spend them).
+- **Fees.** Whoever builds a valid spend (the agent for `pay`, anyone for `claim` and `refund`)
+  chooses the fee, up to the contract's `maxFee`. Budget `maxFee` per payment as a possible loss.
+- **Small lanes.** A lane worth less than about 0.125 KAS can no longer pay (KIP-9 storage mass,
+  9b); the owner sweeps it.
+
 ## 9. Assets
 
 `vault.params.asset` names the budget asset and MUST equal `accepted.asset`.
 
 | Asset | Status |
 |---|---|
-| `KAS` | Supported (template `agent-budget-v0.4`). |
+| `KAS` | Supported (template `agent-budget-v0.5.1`). |
 | `KSD` | Reserved for Kaspa Dollar, the proposed KAS-collateralised stablecoin with a miner-voted price feed. A KSD vault template will compose with the KSD token covenant once its standard is published: same token covenant id in and out, budget counted in token units, a separate KAS UTXO for fees. |
 
 Intermediate step under study: a KAS-settled vault whose budget is denominated in dollars,
@@ -164,9 +192,13 @@ signing and refuse non-standard transactions. A lane below the floor is recovere
 
 ## 9c. Delivery escrow (pay-on-delivery extension)
 
-A payment MAY target a `DeliveryEscrow` script instead of the merchant address: the merchant
-claims with a verifier signature over `requestHash || resultHash`; the agent's refund address
-recovers the funds after `timeoutDaa`.
+A payment MAY target a `DeliveryEscrow` v0.3 script instead of the merchant address: the merchant
+claims with a verifier signature over
+`blake2b(requestHash || resultHash || escrowTxid || escrowIndex)` (index on 4 bytes,
+little-endian), so a proof pays exactly one escrow output and cannot be replayed on a second escrow
+for the same order (R40, fixed in v0.3); the owner's refund address recovers the funds after
+`timeoutDaa`. The verifier therefore signs after the escrow is funded. Escrows with
+`timeoutDaa ≤ 0` or `maxFee < 0` can never pay the merchant (refused by the script).
 
 - Merchants MUST refuse escrows whose `timeoutDaa` is below their minimum (recommended:
   ≥ 36 000 DAA, about one hour at 10 BPS) and MUST claim as soon as the proof is available.

@@ -7,7 +7,7 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
 ## Done
 
 - AgentBudget v0.5.1 (covenant budget: refilling allowance, per-payment cap, fees inside the budget,
-  owner kill switch) and DeliveryEscrow v0.2, with the loss bound proven and tested against the real
+  owner kill switch) and DeliveryEscrow v0.3, with the loss bound proven and tested against the real
   Kaspa script engine ([proof](spec/borne-de-perte.md)).
 - One-command demo on testnet-10 ([DEMO.md](DEMO.md)): 7 of 7 steps verified on the network, including an
   over-budget payment rejected by the network itself ([report](spec/demo-testnet-2026-11-22.md)).

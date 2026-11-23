@@ -1,6 +1,11 @@
 pragma silverscript ^0.1.0;
 
-// DeliveryEscrow v0.2 — paiement à la livraison pour agent IA.
+// DeliveryEscrow v0.3 — paiement à la livraison pour agent IA.
+//
+// v0.3 (relecture externe du 23 nov. 2026) : la preuve de livraison vise CE séquestre (sa sortie :
+// transaction + index), plus seulement la commande : une preuve ne peut plus encaisser un second
+// séquestre portant le même numéro de commande (R40). Paramètres bornés : un séquestre mal construit
+// (délai ou frais négatifs) ne peut pas payer le vendeur (R42).
 //
 // v0.2 : une seule entrée imposée. Sans cette règle, deux séquestres pouvaient être fusionnés
 // dans une même transaction dont l'unique sortie ne vaut qu'un séquestre : l'autre partait en
@@ -21,11 +26,13 @@ contract DeliveryEscrow(
     int timeoutDaa,           // délai (en unités DAA) avant remboursement possible
     int maxFee                // frais maximum prélevés sur le séquestre
 ) {
-    // Livraison prouvée : le vérificateur a signé blake2b(requestHash || resultHash).
+    // Livraison prouvée : le vérificateur a signé
+    // blake2b(requestHash || resultHash || txid du séquestre || index du séquestre sur 4 octets).
     entry claim(datasig proof, byte[32] resultHash) {
-        byte[] message = byte[](requestHash) + byte[](resultHash);
-        require(checkMsgSig(proof, blake2b(message), verifierKey));
         require(tx.inputs.length == 1);
+        require(maxFee >= 0 && timeoutDaa > 0);
+        byte[] message = byte[](requestHash) + byte[](resultHash) + byte[](tx.inputs[0].outpointTxId) + byte[](tx.inputs[0].outpointIndex as byte[4]);
+        require(checkMsgSig(proof, blake2b(message), verifierKey));
         require(tx.outputs.length == 1);
         require(blake2b(tx.outputs[0].scriptPubKey) == merchantSpkHash);
         require(tx.outputs[0].value >= tx.inputs[this.activeInputIndex].value - maxFee);

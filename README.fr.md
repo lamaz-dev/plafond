@@ -63,10 +63,10 @@ testnet/     commandes à exécuter (commande.txt), journal des résultats, éta
 
 Modèle de menace : `spec/threat-model.md`. Prime aux bugs : `BUG-BOUNTY.md`.
 
-## Le séquestre DeliveryEscrow (v0.2, prototype)
+## Le séquestre DeliveryEscrow (v0.3, prototype)
 
 Paiement à la livraison : le vendeur n'est payé que contre une preuve de livraison signée par
-un vérificateur pour cette commande précise ; sans preuve dans le délai, l'argent revient au
+un vérificateur pour cette commande et ce séquestre précis ; sans preuve dans le délai, l'argent revient au
 propriétaire. Ni l'un ni l'autre ne peut détourner les fonds ni gonfler les frais.
 
 ## Profil x402 « covenant-budget »
@@ -93,6 +93,26 @@ résultat dans `testnet/journal.md`. Les clés de test sont dérivées du secret
   ou des fichiers `.env` ignorés.
 - Clés dédiées à la démo, jamais réutilisées ailleurs.
 - SilverScript n'a pas encore de version auditée : ne pas utiliser avec de vrais fonds.
+
+## Travaux voisins
+
+Plusieurs projets Kaspa travaillent sur le même problème : laisser un logiciel payer seul sans lui
+confier toutes les clés. Plafond a commencé le 18 nov. 2026, après la plupart d'entre eux ; il
+s'appuie sur leurs idées et ne prétend pas être le premier.
+
+- **PolicyVault** (kenshido) : coffre à règles pour agents, sur le réseau principal depuis août 2026.
+- **SompiVault** (elldeeone) : coffre à covenant ; Plafond reprend son principe de recharge comptée
+  depuis le score DAA d'inscription du coffre (`OpTxInputDaaScore`, menace R34).
+- **Kaspa x402** (elldeeone) : le profil de paiement x402 pour Kaspa. Le profil de Plafond l'étend
+  et réutilise ses vecteurs de test sous licence MIT (voir [PROVENANCE.md](cli/vecteurs/kaspa-x402/PROVENANCE.md)).
+- **k402 / kx402** (Kali123411) : paiements de style x402 sur Kaspa.
+- **Warda** : contrôle des dépenses d'agents.
+
+Ce que Plafond apporte : une borne de perte démontrée ([spec/borne-de-perte.md](spec/borne-de-perte.md))
+et vérifiée contre le vrai moteur de script, un budget imposé par le covenant lui-même (agent
+compromis et vendeur malhonnête réunis ne peuvent pas le dépasser), un plancher de survie calculé sur la masse KIP-9 (en dessous, le propriétaire balaie le couloir),
+et toutes les sources, tests et empreintes publics. Corrections et comparaisons
+bienvenues dans une issue.
 
 ## Licence
 

@@ -559,7 +559,8 @@ proptest! {
         let to: ScriptPublicKey = if to_expected { expected_to } else { other };
         let mut tx = if claim {
             let signer = if good_signer { verifier } else { k(2) };
-            let (p, r) = sequestre::proof(&signer, if same_request { requete } else { "GET:/meteo/commande-2" }, &result);
+            let signe = sequestre::Sequestre { requete: if same_request { requete } else { "GET:/meteo/commande-2" }.into(), ..s.clone() };
+            let (p, r) = sequestre::proof(&signer, &signe, &result).unwrap();
             sequestre::build_claim(&a, &s, to, fee as u64, p, r).unwrap()
         } else {
             sequestre::build_refund(&a, &s, to, fee as u64).unwrap()
@@ -581,25 +582,24 @@ proptest! {
     }
 }
 
-/// LIMITE CONNUE (R40, relecture externe du 22 nov. 2026) : la preuve de livraison n'est liée qu'à
-/// la commande (requestHash), pas à un séquestre précis. Deux séquestres portant le même numéro de
-/// commande sont tous deux payables au vendeur avec une seule preuve. Ce test DOIT échouer le jour
-/// où le contrat lie la preuve au séquestre (v0.3) : il faudra alors l'inverser.
+/// R40 CORRIGÉ en v0.3 (relecture externe du 22 nov. 2026) : la preuve vise un séquestre précis
+/// (transaction + index). Une preuve valide pour un séquestre ne paie pas un second séquestre de la
+/// même commande, ni la même transaction à un autre index ; elle reste valide pour le sien.
 #[test]
-fn limite_connue_preuve_rejouable_sur_un_second_sequestre() {
+fn preuve_liee_a_son_sequestre() {
     let merchant = pay_to_address_script(&address(&k(3)));
     let refund = pay_to_address_script(&address(&k(1)));
     let verifier = k(7);
     let requete = "GET:/meteo/commande-1";
-    let (preuve, resultat) = sequestre::proof(&verifier, requete, "livré");
-    // Deux séquestres distincts pour la même commande : l'un au délai par défaut, l'autre au double.
+    let premier = sequestre::Sequestre { txid: "ab".repeat(32), index: 0, valeur: ESCROW_VALUE, requete: requete.into(), timeout: sequestre::DEFAULT_TIMEOUT };
+    let (preuve, resultat) = sequestre::proof(&verifier, &premier, "livré").unwrap();
     for timeout in [sequestre::DEFAULT_TIMEOUT, 2 * sequestre::DEFAULT_TIMEOUT] {
         let a = sequestre::artifact(&merchant, &refund, &verifier, requete, timeout).unwrap();
-        for (n, octet) in [(1, "ab"), (2, "cd")] {
-            let s = sequestre::Sequestre { txid: octet.repeat(32), index: 0, valeur: ESCROW_VALUE, requete: requete.into(), timeout };
+        for (txid, index, attendu) in [("ab", 0u32, true), ("cd", 0, false), ("ab", 1, false)] {
+            let s = sequestre::Sequestre { txid: txid.repeat(32), index, timeout, ..premier.clone() };
             let tx = sequestre::build_claim(&a, &s, merchant.clone(), 0, preuve.clone(), resultat).unwrap();
             let utxo = UtxoEntry::new(ESCROW_VALUE, pay_to_script_hash_script(&bytecode(&a)), 0, false, None);
-            assert!(exec(&tx, vec![utxo]), "séquestre {n} (délai {timeout}) : la même preuve est acceptée aujourd'hui");
+            assert_eq!(exec(&tx, vec![utxo]), attendu, "séquestre {txid}:{index} (délai {timeout})");
         }
     }
 }

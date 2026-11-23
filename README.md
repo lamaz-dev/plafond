@@ -40,8 +40,8 @@ The repository contains two contracts and a demo tool:
 - [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5.1): a token-bucket budget
   refilled from the DAA score at which the network recorded the vault, a per-payment cap, fees counted inside the budget, an optional payee allowlist,
   one KIP-20 lineage per vault, single-input spends with an empty payload, and an owner override.
-- [`contracts/delivery_escrow.sil`](contracts/delivery_escrow.sil) (DeliveryEscrow v0.2): pay on delivery.
-  The vendor claims with a verifier's Schnorr signature over `blake2b(requestHash ‖ resultHash)`; without
+- [`contracts/delivery_escrow.sil`](contracts/delivery_escrow.sil) (DeliveryEscrow v0.3): pay on delivery.
+  The vendor claims with a verifier's Schnorr signature over `blake2b(requestHash ‖ resultHash ‖ escrow outpoint)`, so one proof pays one escrow; without
   it, anyone can refund the owner after a relative timeout.
 - [`cli/`](cli/): deploy, pay, escrow and a demo x402 vendor on testnet-10.
 
@@ -104,6 +104,25 @@ The CLI prints its messages in French.
 - [spec/invariants.md](spec/invariants.md): invariants and the property-based tests.
 - [spec/pre-audit.md](spec/pre-audit.md): scope, transaction layouts, consensus assumptions, open questions.
 - [BUG-BOUNTY.md](BUG-BOUNTY.md): rules for the planned bounty.
+
+## Related work
+
+Several Kaspa projects work on the same problem: letting software pay on its own without holding
+the keys to everything. Plafond started on 18 Nov 2026, after most of them; it builds on their
+ideas and does not claim to be first.
+
+- **PolicyVault** (kenshido): policy-controlled vault for agents, on mainnet since Aug 2026.
+- **SompiVault** (elldeeone): covenant vault; Plafond reuses its pattern of counting refill time
+  from the DAA score at which the network recorded the vault (`OpTxInputDaaScore`, threat model R34).
+- **Kaspa x402** (elldeeone): the x402 payment binding for Kaspa. Plafond's profile extends it and its
+  test vectors are reused under MIT (see [PROVENANCE.md](cli/vecteurs/kaspa-x402/PROVENANCE.md)).
+- **k402 / kx402** (Kali123411): x402-style payments on Kaspa.
+- **Warda**: spending controls for agents.
+
+What Plafond adds: a loss bound proven in [spec/borne-de-perte.md](spec/borne-de-perte.md) and checked
+against the real script engine, the budget enforced by the covenant itself (a compromised agent
+and a dishonest merchant together cannot exceed it), a survival floor computed from KIP-9 mass (below it, the owner sweeps the lane), and every
+source, test and fingerprint public. Corrections and comparisons are welcome in an issue.
 
 ## License
 

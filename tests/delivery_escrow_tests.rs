@@ -56,16 +56,26 @@ fn compile(c: &Ctx) -> SilAbiArtifact {
     compile_contract(SOURCE, &args, CompileOptions::default()).expect("compile")
 }
 
-/// Preuve de livraison : signature du vérificateur sur blake2b(requestHash || resultHash).
+/// Sortie du séquestre dépensée par `spend` (v0.3 : la preuve la désigne).
+const ESCROW_TXID: [u8; 32] = [9; 32];
+
+/// Preuve de livraison (v0.3) : signature du vérificateur sur
+/// blake2b(requestHash || resultHash || txid du séquestre || index sur 4 octets petit-boutiste).
 fn proof(signer: &Keypair, request: &[u8], result: &[u8]) -> Vec<u8> {
+    proof_pour(signer, request, result, ESCROW_TXID, 0)
+}
+
+fn proof_pour(signer: &Keypair, request: &[u8], result: &[u8], txid: [u8; 32], index: u32) -> Vec<u8> {
     let mut m = request.to_vec();
     m.extend_from_slice(result);
+    m.extend_from_slice(&txid);
+    m.extend_from_slice(&index.to_le_bytes());
     let digest: [u8; 32] = h(&m).try_into().unwrap();
     signer.sign_schnorr(Message::from_digest(digest)).as_ref().to_vec()
 }
 
 fn spend(escrow: &SilAbiArtifact, to: ScriptPublicKey, value: u64, sequence: u64, entry: &str, args: Vec<ArtifactValue>) -> Result<(), TxScriptError> {
-    let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([9; 32]), 0), vec![], sequence, 1000);
+    let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes(ESCROW_TXID), 0), vec![], sequence, 1000);
     let out = TransactionOutput { value, script_public_key: to, covenant: None };
     let mut tx = Transaction::new(1, vec![input], vec![out], 0, Default::default(), 0, vec![]);
     let utxo = UtxoEntry::new(VALUE, pay_to_script_hash_script(&bytecode(escrow)), 0, false, None);
@@ -205,4 +215,16 @@ fn fusion_de_deux_sequestres_refusee() {
     ];
     assert!(execute_input_with_covenants(tx.clone(), utxos.clone(), 0).is_err());
     assert!(execute_input_with_covenants(tx, utxos, 1).is_err());
+}
+
+/// v0.3 (R40) : une preuve valide pour un autre séquestre de la même commande ne paie pas celui-ci.
+#[test]
+fn preuve_d_un_autre_sequestre_refusee() {
+    let c = ctx();
+    let e = compile(&c);
+    let result = h(b"meteo: 24 degres");
+    for (txid, index) in [([8u8; 32], 0u32), (ESCROW_TXID, 1)] {
+        let p = proof_pour(&c.verifier, &c.request, &result, txid, index);
+        assert!(claim(&c, &e, c.merchant.clone(), VALUE - FEE, p, result.clone()).is_err(), "preuve rejouée acceptée");
+    }
 }

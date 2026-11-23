@@ -1,4 +1,4 @@
-# Invariants du coffre AgentBudget v0.4 et du séquestre DeliveryEscrow v0.2
+# Invariants du coffre AgentBudget v0.5.1 et du séquestre DeliveryEscrow v0.3
 
 *Matrice destinée au pré-audit. Chaque invariant doit rester vrai après **n'importe quelle** transaction acceptée par le consensus Kaspa, y compris forgée par un agent totalement compromis. Colonne « Vérifié par » : tests unitaires ciblés ; les invariants I1 à I9 et I13, E1 à E4 sont en plus vérifiés par fuzzing d'état (section en fin de document). Preuve SMT : juste avant l'audit externe.*
 
@@ -31,7 +31,7 @@ Notations : `V` valeur de l'UTXO coffre dépensé, `V'` valeur de sa continuatio
 
 | # | Invariant | Formulation | Vérifié par |
 |---|---|---|---|
-| E1 | Le vendeur n'est payé que contre preuve | `claim` exige une signature du vérificateur sur `blake2b(requestHash ‖ resultHash)` | `vendeur_paye_contre_preuve_de_livraison`, `preuve_signee_par_un_autre_refusee`, `preuve_d_une_autre_commande_refusee` |
+| E1 | Le vendeur n'est payé que contre preuve | `claim` exige une signature du vérificateur sur `blake2b(requestHash ‖ resultHash ‖ txid ‖ index)` du séquestre dépensé (v0.3) : une preuve paie un seul séquestre | `vendeur_paye_contre_preuve_de_livraison`, `preuve_signee_par_un_autre_refusee`, `preuve_d_une_autre_commande_refusee`, `preuve_d_un_autre_sequestre_refusee` |
 | E2 | Destination figée | `claim` → adresse du vendeur, `refund` → adresse de remboursement, une seule sortie | `preuve_valide_mais_argent_detourne_refuse`, `remboursement_vers_un_autre_refuse` |
 | E3 | Remboursement garanti | après `timeoutDaa` blocs, `refund` est toujours possible sans aucune signature | `remboursement_apres_delai`, `remboursement_avant_delai_refuse` |
 | E4 | Frais bornés | sortie ≥ valeur du séquestre − `maxFee` | `frais_excessifs_refuses` |
@@ -70,6 +70,6 @@ Chaque transaction est exécutée par le vrai moteur de script de Kaspa (`TxScri
 |---|---|---|
 | `coffre_moteur_egal_modele` | 256 séquences de 1 à 19 actions | 2 000 séquences, environ 16 000 transactions, aucune divergence |
 | `seul_le_proprietaire_ouvre_owner_control` | 256 | 2 000 |
-| `sequestre_moteur_egal_modele` (dont fusion de séquestres) | 128 | 2 000 sur la v0.2, aucune divergence |
+| `sequestre_moteur_egal_modele` (dont fusion de séquestres) | 128 | 2 000 sur la v0.3 (23 nov. 2026), aucune divergence |
 
 Campagne longue : `FUZZ_CASES=5000 cargo test --release fuzz` dans `cli/`.

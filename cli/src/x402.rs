@@ -74,7 +74,7 @@ fn requirement(offer: &Offer, pay_to: &Address) -> Value {
             "profile": PROFILE,
             "paymentFlow": "upfront",
             "finality": "accepted",
-            "vaultTemplate": "agent-budget-v0.5"
+            "vaultTemplate": "agent-budget-v0.5.1"
         }
     })
 }
