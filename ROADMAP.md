@@ -20,7 +20,7 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
 1. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
 2. **Faster console refresh** (it currently re-reads the chain for each older agent).
 3. **Human security audit** of the contracts before any mainnet use.
-4. **Mainnet readiness** for when covenants activate on Kaspa mainnet.
+4. **Mainnet deployment** after the audit. Covenants are already live on Kaspa mainnet (Toccata, June 30, 2026); the gate is our own audit, not the network.
 5. **Covenant payer profile for Kaspa x402**: the vault pays the vendor directly (proposal to be discussed with
    the Kaspa x402 maintainers).
 
