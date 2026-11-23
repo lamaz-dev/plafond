@@ -134,7 +134,7 @@ pub async fn batterie(owner_pk: &[u8], agent: &Keypair, attaquant: &Keypair, quo
             ok &= rapport("réclamation du temps mis de côté", true, &diffuser(&c, &tx).await);
         }
     }
-    c.disconnect().await?;
+    liberer(&c).await?;
     Ok(ok)
 }
 

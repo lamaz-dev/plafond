@@ -53,7 +53,7 @@ async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
     let e = load_state()?;
     let c = connect().await?;
     let (now, creation) = instants(&c, owner_pk, agent, &e).await?;
-    c.disconnect().await?;
+    liberer(&c).await?;
     let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
     Ok(json!({
         "coffre": { "txid": e.txid, "index": e.index, "valeur_sompi": e.valeur },
@@ -86,7 +86,7 @@ async fn agent_compromis(owner_pk: &[u8], agent: &Keypair, service: &Address, mo
             "disponible_sompi": p.available(now, creation),
         }),
     };
-    c.disconnect().await?;
+    liberer(&c).await?;
     Ok(r)
 }
 

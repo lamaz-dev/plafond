@@ -140,7 +140,7 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let (issue, _, historique): (retrouver::Issue, usize, Vec<Mouvement>) = match crate::retrouver_lignee(&c, &pk, agent, &orig).await {
         Ok(r) => r,
         Err(e) => {
-            c.disconnect().await?;
+            liberer(&c).await?;
             return Err(e);
         }
     };
@@ -164,7 +164,7 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let solde_proprio: u64 = c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
     let etat = match issue {
         retrouver::Issue::Ferme { txid } => {
-            c.disconnect().await?;
+            liberer(&c).await?;
             let mut r = json!({ "sante": "gele", "gel": txid, "regles": regles, "historique": historique, "cours": cours_json,
                 "solde_proprietaire_sompi": solde_proprio, "adresse_proprietaire": adresse });
             fusion(&mut r, &commun);
@@ -178,7 +178,7 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     };
     let creation = creation_coffre(&c, &pk, agent, &etat).await?;
     let now = (virtual_daa(&c).await? - DAA_MARGIN) as i64;
-    c.disconnect().await?;
+    liberer(&c).await?;
     let p = VaultParams::pour(&pk, agent, etat.tokens, etat.last_daa);
     let disponible = p.available(now, creation);
     let depense_periode: i64 = historique
@@ -637,7 +637,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         solde = handle.block_on(async {
                             let c = connect_silencieux().await?;
                             let s: u64 = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
-                            c.disconnect().await?;
+                            liberer(&c).await?;
                             Ok::<u64, Box<dyn std::error::Error>>(s)
                         }).ok();
                     }
@@ -811,7 +811,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 ("GET", "/api/solde") => match handle.block_on(async {
                     let c = connect_silencieux().await?;
                     let s: u64 = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
-                    c.disconnect().await?;
+                    liberer(&c).await?;
                     Ok::<u64, Box<dyn std::error::Error>>(s)
                 }) {
                     Ok(s) => json_rep(200, json!({ "solde_proprietaire_sompi": s })),
@@ -823,7 +823,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         match avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(async {
                             let c = connect_silencieux().await?;
                             let e = retrouver_coffre(&c, &pk, &k).await;
-                            c.disconnect().await?;
+                            liberer(&c).await?;
                             e
                         })) {
                             Ok(e) => json_rep(200, json!({ "ok": true, "lignee": e.cov_id, "sortie": format!("{}:{}", e.txid, e.index), "contrat": "AgentBudget v0.5.1" })),

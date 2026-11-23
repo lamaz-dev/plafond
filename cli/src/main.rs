@@ -594,10 +594,42 @@ async fn client_testnet_essai() -> Res<KaspaRpcClient> {
     Ok(client)
 }
 
+/// Connexion partagée : la console garde UNE connexion ouverte pour toute la session au lieu d'en
+/// ouvrir une par action (chaque ouverture coûtait jusqu'à 20 s quand un nœud public tardait).
+/// Désactivée par défaut : les commandes ponctuelles ouvrent et ferment leur propre connexion.
+pub static CONNEXION_PARTAGEE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PARTAGE: tokio::sync::Mutex<Option<KaspaRpcClient>> = tokio::sync::Mutex::const_new(None);
+
+fn partage_actif() -> bool {
+    CONNEXION_PARTAGEE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub async fn connect() -> Res<KaspaRpcClient> {
+    if !partage_actif() {
+        let client = client_testnet().await?;
+        println!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
+        return Ok(client);
+    }
+    let mut p = PARTAGE.lock().await;
+    if let Some(c) = p.as_ref() {
+        if c.is_connected() {
+            return Ok(c.clone());
+        }
+        let _ = c.disconnect().await;
+    }
     let client = client_testnet().await?;
     println!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
+    *p = Some(client.clone());
     Ok(client)
+}
+
+/// Fin d'usage d'une connexion : fermée, sauf si elle est partagée (elle reste ouverte pour la suite).
+pub async fn liberer(c: &KaspaRpcClient) -> Res<()> {
+    if partage_actif() {
+        return Ok(());
+    }
+    c.disconnect().await?;
+    Ok(())
 }
 
 /// Connexion sans message sur la sortie standard (les commandes du relais y écrivent du JSON).
@@ -727,7 +759,7 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         let e0 = Etat { txid: txid.to_string(), index: 0, valeur: fund, tokens: capacite, last_daa: now, cov_id: cov.to_string() };
         save_state(&e0)?;
         fs::write(origine_path(), serde_json::to_string_pretty(&e0)?)?; // à garder par le propriétaire
-        c.disconnect().await?;
+        liberer(&c).await?;
         Ok(txid.to_string())
 }
 
@@ -754,7 +786,7 @@ pub(crate) async fn payer_agent(owner_pk: &[u8], agent: &Keypair, montant: i64, 
         build_pay_pk(owner_pk, agent, &e, montant, pay_to_address_script(destinataire), now, creation)?
     };
     let r = c.submit_transaction(garde_diffusion(&tx)?, false).await;
-    c.disconnect().await?;
+    liberer(&c).await?;
     match r {
         Ok(txid) => {
             save_state(&suivant)?;
@@ -821,7 +853,7 @@ pub async fn recharger(owner: &Keypair, agent: &Keypair, add: u64) -> Res<String
         let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?;
         println!("Coffre rechargé de {} TKAS (même lignée) : {}", add as f64 / 1e8, explorer(&txid.to_string()));
         save_state(&Etat { txid: txid.to_string(), index: 0, valeur: new_value, ..e })?;
-        c.disconnect().await?;
+        liberer(&c).await?;
         Ok(txid.to_string())
 }
 
@@ -902,7 +934,7 @@ pub async fn geler(owner: &Keypair, agent: &Keypair, sans_etat: bool, version: u
             return Err("gel non confirmé après 6 tentatives : relancer recuperer".into());
         }
         let _ = fs::remove_file(state_path());
-        c.disconnect().await?;
+        liberer(&c).await?;
         Ok(id_gel)
 }
 
@@ -1037,6 +1069,7 @@ async fn main() -> Res<()> {
     if cmd == "plafond" {
         // Usage normal : la console s'ouvre verrouillée ; le compte se crée ou s'ouvre dans la page.
         let dossier = env::var("PLAFOND_DOSSIER").unwrap_or_else(|_| "compte".into());
+        CONNEXION_PARTAGEE.store(true, std::sync::atomic::Ordering::Relaxed);
         if env::var("PLAFOND_SANS_NAVIGATEUR").is_err() {
             console::OUVRIR_NAVIGATEUR.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -1118,7 +1151,7 @@ async fn main() -> Res<()> {
                 })
                 .collect();
             print!("{}", serde_json::Value::Array(liste));
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "relais-test-diffusion" => {
             // Diagnostic : même forme qu'un paiement exact (v0, P2PK), mais vers le propriétaire, diffusée
@@ -1135,7 +1168,7 @@ async fn main() -> Res<()> {
                 Ok(txid) => println!("Transaction v0 acceptée : {}", explorer(&txid.to_string())),
                 Err(err) => println!("Transaction v0 REFUSÉE par le nœud : {err}"),
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "recharger-porte-monnaie" => {
             // Le coffre paie le porte-monnaie du relais, avec les règles du covenant (entrée `pay`).
@@ -1161,7 +1194,7 @@ async fn main() -> Res<()> {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
             print!("{}", serde_json::json!({ "transactionId": txid.to_string(), "amount": amount.to_string() }));
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "etat" => {
             let c = connect().await?;
@@ -1187,7 +1220,7 @@ async fn main() -> Res<()> {
                 }
                 Err(_) => println!("Coffre : pas encore déployé"),
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "deployer" => {
             deployer(&owner, &agent).await?;
@@ -1214,7 +1247,7 @@ async fn main() -> Res<()> {
                     std::process::exit(2);
                 }
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "sequestre-ouvrir" => {
             let amount: i64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
@@ -1246,7 +1279,7 @@ async fn main() -> Res<()> {
                     std::process::exit(2);
                 }
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "sequestre-reclamer" => {
             let resultat = args.get(2).ok_or("résultat livré manquant")?.clone();
@@ -1270,7 +1303,7 @@ async fn main() -> Res<()> {
                 }
                 Err(err) => println!("Réclamation REFUSÉE par le réseau : {err}"),
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "sequestre-rembourser" => {
             let s: sequestre::Sequestre = serde_json::from_str(&fs::read_to_string(SEQUESTRE).map_err(|_| "aucun séquestre ouvert")?)?;
@@ -1287,7 +1320,7 @@ async fn main() -> Res<()> {
                 }
                 Err(err) => println!("Remboursement REFUSÉ par le réseau : {err}"),
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "attaque" => {
             // Testnet uniquement : l'agent compromis attaque son propre coffre ; le réseau doit rejeter.
@@ -1305,6 +1338,7 @@ async fn main() -> Res<()> {
         }
         "console" => {
             // Console du propriétaire, sur SON ordinateur (127.0.0.1) ; la clé est déjà déverrouillée.
+            CONNEXION_PARTAGEE.store(true, std::sync::atomic::Ordering::Relaxed);
             let h = tokio::runtime::Handle::current();
             let (o, a) = (owner, agent);
             tokio::task::spawn_blocking(move || console::lancer(h, o, a).map_err(|e| e.to_string())).await??;
@@ -1312,7 +1346,7 @@ async fn main() -> Res<()> {
         "retrouver" => {
             let c = connect().await?;
             retrouver_coffre(&c, &xonly(&owner), &agent).await?;
-            c.disconnect().await?;
+            liberer(&c).await?;
         }
         "recuperer" | "recuperer-v04" | "recuperer-v05" => {
             let version = match cmd { "recuperer-v04" => 4, "recuperer-v05" => 5, _ => 0 };

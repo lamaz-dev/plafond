@@ -29,12 +29,12 @@ async fn attendre_inscription(owner_pk: &[u8], agent: &Keypair, quoi: &str) -> R
     loop {
         if let Ok(e) = load_state() {
             if creation_coffre(&c, owner_pk, agent, &e).await.is_ok() {
-                c.disconnect().await?;
+                liberer(&c).await?;
                 return Ok(());
             }
         }
         if debut.elapsed() > Duration::from_secs(120) {
-            c.disconnect().await?;
+            liberer(&c).await?;
             return Err(format!("{quoi} : pas inscrit après 120 s").into());
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -162,7 +162,7 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
         attendre_fonds(&c, &owner, besoin).await?;
     }
     let service = address(&payee(&owner));
-    c.disconnect().await?;
+    liberer(&c).await?;
 
     // 1. Créer un agent
     let nom = format!("Démo DSI {}", double_auth::maintenant() % 100_000);
@@ -229,7 +229,7 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     // 7. Arrêt d'urgence depuis la console (état périmé côté console : le coffre est retrouvé sur le registre)
     let c = connect_silencieux().await?;
     let avant = solde(&c, &owner).await?;
-    c.disconnect().await?;
+    liberer(&c).await?;
     let k_console = agents::cle(&agents::charger(&defaut).into_iter().find(|x| x.id == a.id).ok_or("agent disparu du registre")?, &principal)?;
     let mut r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(geler(&owner, &k_console, false, 0)));
     if let Err(e) = &r {
@@ -248,7 +248,7 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 apres = solde(&c, &owner).await?;
             }
-            c.disconnect().await?;
+            liberer(&c).await?;
             note(7, "Arrêt d'urgence", apres > avant, format!("fonds rapatriés dans la trésorerie : +{} unités ({})", unites(apres as i64 - avant as i64), explorer(tx)))
         }
         Err(e) => note(7, "Arrêt d'urgence", false, e.to_string()),
