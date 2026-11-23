@@ -93,7 +93,7 @@ Commands are run by GitHub Actions from [`testnet/commande.txt`](testnet/command
   ([L104](testnet/journal.md#L104)) rejected by script verification;
 - a forged delivery proof rejected ([L292](testnet/journal.md#L292)), an early refund rejected by the
   sequence lock ([L312](testnet/journal.md#L312)) and accepted after the timeout;
-- a 0.01 TKAS payment rejected with a storage mass of 1,000,055 g ([L337](testnet/journal.md#L337)),
+- a 0.01 TKAS payment rejected with a storage mass of 1,000,055 grams, Kaspa's mass unit ([L337](testnet/journal.md#L337)),
   the value computed by `cli/src/masse.rs`. The smallest payment from a vault is about 0.02 KAS.
 
 The CLI prints its messages in French.
