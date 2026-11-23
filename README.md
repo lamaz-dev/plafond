@@ -1,6 +1,19 @@
-# kaspa-agent-vault
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/plafond-logo-transparent.png">
+  <img src="docs/assets/plafond-logo-transparent-clair.png" alt="Plafond" width="360">
+</picture>
+</p>
 
-Covenant-enforced spending budgets for AI agents on Kaspa L1, written in SilverScript.
+<h3 align="center">Give your agents a budget, not your whole treasury.</h3>
+
+<p align="center">Even if it's hacked, an agent can't exceed its limit: the Kaspa network enforces it.</p>
+
+<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Website</a> · <a href="DEMO.md">Run the demo</a> · <a href="ROADMAP.md">Roadmap</a> · <a href="SECURITY.md">Security</a></p>
+
+# Plafond
+
+Covenant-enforced spending budgets for AI agents on Kaspa L1, written in SilverScript. *Plafond* is French for "ceiling". The project was previously called `kaspa-agent-vault`.
 
 *English · [Français](README.fr.md)*
 

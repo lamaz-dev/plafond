@@ -1,4 +1,4 @@
-# Dossier de pré-audit — kaspa-agent-vault
+# Dossier de pré-audit — Plafond (anciennement kaspa-agent-vault)
 
 *Pour l'auditeur externe et les participants à la prime aux bugs. Tout ce qui est affirmé ici est vérifiable dans le dépôt, avec la commande ou le test indiqué.*
 

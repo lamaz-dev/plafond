@@ -1,4 +1,19 @@
-# kaspa-agent-vault
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/plafond-logo-transparent.png">
+  <img src="docs/assets/plafond-logo-transparent-clair.png" alt="Plafond" width="360">
+</picture>
+</p>
+
+<h3 align="center">Donnez un budget à vos agents, pas toute votre trésorerie.</h3>
+
+<p align="center">Même piraté, un agent ne peut pas dépasser sa limite : c'est le réseau Kaspa qui l'impose.</p>
+
+<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Site</a> · <a href="DEMO.fr.md">Lancer la démo</a> · <a href="ROADMAP.md">Feuille de route</a> · <a href="SECURITY.md">Sécurité</a></p>
+
+# Plafond
+
+Budgets de dépense pour agents IA, imposés par covenant sur Kaspa L1 (SilverScript). Le projet s'appelait auparavant `kaspa-agent-vault`.
 
 *[English](README.md) · Français*
 

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plafond: give your AI agents a budget, not your whole treasury</title>
+<meta name="description" content="Plafond gives each AI agent a spending budget enforced by the Kaspa network. Even if it is hacked, an agent cannot exceed its limit. Open source prototype on Kaspa testnet-10.">
+<link rel="icon" type="image/svg+xml" href="assets/plafond-icone.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta property="og:title" content="Plafond">
+<meta property="og:description" content="Give your agents a budget, not your whole treasury.">
+<meta property="og:image" content="assets/plafond-logo-fond-sombre.png">
+<style>
+@font-face{font-family:"Space Grotesk";src:url(assets/fonts/SpaceGrotesk.woff2) format("woff2");font-weight:300 700;font-display:swap}
+:root{--nuit:#06080B;--nuit2:#0C1116;--ligne:#1B242C;--craie:#F5F7F8;--doux:#9AA6B1;--menthe:#3DDBB4;--menthe-f:#0E7F67;--ambre:#F0B44C;--rouge:#FF7A66}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--nuit);color:var(--craie);font:17px/1.6 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--menthe);text-decoration:none}a:hover{text-decoration:underline}
+.enveloppe{max-width:1080px;margin:0 auto;padding:0 24px}
+h1,h2,h3,.marque{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.03em}
+header{position:sticky;top:0;z-index:5;background:rgba(6,8,11,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--ligne)}
+header .enveloppe{display:flex;align-items:center;justify-content:space-between;height:64px}
+.marque{display:flex;align-items:center;gap:10px;font-weight:600;font-size:22px;color:var(--craie)}
+.marque svg{width:28px;height:28px}
+.marque b{color:var(--menthe);font-weight:600}
+nav{display:flex;align-items:center;gap:22px;font-size:15px}
+nav a{color:var(--doux)}nav a:hover{color:var(--craie);text-decoration:none}
+.langue{background:none;border:1px solid var(--ligne);color:var(--craie);border-radius:999px;padding:5px 12px;font:inherit;font-size:14px;cursor:pointer}
+.langue:hover{border-color:var(--menthe)}
+.hero{padding:96px 0 56px;text-align:center;background:radial-gradient(60% 50% at 50% 0%,rgba(61,219,180,.14),transparent 70%)}
+.statut{display:inline-flex;gap:8px;align-items:center;font-size:14px;color:var(--ambre);border:1px solid rgba(240,180,76,.35);border-radius:999px;padding:5px 14px;margin-bottom:28px}
+h1{font-size:clamp(38px,6.2vw,72px);line-height:1.04;font-weight:600;margin:0 auto 22px;max-width:18ch}
+h1 em{font-style:normal;color:var(--menthe);display:block}
+.sous{font-size:20px;color:var(--doux);max-width:640px;margin:0 auto 36px}
+.boutons{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:12px;font-weight:600;font-size:16px;border:1px solid var(--ligne);color:var(--craie)}
+.btn:hover{text-decoration:none;border-color:var(--menthe)}
+.btn.plein{background:var(--menthe);color:#04221B;border-color:var(--menthe)}
+.btn.plein:hover{filter:brightness(1.08)}
+.video{margin:56px auto 0;max-width:960px;border-radius:18px;overflow:hidden;border:1px solid var(--ligne);box-shadow:0 30px 80px rgba(0,0,0,.55);background:#000}
+.video video{display:block;width:100%;height:auto}
+section{padding:88px 0;border-top:1px solid var(--ligne)}
+h2{font-size:clamp(28px,3.6vw,40px);font-weight:600;margin:0 0 14px;line-height:1.15}
+.intro{color:var(--doux);max-width:680px;margin:0 0 44px;font-size:18px}
+.grille{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.carte{background:var(--nuit2);border:1px solid var(--ligne);border-radius:16px;padding:26px}
+.carte h3{font-size:21px;margin:14px 0 8px;font-weight:600}
+.carte p{margin:0;color:var(--doux);font-size:16px}
+.pastille{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;background:rgba(61,219,180,.12);color:var(--menthe);font-weight:700;font-family:"Space Grotesk",sans-serif}
+.etapes{counter-reset:e;display:grid;gap:14px;max-width:760px}
+.etape{display:flex;gap:16px;align-items:flex-start;background:var(--nuit2);border:1px solid var(--ligne);border-radius:14px;padding:18px 20px}
+.etape::before{counter-increment:e;content:counter(e);flex:none;width:30px;height:30px;border-radius:50%;background:var(--menthe);color:#04221B;display:grid;place-items:center;font-weight:700;font-size:15px;font-family:"Space Grotesk",sans-serif}
+.etape b{display:block}.etape span{color:var(--doux);font-size:15.5px}
+.couvre{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.couvre .carte h3{margin-top:0}
+.oui h3{color:var(--menthe)}.non h3{color:var(--ambre)}
+pre{background:#0A0E12;border:1px solid var(--ligne);border-radius:14px;padding:20px 22px;overflow:auto;font:15px/1.7 ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;color:#CFE9E1;max-width:760px}
+pre .c{color:#5E6B76}
+.note{color:var(--doux);font-size:15px;max-width:760px}
+.preuves{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:8px}
+.chiffre{background:var(--nuit2);border:1px solid var(--ligne);border-radius:14px;padding:20px}
+.chiffre b{display:block;font-family:"Space Grotesk",sans-serif;font-size:32px;font-weight:600;color:var(--menthe);letter-spacing:-.02em}
+.chiffre span{color:var(--doux);font-size:15px}
+footer{border-top:1px solid var(--ligne);padding:40px 0 56px;color:var(--doux);font-size:14.5px}
+footer .enveloppe{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+[data-l]{display:none}
+html[lang=en] [data-l=en],html[lang=fr] [data-l=fr]{display:revert}
+@media (max-width:820px){.grille,.couvre{grid-template-columns:1fr}.preuves{grid-template-columns:1fr 1fr}nav a{display:none}.hero{padding-top:64px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="enveloppe">
+    <a class="marque" href="#" aria-label="Plafond">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="9" width="48" height="6" rx="3" fill="#3DDBB4"/><rect x="11" y="40" width="11" height="16" rx="2.5" fill="#3DDBB4" opacity=".45"/><rect x="26.5" y="30" width="11" height="26" rx="2.5" fill="#3DDBB4" opacity=".72"/><rect x="42" y="20" width="11" height="36" rx="2.5" fill="#3DDBB4"/></svg>
+      <span>plafond<b>.ai</b></span>
+    </a>
+    <nav>
+      <a href="#comment"><span data-l="en">How it works</span><span data-l="fr">Fonctionnement</span></a>
+      <a href="#essayer"><span data-l="en">Try it</span><span data-l="fr">Essayer</span></a>
+      <a href="https://github.com/lamaz-dev/plafond">GitHub</a>
+      <button class="langue" id="langue" type="button">FR</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="enveloppe">
+      <div class="statut">● <span data-l="en">Open-source prototype · Kaspa testnet-10 · not audited yet</span><span data-l="fr">Prototype open source · testnet-10 de Kaspa · pas encore audité</span></div>
+      <h1><span data-l="en">Give your agents a budget, <em>not your whole treasury.</em></span><span data-l="fr">Donnez un budget à vos agents, <em>pas toute votre trésorerie.</em></span></h1>
+      <p class="sous"><span data-l="en">Each AI agent gets its own vault with a spending limit. The limit is enforced by the Kaspa network, not by our servers: even if the agent is hacked, it can't exceed it.</span><span data-l="fr">Chaque agent IA reçoit son propre coffre, avec une limite de dépense. C'est le réseau Kaspa qui l'impose, pas nos serveurs : même piraté, l'agent ne peut pas la dépasser.</span></p>
+      <div class="boutons">
+        <a class="btn plein" href="#essayer"><span data-l="en">Run the demo</span><span data-l="fr">Lancer la démo</span></a>
+        <a class="btn" href="https://github.com/lamaz-dev/plafond"><span data-l="en">Read the code</span><span data-l="fr">Lire le code</span></a>
+      </div>
+      <div class="video">
+        <video id="video" controls playsinline preload="metadata" poster="media/affiche-en.jpg">
+          <source id="video-src" src="media/plafond-en.mp4" type="video/mp4">
+        </video>
+      </div>
+    </div>
+  </div>
+
+  <section id="comment">
+    <div class="enveloppe">
+      <h2><span data-l="en">Three guarantees, written into the network</span><span data-l="fr">Trois garanties, inscrites dans le réseau</span></h2>
+      <p class="intro"><span data-l="en">Agents now pay for APIs and services on their own. Plafond decides how much they can spend, and the rule holds even when everything else fails.</span><span data-l="fr">Les agents paient désormais seuls leurs API et leurs services. Plafond fixe combien ils peuvent dépenser, et la règle tient même quand tout le reste lâche.</span></p>
+      <div class="grille">
+        <div class="carte"><div class="pastille">1</div>
+          <h3><span data-l="en">A budget that refills</span><span data-l="fr">Un budget qui se recharge</span></h3>
+          <p><span data-l="en">For example 2 units per day, at most 0.5 per purchase. Beyond that, the network rejects the payment. Fees count inside the budget.</span><span data-l="fr">Par exemple 2 unités par jour, 0,5 au plus par achat. Au-delà, le réseau refuse le paiement. Les frais sont comptés dans le budget.</span></p></div>
+        <div class="carte"><div class="pastille">2</div>
+          <h3><span data-l="en">An emergency stop</span><span data-l="fr">Un arrêt d'urgence</span></h3>
+          <p><span data-l="en">One click and the funds of every vault return to your treasury. It works even if the agent's server is compromised.</span><span data-l="fr">Un clic, et les fonds de tous les coffres reviennent dans votre trésorerie. Ça marche même si le serveur de l'agent est compromis.</span></p></div>
+        <div class="carte"><div class="pastille">3</div>
+          <h3><span data-l="en">No server to trust</span><span data-l="fr">Aucun serveur à croire sur parole</span></h3>
+          <p><span data-l="en">Your keys stay on your device. Even if Plafond disappeared, you could find and freeze your vaults from any Kaspa node.</span><span data-l="fr">Vos clés restent chez vous. Même si Plafond disparaissait, vous retrouveriez et geleriez vos coffres depuis n'importe quel nœud Kaspa.</span></p></div>
+      </div>
+
+      <div class="preuves" style="margin-top:20px">
+        <div class="chiffre"><b>7/7</b><span data-l="en">demo steps verified on testnet-10</span><span data-l="fr">étapes de la démo vérifiées sur testnet-10</span></div>
+        <div class="chiffre"><b>0</b><span data-l="en">over-budget payments accepted by the network</span><span data-l="fr">paiement hors budget accepté par le réseau</span></div>
+        <div class="chiffre"><b>40</b><span data-l="en">risks analysed in the threat model</span><span data-l="fr">risques analysés dans le modèle de menace</span></div>
+        <div class="chiffre"><b>1</b><span data-l="en">command to run the whole demo</span><span data-l="fr">commande pour lancer toute la démo</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="enveloppe">
+      <h2><span data-l="en">What the budget covers, and what it doesn't</span><span data-l="fr">Ce que couvre le budget, et ce qu'il ne couvre pas</span></h2>
+      <p class="intro"><span data-l="en">The budget limits payments made by the agent. It does not limit invoices your providers send you directly.</span><span data-l="fr">Le budget limite les paiements effectués par l'agent. Il ne limite pas les factures que vos fournisseurs vous envoient directement.</span></p>
+      <div class="couvre">
+        <div class="carte oui"><h3><span data-l="en">✓ Covered</span><span data-l="fr">✓ Couvert</span></h3>
+          <p><span data-l="en">Everything the agent pays itself from its vault: pay-per-use APIs, data, services (HTTP 402 / x402). Over the limit, the payment is refused, even if the agent is hacked.</span><span data-l="fr">Tout ce que l'agent paie lui-même depuis son coffre : API à l'usage, données, services (HTTP 402 / x402). Au-delà de la limite, le paiement est refusé, même si l'agent est piraté.</span></p></div>
+        <div class="carte non"><h3><span data-l="en">✗ Not covered</span><span data-l="fr">✗ Non couvert</span></h3>
+          <p><span data-l="en">Subscriptions and invoices billed to you directly (OpenAI, Anthropic, AWS…), even if the agent's key is stored in Plafond. Set a spending limit with those providers too.</span><span data-l="fr">Les abonnements et factures qu'on vous adresse directement (OpenAI, Anthropic, AWS…), même si la clé de l'agent est rangée dans Plafond. Fixez aussi une limite chez ces fournisseurs.</span></p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="essayer">
+    <div class="enveloppe">
+      <h2><span data-l="en">Try it on testnet</span><span data-l="fr">Essayez sur le testnet</span></h2>
+      <p class="intro"><span data-l="en">The demo creates throwaway test keys, waits for free test coins from the faucet, then runs the 7 steps on Kaspa testnet-10 and opens the console in your browser. No real funds, no secret phrase to provide.</span><span data-l="fr">La démo crée des clés de test jetables, attend des pièces de test gratuites du faucet, puis déroule les 7 étapes sur le testnet-10 de Kaspa et ouvre la console dans votre navigateur. Pas de vrais fonds, aucune phrase secrète à fournir.</span></p>
+<pre><span class="c"># Linux / macOS</span>
+git clone https://github.com/lamaz-dev/plafond.git
+cd plafond
+./demo.sh</pre>
+      <p class="note"><span data-l="en">Requirements: Git, Rust and a C compiler. Details and troubleshooting: </span><span data-l="fr">Prérequis : Git, Rust et un compilateur C. Détails et dépannage : </span><a href="https://github.com/lamaz-dev/plafond/blob/main/DEMO.md" data-l="en">DEMO.md</a><a href="https://github.com/lamaz-dev/plafond/blob/main/DEMO.fr.md" data-l="fr">DEMO.fr.md</a>. <span data-l="en">Something broke? Please </span><span data-l="fr">Quelque chose a planté ? Merci d'</span><a href="https://github.com/lamaz-dev/plafond/issues"><span data-l="en">open an issue</span><span data-l="fr">ouvrir un ticket</span></a>.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="enveloppe">
+      <h2><span data-l="en">Honest status</span><span data-l="fr">Où en est le projet, honnêtement</span></h2>
+      <div class="etapes">
+        <div class="etape"><div><b><span data-l="en">Working on testnet-10</span><span data-l="fr">Fonctionne sur le testnet-10</span></b><span data-l="en">Contracts, demo, console and survival mode, with a loss bound proven and tested against the real Kaspa script engine.</span><span data-l="fr">Contrats, démo, console et mode survie, avec une borne de perte démontrée et testée contre le vrai moteur de scripts Kaspa.</span></div></div>
+        <div class="etape"><div><b><span data-l="en">Not audited yet</span><span data-l="fr">Pas encore audité</span></b><span data-l="en">Reviewed by automated adversarial reviews only. A human security audit comes before any mainnet use.</span><span data-l="fr">Relu uniquement par des revues adverses automatisées. Un audit de sécurité humain passera avant tout usage sur le réseau principal.</span></div></div>
+        <div class="etape"><div><b><span data-l="en">Mainnet when Kaspa covenants are live</span><span data-l="fr">Réseau principal quand les covenants Kaspa y seront actifs</span></b><span data-l="en">Do not use with real KAS until then.</span><span data-l="fr">N'y mettez pas de vrais KAS d'ici là.</span></div></div>
+      </div>
+      <p class="note" style="margin-top:24px"><span data-l="en">Found a flaw? Report it privately: </span><span data-l="fr">Une faille ? Signalez-la en privé : </span><a href="https://github.com/lamaz-dev/plafond/blob/main/SECURITY.md">SECURITY.md</a> · <a href="https://github.com/lamaz-dev/plafond/blob/main/ROADMAP.md"><span data-l="en">Roadmap</span><span data-l="fr">Feuille de route</span></a></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="enveloppe">
+    <span>© 2026 Lamaz · Plafond · <span data-l="en">ISC license</span><span data-l="fr">licence ISC</span> · <span data-l="en">Built on</span><span data-l="fr">Construit sur</span> <a href="https://kaspa.org">Kaspa</a></span>
+    <span><span data-l="en">Interface shown in the video is a preview; the console log is real.</span><span data-l="fr">L'interface de la vidéo est un aperçu ; le journal de la console est réel.</span></span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var html=document.documentElement, btn=document.getElementById('langue'), v=document.getElementById('video'), src=document.getElementById('video-src');
+  function choisir(l){
+    html.lang=l; btn.textContent = l==='en' ? 'FR' : 'EN';
+    document.title = l==='en' ? 'Plafond: give your AI agents a budget, not your whole treasury' : 'Plafond : donnez un budget à vos agents, pas toute votre trésorerie';
+    var f='media/plafond-'+l+'.mp4';
+    if(src.getAttribute('src')!==f){ src.setAttribute('src',f); v.poster='media/affiche-'+l+'.jpg'; v.load(); }
+    try{ localStorage.setItem('langue',l) }catch(e){}
+  }
+  var l; try{ l=localStorage.getItem('langue') }catch(e){}
+  if(!l) l=(navigator.language||'en').toLowerCase().indexOf('fr')===0 ? 'fr' : 'en';
+  choisir(l);
+  btn.addEventListener('click',function(){ choisir(html.lang==='en'?'fr':'en') });
+})();
+</script>
+</body>
+</html>

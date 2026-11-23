@@ -1,0 +1,44 @@
+# Démonstration de bout en bout (réseau de test, aucun argent réel)
+
+*[English](DEMO.md) · Français*
+
+```
+git clone https://github.com/lamaz-dev/plafond.git
+cd plafond
+./demo.sh
+```
+
+Prérequis : Git, Rust (https://rustup.rs) et un compilateur C (Linux : `build-essential` ; macOS : `xcode-select --install`).
+Le script vérifie tout avant de commencer. Il ne demande aucune phrase ni aucun mot de passe : il crée des clés jetables du réseau de test.
+La console s'ouvre toute seule dans votre navigateur : c'est l'écran à filmer. Si des jetons de test manquent, il affiche l'adresse, un QR code et le montant, puis reprend tout seul.
+Durée : 5 à 10 minutes, plus la première compilation.
+
+## Ce que la démo montre (chaque étape est contrôlée)
+
+1. créer un agent ;
+2. lui attribuer un budget (2 unités par jour, 0,5 au plus par achat) : son coffre s'ouvre ;
+3. lui donner un secret (clé d'API chiffrée pour lui seul) ;
+4. le connecter : sa clé passe sur « son serveur », la console l'efface ;
+5. il paie un service (service de démonstration que nous opérons) ;
+6. il tente de dépasser son budget : **le réseau refuse** (pas un contrôle local) ;
+7. arrêt d'urgence : les fonds du coffre reviennent dans la trésorerie.
+
+Avant le réseau, le script vérifie hors ligne que le contrat compilé est bien celui publié et qu'il refuse le
+dépassement. À la fin : bilan des 7 étapes et rapport `cli/demo-rapport-<date>.json` (liens vers chaque transaction), écrit aussi
+en cas d'échec, avec la cause de l'interruption : joignez-le à votre retour.
+
+## Dépendances externes
+
+- **Un nœud du réseau de test**, trouvé automatiquement, ou le vôtre : `NOEUD_WRPC=ws://127.0.0.1:17210 ./demo.sh`.
+- **Aucun indexeur** : après un paiement de l'agent, la console retrouve le coffre en relisant la chaîne du nœud
+  depuis un repère noté à sa création.
+- Le distributeur de jetons de test, une seule fois. Les liens de l'explorateur sont de simples liens de consultation.
+
+## En cas de souci
+
+- « Rust absent », « compilateur C absent » : installer ce qui est indiqué, relancer `./demo.sh`.
+- « réseau de test injoignable » (après 3 essais) : connexion Internet, ou indiquer un nœud avec `NOEUD_WRPC=ws://…`.
+- « la console ne s'est pas ouverte » : une autre console occupe déjà le port 8404 ; la fermer, puis relancer (rien n'a été fait).
+- « fonds non reçus après 20 min » : distributeur indisponible ; relancer plus tard, l'adresse reste la même.
+- Étape 6 en échec (paiement accepté) : anomalie grave, garder le rapport et ne pas relancer.
+- Repartir de zéro : supprimer `cli/demo-jetable/` (de nouvelles clés seront créées, donc de nouveaux jetons à demander).

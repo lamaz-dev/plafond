@@ -1,7 +1,7 @@
 [project]
 name = "kaspa-vault"
 version = "0.1.0"
-description = "Client for the kaspa-agent-vault router: AI agents pay HTTP 402 resources from a covenant-bounded Kaspa vault."
+description = "Client for the Plafond router: AI agents pay HTTP 402 resources from a covenant-bounded Kaspa vault."
 requires-python = ">=3.9"
 license = "ISC"
 dependencies = []

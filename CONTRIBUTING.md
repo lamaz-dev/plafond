@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for looking at kaspa-agent-vault. The project is an unaudited prototype under public review,
+Thank you for looking at Plafond (formerly kaspa-agent-vault). The project is an unaudited prototype under public review,
 so the most valuable contributions are reviews and attempts to break it on testnet-10.
 
 ## Security issues

@@ -1,42 +1,46 @@
-# Démonstration de bout en bout (réseau de test, aucun argent réel)
+# End-to-end demo (test network, no real money)
+
+*English · [Français](DEMO.fr.md)*
 
 ```
-git clone https://github.com/lamaz-dev/kaspa-agent-vault-lab.git
-cd kaspa-agent-vault-lab
+git clone https://github.com/lamaz-dev/plafond.git
+cd plafond
 ./demo.sh
 ```
 
-Prérequis : Git, Rust (https://rustup.rs) et un compilateur C (Linux : `build-essential` ; macOS : `xcode-select --install`).
-Le script vérifie tout avant de commencer. Il ne demande aucune phrase ni aucun mot de passe : il crée des clés jetables du réseau de test.
-La console s'ouvre toute seule dans votre navigateur : c'est l'écran à filmer. Si des jetons de test manquent, il affiche l'adresse, un QR code et le montant, puis reprend tout seul.
-Durée : 5 à 10 minutes, plus la première compilation.
+Requirements: Git, Rust (https://rustup.rs) and a C compiler (Linux: `build-essential`; macOS: `xcode-select --install`).
+The script checks everything before it starts. It asks for no phrase and no password: it creates throwaway test-network keys.
+The console opens by itself in your browser. If test coins are missing, the script shows the address, a QR code and the amount, then resumes on its own.
+Duration: 5 to 10 minutes, plus the first build.
 
-## Ce que la démo montre (chaque étape est contrôlée)
+## What the demo shows (every step is checked)
 
-1. créer un agent ;
-2. lui attribuer un budget (2 unités par jour, 0,5 au plus par achat) : son coffre s'ouvre ;
-3. lui donner un secret (clé d'API chiffrée pour lui seul) ;
-4. le connecter : sa clé passe sur « son serveur », la console l'efface ;
-5. il paie un service (service de démonstration que nous opérons) ;
-6. il tente de dépasser son budget : **le réseau refuse** (pas un contrôle local) ;
-7. arrêt d'urgence : les fonds du coffre reviennent dans la trésorerie.
+1. create an agent;
+2. give it a budget (2 units per day, at most 0.5 per purchase): its vault opens;
+3. give it a secret (an API key encrypted for that agent only);
+4. connect it: its key moves to "its server", the console erases its copy;
+5. it pays for a service (a demo service we operate);
+6. it tries to exceed its budget: **the network rejects it** (not a local check);
+7. emergency stop: the vault's funds return to the treasury.
 
-Avant le réseau, le script vérifie hors ligne que le contrat compilé est bien celui publié et qu'il refuse le
-dépassement. À la fin : bilan des 7 étapes et rapport `cli/demo-rapport-<date>.json` (liens vers chaque transaction), écrit aussi
-en cas d'échec, avec la cause de l'interruption : joignez-le à votre retour.
+Before touching the network, the script checks offline that the compiled contract is the published one and that it
+rejects the overspend. At the end: a summary of the 7 steps and a report `cli/demo-rapport-<date>.json` (links to every
+transaction), also written on failure with the cause of the interruption: please attach it to your feedback.
 
-## Dépendances externes
+## External dependencies
 
-- **Un nœud du réseau de test**, trouvé automatiquement, ou le vôtre : `NOEUD_WRPC=ws://127.0.0.1:17210 ./demo.sh`.
-- **Aucun indexeur** : après un paiement de l'agent, la console retrouve le coffre en relisant la chaîne du nœud
-  depuis un repère noté à sa création.
-- Le distributeur de jetons de test, une seule fois. Les liens de l'explorateur sont de simples liens de consultation.
+- **A test-network node**, found automatically, or your own: `NOEUD_WRPC=ws://127.0.0.1:17210 ./demo.sh`.
+- **No indexer**: after an agent payment, the console finds the vault again by re-reading the node's chain from a
+  marker recorded when the vault was created.
+- The test-coin faucet, once. Explorer links are plain read-only links.
 
-## En cas de souci
+## Troubleshooting
 
-- « Rust absent », « compilateur C absent » : installer ce qui est indiqué, relancer `./demo.sh`.
-- « réseau de test injoignable » (après 3 essais) : connexion Internet, ou indiquer un nœud avec `NOEUD_WRPC=ws://…`.
-- « la console ne s'est pas ouverte » : une autre console occupe déjà le port 8404 ; la fermer, puis relancer (rien n'a été fait).
-- « fonds non reçus après 20 min » : distributeur indisponible ; relancer plus tard, l'adresse reste la même.
-- Étape 6 en échec (paiement accepté) : anomalie grave, garder le rapport et ne pas relancer.
-- Repartir de zéro : supprimer `cli/demo-jetable/` (de nouvelles clés seront créées, donc de nouveaux jetons à demander).
+- "Rust absent", "compilateur C absent" (Rust or C compiler missing): install what is shown, run `./demo.sh` again.
+- "réseau de test injoignable" (test network unreachable after 3 attempts): check your connection, or give a node with `NOEUD_WRPC=ws://…`.
+- "la console ne s'est pas ouverte" (console did not open): another console already uses port 8404; close it and run again (nothing was done).
+- "fonds non reçus après 20 min" (funds not received after 20 min): faucet unavailable; try later, the address stays the same.
+- Step 6 fails (payment accepted): serious anomaly, keep the report and do not run again. Please report it privately ([SECURITY.md](SECURITY.md)).
+- Start from scratch: delete `cli/demo-jetable/` (new keys are created, so new test coins are needed).
+
+The script's messages are currently in French; an English version is on the [roadmap](ROADMAP.md).
