@@ -73,7 +73,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: paquet-${{ matrix.nom }}
-          path: plafond-*.*
+          # Les archives seulement : le dossier « plafond-v0.6.0-… » contient aussi des points.
+          path: |
+            plafond-*.tar.gz
+            plafond-*.zip
+          if-no-files-found: error
           retention-days: 7
 
   publier:
@@ -91,7 +95,10 @@ jobs:
           merge-multiple: true
       - name: Empreintes SHA-256
         working-directory: paquets
-        run: ls plafond-* && sha256sum plafond-* | tee SHA256SUMS.txt
+        run: |
+          set -o pipefail
+          ls -l
+          sha256sum plafond-*.tar.gz plafond-*.zip | tee SHA256SUMS.txt
       - name: "Version sur la page Releases (marquée préversion : testnet, non audité)"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,10 +111,10 @@ jobs:
 
           | File |
           |---|
-          $(cd paquets && for f in plafond-*; do echo "| $f |"; done)
+          $(cd paquets && for f in plafond-*.tar.gz plafond-*.zip; do echo "| $f |"; done)
 
           Each binary was checked by CI before publication: compiled contract identical to the published one
           (\`contracts/EMPREINTES.txt\`), and over-budget spends rejected by the real Kaspa script engine.
           SHA-256 checksums: \`SHA256SUMS.txt\`.
           EOF
-          gh release create "$VERSION" paquets/* --target "$GITHUB_SHA" --prerelease --title "Plafond $VERSION (testnet)" --notes-file notes.md
+          gh release create "$VERSION" paquets/plafond-*.tar.gz paquets/plafond-*.zip paquets/SHA256SUMS.txt --target "$GITHUB_SHA" --prerelease --title "Plafond $VERSION (testnet)" --notes-file notes.md
