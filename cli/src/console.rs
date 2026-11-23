@@ -270,6 +270,184 @@ pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
     Ok(())
 }
 
+/// Fichiers du compte dans `dossier` : clé du propriétaire chiffrée, clé de l'agent principal, état.
+pub struct FichiersCompte {
+    pub cle: String,
+    pub agent: String,
+}
+
+pub fn fichiers_compte(dossier: &str) -> FichiersCompte {
+    let p = std::path::Path::new(dossier);
+    FichiersCompte {
+        cle: p.join("proprietaire.json").to_string_lossy().into_owned(),
+        agent: p.join("agent-principal.key").to_string_lossy().into_owned(),
+    }
+}
+
+/// Clé de l'agent principal du compte : lue, ou créée (fichier neuf, lisible par le seul utilisateur).
+/// Après une restauration depuis la phrase, l'ancien fichier peut manquer : un nouvel agent est créé ;
+/// les anciens coffres restent gelables par le propriétaire.
+fn cle_agent_compte(chemin: &str) -> Res<Keypair> {
+    if let Ok(t) = fs::read_to_string(chemin) {
+        let octets = zeroize::Zeroizing::new(hex::decode(t.trim())?);
+        return Ok(Keypair::from_seckey_slice(secp256k1::SECP256K1, &octets)?);
+    }
+    let mut b = zeroize::Zeroizing::new([0u8; 32]);
+    getrandom::getrandom(&mut *b).map_err(|e| format!("aléa : {e}"))?;
+    let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &*b)?;
+    if let Some(d) = std::path::Path::new(chemin).parent() {
+        fs::create_dir_all(d)?;
+    }
+    let mut f = fs::OpenOptions::new();
+    f.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut f, 0o600);
+    std::io::Write::write_all(&mut f.open(chemin)?, hex::encode(k.secret_bytes()).as_bytes())?;
+    Ok(k)
+}
+
+/// Console du compte : s'ouvre verrouillée. La page propose de créer le compte (aucun fichier de clé)
+/// ou de s'y connecter (mot de passe, puis code à 6 chiffres si la double authentification est active).
+/// Rien ne quitte l'ordinateur : il n'y a ni serveur de comptes ni e-mail.
+pub fn lancer_compte(handle: Handle, dossier: String) -> Res<()> {
+    fs::create_dir_all(&dossier)?;
+    *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::path::Path::new(&dossier).join("etat-coffre.json").to_string_lossy().into_owned());
+    let mut b = [0u8; 32];
+    getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
+    let jeton = hex::encode(b);
+    let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
+    let lien = format!("http://127.0.0.1:{PORT}/#jeton={jeton}");
+    println!("Plafond : ouvrez {lien}");
+    println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
+    if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
+        ouvrir_navigateur(&lien);
+    }
+    let fichiers = fichiers_compte(&dossier);
+    let (owner, agent) = porte(&serveur, &jeton, &fichiers)?;
+    println!("Compte ouvert.");
+    servir(&serveur, &jeton, handle, owner, agent, Some(fichiers.cle));
+    Ok(())
+}
+
+/// Phase verrouillée : seules la page, l'état du compte, la création et la connexion répondent.
+pub fn porte(serveur: &tiny_http::Server, jeton: &str, fichiers: &FichiersCompte) -> Res<(Keypair, Keypair)> {
+    let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
+    let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+    let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
+    let mut garde = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+    for mut req in serveur.incoming_requests() {
+        let entetes: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
+        let entete = |nom: &str| entetes.iter().find(|(k, _)| k == &nom.to_ascii_lowercase()).map(|(_, v)| v.clone());
+        let chemin = req.url().split('?').next().unwrap_or("").to_string();
+        let methode = req.method().as_str().to_string();
+        let mut ouvert = None;
+        let rep = if !entete("Host").is_some_and(|h| hotes.contains(&h)) {
+            json_rep(421, json!({ "erreur": "hôte non autorisé" }))
+        } else if methode == "GET" && chemin == "/" {
+            reponse(200, "text/html; charset=utf-8", PAGE.as_bytes().to_vec())
+        } else if !entete("X-Jeton").is_some_and(|j| egal(j.as_bytes(), jeton.as_bytes())) {
+            json_rep(401, json!({ "erreur": "jeton de session invalide : rouvrez le lien affiché dans le terminal" }))
+        } else if methode == "POST" && !entete("Origin").is_none_or(|o| origines.contains(&o)) {
+            json_rep(403, json!({ "erreur": "origine refusée" }))
+        } else {
+            let mut corps = String::new();
+            let _ = req.as_reader().take(16 * 1024).read_to_string(&mut corps);
+            let v: Value = serde_json::from_str(&corps).unwrap_or(Value::Null);
+            zeroize::Zeroize::zeroize(&mut corps);
+            let existe = std::path::Path::new(&fichiers.cle).exists();
+            match (methode.as_str(), chemin.as_str()) {
+                ("GET", "/api/compte/etat") => json_rep(200, json!({ "ouvert": false, "existe": existe, "double_auth": lire_compte(Some(&fichiers.cle)).double_auth })),
+                ("POST", "/api/compte/creer") => {
+                    let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+                    let conf = zeroize::Zeroizing::new(v["confirmation"].as_str().unwrap_or("").to_string());
+                    if existe {
+                        json_rep(409, json!({ "erreur": "un compte existe déjà sur cet ordinateur : connectez-vous" }))
+                    } else if mdp.chars().count() < 12 {
+                        json_rep(400, json!({ "erreur": "mot de passe trop court (12 caractères minimum)" }))
+                    } else if *mdp != *conf {
+                        json_rep(400, json!({ "erreur": "les deux mots de passe diffèrent" }))
+                    } else {
+                        let cree = (|| -> Res<(Keypair, Keypair)> {
+                            if let Some(d) = std::path::Path::new(&fichiers.cle).parent() {
+                                fs::create_dir_all(d)?;
+                            }
+                            let c = cle::nouveau_coffret()?;
+                            cle::ecrire(&fichiers.cle, &cle::chiffrer_coffret(&c, &mdp)?)?;
+                            ecrire_compte(&fichiers.cle, &Compte::default())?;
+                            Ok((cle::cle_du_coffret(&c)?, cle_agent_compte(&fichiers.agent)?))
+                        })();
+                        match cree {
+                            Ok(k) => {
+                                journal(json!({ "compte": "créé" }));
+                                ouvert = Some(k);
+                                json_rep(200, json!({ "ouvert": true, "cree": true }))
+                            }
+                            Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                        }
+                    }
+                }
+                ("POST", "/api/compte/restaurer") => {
+                    // Mot de passe oublié : la phrase de 24 mots recrée la clé, chiffrée par un nouveau mot de
+                    // passe. L'ancien fichier n'est jamais effacé : il est mis de côté sous un autre nom.
+                    let phrase = zeroize::Zeroizing::new(v["phrase"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "));
+                    let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+                    let conf = zeroize::Zeroizing::new(v["confirmation"].as_str().unwrap_or("").to_string());
+                    if garde.verrou.is_some_and(|t| Instant::now() < t) {
+                        json_rep(429, json!({ "erreur": "trop d'essais : réessayez dans une minute" }))
+                    } else if mdp.chars().count() < 12 {
+                        json_rep(400, json!({ "erreur": "mot de passe trop court (12 caractères minimum)" }))
+                    } else if *mdp != *conf {
+                        json_rep(400, json!({ "erreur": "les deux mots de passe diffèrent" }))
+                    } else {
+                        match cle::depuis_phrase(&phrase) {
+                            Err(_) => garde.echec("phrase de récupération invalide"),
+                            Ok(c) => {
+                                let fait = (|| -> Res<(Keypair, Keypair)> {
+                                    if let Some(d) = std::path::Path::new(&fichiers.cle).parent() {
+                                        fs::create_dir_all(d)?;
+                                    }
+                                    if existe {
+                                        fs::rename(&fichiers.cle, format!("{}.ancien-{}", fichiers.cle, double_auth::maintenant()))?;
+                                    }
+                                    cle::ecrire(&fichiers.cle, &cle::chiffrer_coffret(&c, &mdp)?)?;
+                                    ecrire_compte(&fichiers.cle, &Compte { sauvegarde_faite: true, double_auth: false })?;
+                                    Ok((cle::cle_du_coffret(&c)?, cle_agent_compte(&fichiers.agent)?))
+                                })();
+                                match fait {
+                                    Ok(k) => {
+                                        journal(json!({ "compte": "restauré depuis la phrase" }));
+                                        ouvert = Some(k);
+                                        json_rep(200, json!({ "ouvert": true }))
+                                    }
+                                    Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                                }
+                            }
+                        }
+                    }
+                }
+                ("POST", "/api/compte/ouvrir") if !existe => json_rep(404, json!({ "erreur": "aucun compte sur cet ordinateur : créez-en un" })),
+                ("POST", "/api/compte/ouvrir") => match garde.ouvrir_avec(Some(fichiers.cle.as_str()), None, &v, true) {
+                    Ok((owner, _)) => match cle_agent_compte(&fichiers.agent) {
+                        Ok(agent) => {
+                            journal(json!({ "compte": "ouvert" }));
+                            ouvert = Some((owner, agent));
+                            json_rep(200, json!({ "ouvert": true }))
+                        }
+                        Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                    },
+                    Err(r) => r,
+                },
+                _ => json_rep(423, json!({ "erreur": "compte verrouillé : connectez-vous", "verrouille": true })),
+            }
+        };
+        let _ = req.respond(rep);
+        if let Some(k) = ouvert {
+            return Ok(k);
+        }
+    }
+    Err("console arrêtée avant l'ouverture du compte".into())
+}
+
 /// Indicateurs non secrets du compte (à côté du fichier de clé) : affichage seulement. Ce qui fait
 /// foi pour la double authentification est le fichier de clé chiffré lui-même.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -339,6 +517,11 @@ struct Garde {
 
 impl Garde {
     fn ouvrir(&mut self, chemin_cle: Option<&str>, owner: &Keypair, v: &Value, exiger_code: bool) -> Result<(Keypair, Option<cle::Coffret>), Rep> {
+        self.ouvrir_avec(chemin_cle, Some(owner), v, exiger_code)
+    }
+
+    /// `attendu` : clé que le fichier doit contenir (None à la connexion, quand rien n'est encore chargé).
+    fn ouvrir_avec(&mut self, chemin_cle: Option<&str>, attendu: Option<&Keypair>, v: &Value, exiger_code: bool) -> Result<(Keypair, Option<cle::Coffret>), Rep> {
         let Some(chemin) = chemin_cle else {
             return Err(json_rep(409, json!({ "erreur": "mode test : clés dérivées d'une phrase de test, aucun fichier de clé" })));
         };
@@ -346,7 +529,7 @@ impl Garde {
             return Err(json_rep(429, json!({ "erreur": "trop d'essais : réessayez dans une minute" })));
         }
         let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
-        let ouvert = cle::lire(chemin).and_then(|f| cle::ouvrir_tout(&f, &mdp)).ok().filter(|(k, _)| k.x_only_public_key() == owner.x_only_public_key());
+        let ouvert = cle::lire(chemin).and_then(|f| cle::ouvrir_tout(&f, &mdp)).ok().filter(|(k, _)| attendu.is_none_or(|o| k.x_only_public_key() == o.x_only_public_key()));
         let Some((k, coffret)) = ouvert else {
             return Err(self.echec("mot de passe incorrect"));
         };
@@ -425,6 +608,8 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
             let cible = liste.iter().find(|a| a.id == id).cloned();
             let cle_cible = cible.as_ref().map(|a| agents::cle(a, &agent_principal));
             match (methode.as_str(), chemin.as_str()) {
+                ("GET", "/api/compte/etat") => json_rep(200, json!({ "ouvert": true })),
+                ("POST", "/api/compte/creer" | "/api/compte/ouvrir" | "/api/compte/restaurer") => json_rep(409, json!({ "erreur": "compte déjà ouvert" })),
                 // ---------- Trésorerie et agents ----------
                 ("GET", "/api/agents") => {
                     let c = cours.lire();
@@ -820,6 +1005,69 @@ mod tests {
         assert_eq!(statut(ureq::post(&format!("{base}/api/alimenter")).set("X-Jeton", "jeton-de-test").send_string("{\"montant_sompi\":1}")), 400);
         serveur.unblock();
         fil.join().unwrap();
+    }
+
+    /// Compte créé puis rouvert depuis la page : verrouillé tant qu'on n'est pas connecté, mot de passe
+    /// vérifié, fichiers de clé lisibles par le seul utilisateur, et même clé du propriétaire à la réouverture.
+    #[test]
+    fn compte_cree_puis_rouvert_depuis_la_page() {
+        let dossier = std::env::temp_dir().join(format!("plafond-compte-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dossier);
+        let fichiers = fichiers_compte(&dossier.to_string_lossy());
+        let statut = |r: Result<ureq::Response, ureq::Error>| match r {
+            Ok(r) => r.status(),
+            Err(ureq::Error::Status(c, _)) => c,
+            Err(e) => panic!("{e}"),
+        };
+        let mdp = "un mot de passe assez long";
+        let mut cles = Vec::new();
+        for tour in 0..2 {
+            let serveur = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+            let base = format!("http://127.0.0.1:{}", serveur.server_addr().to_ip().unwrap().port());
+            let (s2, f2) = (serveur.clone(), fichiers_compte(&dossier.to_string_lossy()));
+            let fil = std::thread::spawn(move || porte(&s2, "jeton-de-test", &f2).map_err(|e| e.to_string()));
+            let get = |c: &str| ureq::get(&format!("{base}{c}")).set("X-Jeton", "jeton-de-test").call();
+            let post = |c: &str, corps: Value| ureq::post(&format!("{base}{c}")).set("X-Jeton", "jeton-de-test").send_string(&corps.to_string());
+            let etat: Value = serde_json::from_str(&get("/api/compte/etat").unwrap().into_string().unwrap()).unwrap();
+            assert_eq!(etat["existe"], json!(tour == 1), "tour {tour}");
+            // tant que le compte est fermé, le reste de l'API est verrouillé, et le jeton reste exigé
+            assert_eq!(statut(get("/api/tableau")), 423);
+            assert_eq!(statut(ureq::get(&format!("{base}/api/compte/etat")).call()), 401);
+            if tour == 0 {
+                assert_eq!(statut(post("/api/compte/ouvrir", json!({ "mot_de_passe": mdp }))), 404, "aucun compte à ouvrir");
+                assert_eq!(statut(post("/api/compte/creer", json!({ "mot_de_passe": "court", "confirmation": "court" }))), 400);
+                assert_eq!(statut(post("/api/compte/creer", json!({ "mot_de_passe": mdp, "confirmation": "un autre mot de passe" }))), 400);
+                assert_eq!(statut(post("/api/compte/creer", json!({ "mot_de_passe": mdp, "confirmation": mdp }))), 200);
+            } else {
+                assert_eq!(statut(post("/api/compte/creer", json!({ "mot_de_passe": mdp, "confirmation": mdp }))), 409, "jamais d'écrasement");
+                assert_eq!(statut(post("/api/compte/ouvrir", json!({ "mot_de_passe": "mauvais mot de passe" }))), 403);
+                assert_eq!(statut(post("/api/compte/ouvrir", json!({ "mot_de_passe": mdp }))), 200);
+            }
+            let (owner, agent) = fil.join().unwrap().unwrap();
+            assert_ne!(owner.x_only_public_key(), agent.x_only_public_key());
+            cles.push((owner.x_only_public_key(), agent.x_only_public_key()));
+        }
+        assert_eq!(cles[0], cles[1], "même compte à la réouverture");
+        // mot de passe oublié : la phrase recrée la même clé ; l'ancien fichier est mis de côté, pas effacé
+        let phrase = cle::phrase(&cle::ouvrir_tout(&cle::lire(&fichiers.cle).unwrap(), mdp).unwrap().1.unwrap()).unwrap();
+        let serveur = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let base = format!("http://127.0.0.1:{}", serveur.server_addr().to_ip().unwrap().port());
+        let (s2, f2) = (serveur.clone(), fichiers_compte(&dossier.to_string_lossy()));
+        let fil = std::thread::spawn(move || porte(&s2, "jeton-de-test", &f2).map_err(|e| e.to_string()));
+        let post = |corps: Value| ureq::post(&format!("{base}/api/compte/restaurer")).set("X-Jeton", "jeton-de-test").send_string(&corps.to_string());
+        let nouveau = "un tout nouveau mot de passe";
+        assert_eq!(statut(post(json!({ "phrase": "abandon ".repeat(24), "mot_de_passe": nouveau, "confirmation": nouveau }))), 403, "phrase invalide");
+        assert_eq!(statut(post(json!({ "phrase": phrase.as_str(), "mot_de_passe": nouveau, "confirmation": nouveau }))), 200);
+        let (owner, agent) = fil.join().unwrap().unwrap();
+        assert_eq!((owner.x_only_public_key(), agent.x_only_public_key()), cles[0], "même propriétaire et même agent");
+        assert!(cle::ouvrir_tout(&cle::lire(&fichiers.cle).unwrap(), nouveau).is_ok(), "nouveau mot de passe actif");
+        assert!(fs::read_dir(&dossier).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains(".ancien-")), "ancien fichier conservé");
+        #[cfg(unix)]
+        for f in [&fichiers.cle, &fichiers.agent] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(f).unwrap().permissions().mode() & 0o777, 0o600, "{f}");
+        }
+        let _ = fs::remove_dir_all(&dossier);
     }
 
     /// Actions sensibles : mot de passe puis double authentification ; verrouillage après 5 échecs ;

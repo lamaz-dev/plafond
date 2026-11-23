@@ -21,3 +21,7 @@ compte.json
 demo-rapport-*.json
 **/demo-jetable/
 demo-compilation.log
+
+# Dossier du compte Plafond (clé chiffrée, clé de l agent, états) : jamais dans le dépôt
+/compte/
+**/compte/

@@ -42,3 +42,19 @@ en cas d'échec, avec la cause de l'interruption : joignez-le à votre retour.
 - « fonds non reçus après 20 min » : distributeur indisponible ; relancer plus tard, l'adresse reste la même.
 - Étape 6 en échec (paiement accepté) : anomalie grave, garder le rapport et ne pas relancer.
 - Repartir de zéro : supprimer `cli/demo-jetable/` (de nouvelles clés seront créées, donc de nouveaux jetons à demander).
+
+## Utiliser Plafond avec votre propre compte (testnet-10)
+
+La démo ci-dessus utilise des clés jetables. Pour garder un compte :
+
+```
+./plafond.sh          # Linux / macOS
+Plafond.bat           # Windows, à côté de vault-cli.exe
+```
+
+La console s'ouvre verrouillée dans votre navigateur. La première fois, créez votre compte (mot de passe de 12
+caractères au moins) : votre clé est créée et chiffrée sur votre ordinateur, dans le dossier `compte`. Ni e-mail, ni
+serveur. Les fois suivantes, connectez-vous avec le mot de passe (et le code à 6 chiffres si la double
+authentification est active). Mot de passe oublié ? « Restaurer avec ma phrase de 24 mots » recrée la clé sous un
+nouveau mot de passe ; l'ancien fichier est conservé. Sauvegardez votre phrase de récupération dès la création, depuis
+le bandeau.

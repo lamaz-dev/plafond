@@ -1034,6 +1034,16 @@ async fn main() -> Res<()> {
         }
         return Ok(());
     }
+    if cmd == "plafond" {
+        // Usage normal : la console s'ouvre verrouillée ; le compte se crée ou s'ouvre dans la page.
+        let dossier = env::var("PLAFOND_DOSSIER").unwrap_or_else(|_| "compte".into());
+        if env::var("PLAFOND_SANS_NAVIGATEUR").is_err() {
+            console::OUVRIR_NAVIGATEUR.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let h = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || console::lancer_compte(h, dossier).map_err(|e| e.to_string())).await??;
+        return Ok(());
+    }
     if cmd == "cle-creer" || cmd == "cle-info" {
         // Clé du propriétaire chiffrée sur son appareil (option A, non-custodial).
         let chemin = args.get(2).ok_or("chemin du fichier de clé manquant")?;

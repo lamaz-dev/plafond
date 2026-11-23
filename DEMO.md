@@ -44,3 +44,18 @@ transaction), also written on failure with the cause of the interruption: please
 - Start from scratch: delete `cli/demo-jetable/` (new keys are created, so new test coins are needed).
 
 The script's messages are currently in French; an English version is on the [roadmap](ROADMAP.md).
+
+## Using Plafond with your own account (testnet-10)
+
+The demo above uses throwaway keys. To keep an account:
+
+```
+./plafond.sh          # Linux / macOS
+Plafond.bat           # Windows, next to vault-cli.exe
+```
+
+The console opens locked in your browser. The first time, create your account (a password of 12 characters
+or more): your key is generated and encrypted on your computer, in the `compte` folder. There is no email and no
+server. The next times, sign in with the password (and the 6-digit code if you enabled two-factor authentication).
+Forgot the password? "Restore with my 24-word phrase" recreates the key under a new password; the old file is kept.
+Back up your recovery phrase from the banner as soon as the account is created.
