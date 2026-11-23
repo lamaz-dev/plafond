@@ -1,12 +1,21 @@
 name: release
 
 # Versions prêtes à télécharger (Linux, macOS Apple Silicon, Windows), publiées sur la page Releases.
-# Déclenchée par une étiquette v* (git tag v0.6.0 && git push origin v0.6.0).
+# Déclenchée par une étiquette v* (git tag v0.6.0 && git push origin v0.6.0), ou à la main avec le
+# numéro de version : l'étiquette est alors créée sur le commit compilé.
 # Chaque binaire est vérifié avant publication : contrat compilé = contrat publié (empreintes) et
 # refus du dépassement par le vrai moteur de script Kaspa. Aucune clé ni aucun secret n'est utilisé.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Numéro de version (ex. v0.6.0)"
+        required: true
+
+env:
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 permissions:
   contents: read
@@ -49,7 +58,7 @@ jobs:
           done
       - name: Paquet
         run: |
-          d="plafond-${GITHUB_REF_NAME}-${{ matrix.nom }}"
+          d="plafond-${VERSION}-${{ matrix.nom }}"
           mkdir "$d"
           cp "cli/target/release/${{ matrix.exe }}" LICENSE dist/LISEZ-MOI.txt "$d/"
           if [ "${{ matrix.os }}" = windows-latest ]; then
@@ -80,7 +89,7 @@ jobs:
       - name: Empreintes SHA-256
         working-directory: paquets
         run: sha256sum plafond-* | tee SHA256SUMS.txt
-      - name: Version sur la page Releases (marquée préversion : testnet, non audité)
+      - name: "Version sur la page Releases (marquée préversion : testnet, non audité)"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -92,12 +101,12 @@ jobs:
 
           | System | File |
           |---|---|
-          | Linux x86_64 | \`plafond-${GITHUB_REF_NAME}-linux-x86_64.tar.gz\` |
-          | macOS Apple Silicon | \`plafond-${GITHUB_REF_NAME}-macos-arm64.tar.gz\` |
-          | Windows x86_64 | \`plafond-${GITHUB_REF_NAME}-windows-x86_64.zip\` |
+          | Linux x86_64 | \`plafond-${VERSION}-linux-x86_64.tar.gz\` |
+          | macOS Apple Silicon | \`plafond-${VERSION}-macos-arm64.tar.gz\` |
+          | Windows x86_64 | \`plafond-${VERSION}-windows-x86_64.zip\` |
 
           Each binary was checked by CI before publication: compiled contract identical to the published one
           (\`contracts/EMPREINTES.txt\`), and over-budget spends rejected by the real Kaspa script engine.
           SHA-256 checksums: \`SHA256SUMS.txt\`.
           EOF
-          gh release create "$GITHUB_REF_NAME" paquets/* --prerelease --title "Plafond $GITHUB_REF_NAME (testnet)" --notes-file notes.md
+          gh release create "$VERSION" paquets/* --target "$GITHUB_SHA" --prerelease --title "Plafond $VERSION (testnet)" --notes-file notes.md
