@@ -2,6 +2,8 @@
 
 *English · [Français](DEMO.fr.md)*
 
+**Fastest:** download the ready-to-run package for your system from [Releases](https://github.com/lamaz-dev/plafond/releases/latest), unpack it and run `./demo` (or `Demo.bat`). No Rust needed. To build from source instead:
+
 ```
 git clone https://github.com/lamaz-dev/plafond.git
 cd plafond

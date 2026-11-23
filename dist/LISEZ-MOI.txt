@@ -1,0 +1,32 @@
+PLAFOND — budgets de dépense pour agents IA, imposés par covenant sur Kaspa
+Prototype open source, réseau de test (testnet-10), pas encore audité. N'y mettez jamais de vrais KAS.
+https://github.com/lamaz-dev/plafond
+
+FRANÇAIS
+--------
+Windows : double-cliquez sur Plafond.bat (votre compte) ou Demo.bat (démo à clés jetables).
+          Avertissement « Windows a protégé votre ordinateur » : Informations complémentaires > Exécuter quand même.
+Linux   : ./plafond    ou    ./demo
+macOS   : ./plafond    ou    ./demo
+          Premier lancement bloqué (programme non signé) : xattr -d com.apple.quarantine vault-cli
+          puis relancez.
+
+La console s'ouvre dans votre navigateur (http://127.0.0.1:8404). Laissez la fenêtre du terminal ouverte.
+Votre compte reste dans le dossier « compte », à côté de ce fichier : ni e-mail, ni serveur.
+Des KAS de test gratuits : https://faucet-tn10.kaspanet.io/
+Vérifier ce fichier : comparez son empreinte SHA-256 avec SHA256SUMS.txt publié avec la version.
+
+ENGLISH
+-------
+Windows: double-click Plafond.bat (your account) or Demo.bat (demo with throwaway keys).
+         "Windows protected your PC" warning: More info > Run anyway.
+Linux:   ./plafond    or    ./demo
+macOS:   ./plafond    or    ./demo
+         First launch blocked (unsigned program): xattr -d com.apple.quarantine vault-cli
+         then run again.
+
+The console opens in your browser (http://127.0.0.1:8404). Keep the terminal window open.
+Your account stays in the "compte" folder next to this file: no email, no server.
+Free test KAS: https://faucet-tn10.kaspanet.io/
+Verify the download: compare its SHA-256 with SHA256SUMS.txt published with the release.
+The program's terminal messages are in French; the console page is in English, French and Japanese.

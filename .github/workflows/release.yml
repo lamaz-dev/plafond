@@ -1,0 +1,103 @@
+name: release
+
+# Versions prêtes à télécharger (Linux, macOS Apple Silicon, Windows), publiées sur la page Releases.
+# Déclenchée par une étiquette v* (git tag v0.6.0 && git push origin v0.6.0).
+# Chaque binaire est vérifié avant publication : contrat compilé = contrat publié (empreintes) et
+# refus du dépassement par le vrai moteur de script Kaspa. Aucune clé ni aucun secret n'est utilisé.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            nom: linux-x86_64
+            exe: vault-cli
+          - os: macos-latest
+            nom: macos-arm64
+            exe: vault-cli
+          - os: windows-latest
+            nom: windows-x86_64
+            exe: vault-cli.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilation (toolchain épinglée par rust-toolchain.toml)
+        working-directory: cli
+        run: cargo build --release --locked
+      - name: Contrat compilé = contrat publié
+        working-directory: cli
+        run: diff <(./target/release/${{ matrix.exe }} empreintes | tr -d '\r') ../contracts/EMPREINTES.txt
+      - name: Le contrat refuse le dépassement (vrai moteur Kaspa, hors ligne)
+        working-directory: cli
+        env:
+          FUZZ_CASES: "64"
+        run: |
+          for t in fuzz::coffre_non_confirme_refuse fuzz::agent_avide_ne_depasse_jamais_la_borne; do
+            cargo test --release --locked "$t" -- --exact "$t" 2>&1 | tee /tmp/t.txt
+            grep -q "test result: ok. 1 passed" /tmp/t.txt
+          done
+      - name: Paquet
+        run: |
+          d="plafond-${GITHUB_REF_NAME}-${{ matrix.nom }}"
+          mkdir "$d"
+          cp "cli/target/release/${{ matrix.exe }}" LICENSE dist/LISEZ-MOI.txt "$d/"
+          if [ "${{ matrix.os }}" = windows-latest ]; then
+            cp Plafond.bat dist/Demo.bat "$d/"
+            7z a -tzip "$d.zip" "$d" > /dev/null
+          else
+            cp dist/plafond dist/demo "$d/"
+            chmod +x "$d/plafond" "$d/demo" "$d/${{ matrix.exe }}"
+            tar czf "$d.tar.gz" "$d"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquet-${{ matrix.nom }}
+          path: plafond-*.*
+          retention-days: 7
+
+  publier:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: paquets
+          merge-multiple: true
+      - name: Empreintes SHA-256
+        working-directory: paquets
+        run: sha256sum plafond-* | tee SHA256SUMS.txt
+      - name: Version sur la page Releases (marquée préversion : testnet, non audité)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          **Testnet-10 only, not audited yet. Never use with real KAS.** · *Réseau de test uniquement, pas encore audité.*
+
+          Download the file for your system, unpack it, then run \`plafond\` (Linux/macOS) or \`Plafond.bat\` (Windows).
+          No Rust, no build step. Instructions inside: \`LISEZ-MOI.txt\`.
+
+          | System | File |
+          |---|---|
+          | Linux x86_64 | \`plafond-${GITHUB_REF_NAME}-linux-x86_64.tar.gz\` |
+          | macOS Apple Silicon | \`plafond-${GITHUB_REF_NAME}-macos-arm64.tar.gz\` |
+          | Windows x86_64 | \`plafond-${GITHUB_REF_NAME}-windows-x86_64.zip\` |
+
+          Each binary was checked by CI before publication: compiled contract identical to the published one
+          (\`contracts/EMPREINTES.txt\`), and over-budget spends rejected by the real Kaspa script engine.
+          SHA-256 checksums: \`SHA256SUMS.txt\`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" paquets/* --prerelease --title "Plafond $GITHUB_REF_NAME (testnet)" --notes-file notes.md

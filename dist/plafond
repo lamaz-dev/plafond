@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Plafond : ouvre votre console (testnet-10). Le compte se crée ou s'ouvre dans la page.
+# Opens your Plafond console (testnet-10). Create or sign in to your account in the page.
+cd "$(dirname "$0")"
+export PLAFOND_DOSSIER="${PLAFOND_DOSSIER:-$(pwd)/compte}"
+export NOEUD_WRPC="${NOEUD_WRPC:-wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh}"
+exec ./vault-cli plafond

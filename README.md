@@ -9,7 +9,7 @@
 
 <p align="center">Even if it's hacked, an agent can't exceed its limit: the Kaspa network enforces it.</p>
 
-<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Website</a> · <a href="DEMO.md">Run the demo</a> · <a href="ROADMAP.md">Roadmap</a> · <a href="SECURITY.md">Security</a></p>
+<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Website</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Download</a> · <a href="DEMO.md">Run the demo</a> · <a href="ROADMAP.md">Roadmap</a> · <a href="SECURITY.md">Security</a></p>
 
 # Plafond
 

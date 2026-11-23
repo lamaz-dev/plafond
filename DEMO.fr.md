@@ -2,6 +2,8 @@
 
 *[English](DEMO.md) · Français*
 
+**Le plus rapide :** téléchargez le paquet prêt à l'emploi pour votre système sur [Releases](https://github.com/lamaz-dev/plafond/releases/latest), décompressez-le et lancez `./demo` (ou `Demo.bat`). Pas besoin de Rust. Pour compiler depuis le code source :
+
 ```
 git clone https://github.com/lamaz-dev/plafond.git
 cd plafond

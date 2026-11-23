@@ -9,7 +9,7 @@
 
 <p align="center">Même piraté, un agent ne peut pas dépasser sa limite : c'est le réseau Kaspa qui l'impose.</p>
 
-<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Site</a> · <a href="DEMO.fr.md">Lancer la démo</a> · <a href="ROADMAP.md">Feuille de route</a> · <a href="SECURITY.md">Sécurité</a></p>
+<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Site</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Télécharger</a> · <a href="DEMO.fr.md">Lancer la démo</a> · <a href="ROADMAP.md">Feuille de route</a> · <a href="SECURITY.md">Sécurité</a></p>
 
 # Plafond
 

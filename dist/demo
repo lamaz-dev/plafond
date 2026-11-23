@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Démo de bout en bout sur testnet-10, avec des clés jetables (aucun argent réel).
+# End-to-end demo on testnet-10 with throwaway keys (no real money).
+cd "$(dirname "$0")"
+export NOEUD_WRPC="${NOEUD_WRPC:-wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh}"
+exec ./vault-cli demo
