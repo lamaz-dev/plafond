@@ -698,7 +698,7 @@ const soldeTreso=()=>pos(etat.vue?etat.vue.solde_proprietaire_sompi:(etat.donnee
 function majSoldeTreso(x){if(etat.vue)etat.vue.solde_proprietaire_sompi=x;if(etat.donnees)etat.donnees.solde_proprietaire_sompi=x}
 function reqParts(sompi,sens){
   // moins de 10 requêtes : deux décimales (un plafond de 0,5 requête ne doit pas s'afficher « 0 »)
-  const x=pos(sompi)/tarif(),f=x<10?100:1,n=(sens==="haut"?Math.ceil(x*f-1e-9):Math.floor(x*f+1e-9))/f,exact=Math.abs(x-n)<1e-9;
+  const x=pos(sompi)/tarif(),f=x<10?100:1,n=((sens==="haut"?Math.ceil(x*f-1e-9):Math.floor(x*f+1e-9))/f)||0,exact=Math.abs(x-n)<1e-9; // ||0 : jamais « −0 »
   const un=etat.langue==="fr"?n<2:n===1;
   return [(exact?"":"~")+new Intl.NumberFormat(loc(),{maximumFractionDigits:2}).format(n),un?t("req1"):t("reqN")];
 }

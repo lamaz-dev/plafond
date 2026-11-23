@@ -8,5 +8,7 @@ if not exist vault-cli.exe (
   exit /b 1
 )
 set PLAFOND_DOSSIER=%~dp0compte
+rem Noeud fixe : les noeuds publics tires au hasard repondent parfois mal ; le votre : set NOEUD_WRPC=...
+if not defined NOEUD_WRPC set NOEUD_WRPC=wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
 vault-cli.exe plafond
 pause
