@@ -36,6 +36,7 @@ jobs:
             nom: windows-x86_64
             exe: vault-cli.exe
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -77,6 +78,8 @@ jobs:
 
   publier:
     needs: build
+    # Publie les systèmes construits même si l'un n'a pas trouvé de machine (paquets vérifiés un à un).
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -88,7 +91,7 @@ jobs:
           merge-multiple: true
       - name: Empreintes SHA-256
         working-directory: paquets
-        run: sha256sum plafond-* | tee SHA256SUMS.txt
+        run: ls plafond-* && sha256sum plafond-* | tee SHA256SUMS.txt
       - name: "Version sur la page Releases (marquée préversion : testnet, non audité)"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -99,11 +102,9 @@ jobs:
           Download the file for your system, unpack it, then run \`plafond\` (Linux/macOS) or \`Plafond.bat\` (Windows).
           No Rust, no build step. Instructions inside: \`LISEZ-MOI.txt\`.
 
-          | System | File |
-          |---|---|
-          | Linux x86_64 | \`plafond-${VERSION}-linux-x86_64.tar.gz\` |
-          | macOS Apple Silicon | \`plafond-${VERSION}-macos-arm64.tar.gz\` |
-          | Windows x86_64 | \`plafond-${VERSION}-windows-x86_64.zip\` |
+          | File |
+          |---|
+          $(cd paquets && for f in plafond-*; do echo "| $f |"; done)
 
           Each binary was checked by CI before publication: compiled contract identical to the published one
           (\`contracts/EMPREINTES.txt\`), and over-budget spends rejected by the real Kaspa script engine.
