@@ -841,3 +841,14 @@ Solde du propriétaire : 994.75 TKAS (6 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-24 16:51 UTC
+
+```
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632037675
+Solde du propriétaire : 994.75 TKAS (6 UTXO)
+Coffre : pas encore déployé
+
+```
