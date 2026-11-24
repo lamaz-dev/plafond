@@ -20,7 +20,7 @@
 
 ## 2. Ce que la v0.6 perd
 
-1. **La rafale.** v0.5.1 permet plusieurs paiements enchaînés, sans attendre de confirmation,
+1. **La rafale** *(atténuée le 24 nov., soir : jusqu'à 4 pièces par mandat, donc 4 achats d'affilée ; la période est recalculée pour que k·(C + C·P/R) = budget, outil seulement, contrat inchangé)*. v0.5.1 permet plusieurs paiements enchaînés, sans attendre de confirmation,
    jusqu'à la capacité. v0.6 permet un paiement d'au plus `C`, puis il faut attendre en
    proportion. Pour un agent x402 qui paie souvent, il faut **plusieurs pièces** (dépôts du
    propriétaire) ou une **ardoise** alimentée par le cœur (R55).

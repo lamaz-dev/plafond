@@ -176,8 +176,8 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     let r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(deployer(&owner, &k)));
     let ok = match &r {
         Ok(tx) => note(2, "Lui attribuer un budget", true, format!(
-            "2 unités par heure, 0,5 au plus par achat ; courbe promise : 0 maintenant, au plus {} au bout d'une heure, jamais plus que {} (le dépôt) ; coffre ouvert : {}",
-            unites(regles.maximum_sur(36_000) - regles.capacite), unites(regles.depot as i64), explorer(tx))),
+            "2 unités par heure, 0,5 au plus par achat, {} pièce(s) ; courbe promise : 0 maintenant, au plus {} au bout d'une heure, jamais plus que {} (le dépôt) ; coffre ouvert : {}",
+            regles.pieces, unites((regles.capacite as i128 * regles.pieces as i128 * 36_000 / regles.recharge_daa as i128).min(regles.depot as i128) as i64), unites(regles.depot as i64), explorer(tx))),
         Err(e) => note(2, "Lui attribuer un budget", false, e.to_string()),
     };
     if !ok {

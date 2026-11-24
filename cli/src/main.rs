@@ -108,7 +108,18 @@ pub struct Regles {
     pub budget: i64,
     #[serde(default)]
     pub periode_daa: i64,
+    /// Nombre de pièces du coffre (1 à 4) : autant d'achats possibles d'affilée. Chaque pièce a la
+    /// capacité C ; la période R est calculée pour que k·(C + C·P/R) = budget.
+    #[serde(default = "une_piece")]
+    pub pieces: i64,
 }
+
+fn une_piece() -> i64 {
+    1
+}
+
+/// Pièces au plus par mandat : assez pour une petite rafale, peu pour garder le gel léger.
+pub const PIECES_MAX: i64 = 4;
 
 impl Regles {
     pub fn standard() -> Self {
@@ -130,19 +141,26 @@ impl Regles {
             return Err("le plafond par achat ne peut pas dépasser la moitié du budget de la période".into());
         }
         let capacite = plafond;
-        // R = ⌈C·P / (budget − C)⌉ : arrondi au-dessus, la dépense sur la période reste ≤ budget.
-        let recharge = ((capacite as i128 * periode_daa as i128 + (budget - capacite) as i128 - 1) / (budget - capacite) as i128) as i64;
+        // k pièces : k achats d'affilée possibles. Il faut budget > k·C (au moins la moitié du budget
+        // reste pour la recharge) et des pièces au-dessus du plancher KIP-9.
+        let depot_prevu = (budget as u64).max(100_000_000);
+        let k = (budget / (2 * capacite)).clamp(1, PIECES_MAX).min((depot_prevu / (2 * coeur_plancher())).max(1) as i64);
+        let kc = k * capacite;
+        // R = ⌈k·C·P / (budget − k·C)⌉ : arrondi au-dessus, la dépense sur la période reste ≤ budget.
+        let recharge = ((kc as i128 * periode_daa as i128 + (budget - kc) as i128 - 1) / (budget - kc) as i128) as i64;
         if recharge > coeur::PERIODE_MAX || capacite > i64::MAX / recharge {
             return Err("réglages hors des limites du contrat : choisissez un plafond plus faible ou une période plus courte".into());
         }
         // À l'ouverture, le coffre reçoit une période complète de budget (ajustable ensuite par « Ajouter des fonds »).
         let depot = (budget as u64).max(100_000_000);
-        Ok(Regles { capacite, recharge_daa: recharge, plafond, depot, budget, periode_daa })
+        Ok(Regles { capacite, recharge_daa: recharge, plafond, depot, budget, periode_daa, pieces: k })
     }
 
     /// Dépense maximale possible sur une durée donnée à partir d'un coffre plein (borne prouvée).
     pub fn maximum_sur(&self, duree_daa: i64) -> i64 {
-        self.capacite.saturating_add(((self.capacite as i128 * duree_daa as i128) / self.recharge_daa as i128).min(i64::MAX as i128) as i64)
+        let k = self.pieces.max(1);
+        let une = self.capacite.saturating_add(((self.capacite as i128 * duree_daa as i128) / self.recharge_daa as i128).min(i64::MAX as i128) as i64);
+        une.saturating_mul(k)
     }
 }
 
@@ -171,6 +189,7 @@ fn regles_ancien() -> Regles {
         depot: FUND,
         budget: 2 * CAPACITY,
         periode_daa: REFILL,
+        pieces: 1,
     })
 }
 

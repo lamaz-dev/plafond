@@ -101,11 +101,18 @@ async fn financer(c: &KaspaRpcClient, owner: &Keypair, montant: u64) -> Res<(Vec
     Ok((entries, inputs, total))
 }
 
-/// Envoie `montant` du propriétaire vers l'adresse du coffre (création ou rechargement).
-async fn verser(c: &KaspaRpcClient, owner: &Keypair, art: &SilAbiArtifact, montant: u64) -> Res<String> {
+/// Découpe un dépôt en `k` pièces presque égales (la dernière prend le reste).
+pub fn decouper(montant: u64, k: i64) -> Vec<u64> {
+    let k = k.max(1) as u64;
+    let part = montant / k;
+    (0..k).map(|i| if i + 1 == k { montant - part * (k - 1) } else { part }).collect()
+}
+
+/// Envoie `montant` du propriétaire vers l'adresse du coffre, en `k` pièces (création ou rechargement).
+async fn verser(c: &KaspaRpcClient, owner: &Keypair, art: &SilAbiArtifact, montant: u64, k: i64) -> Res<String> {
     let (entries, inputs, total) = financer(c, owner, montant).await?;
     let fee = FEE * inputs.len() as u64;
-    let mut outputs = vec![TransactionOutput::new(montant, vault_spk(art))];
+    let mut outputs: Vec<TransactionOutput> = decouper(montant, k).into_iter().map(|v| TransactionOutput::new(v, vault_spk(art))).collect();
     let rendu = total - montant - fee;
     if rendu > 0 {
         outputs.push(TransactionOutput::new(rendu, pay_to_address_script(&address(owner))));
@@ -129,17 +136,18 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
     let art = coeur.artifact()?;
     let c = connect().await?;
     let daa = virtual_daa(&c).await?;
-    let txid = verser(&c, owner, &art, r.depot).await?;
+    let txid = verser(&c, owner, &art, r.depot, r.pieces).await?;
     let e = EtatCoeur {
         version: VERSION.into(),
         capacite: coeur.capacite,
         periode: coeur.periode,
         agent: hex::encode(&coeur.agent),
         cree_daa: daa,
-        apports: vec![Apport { txid: txid.clone(), sompi: r.depot, daa }],
+        // Une entrée par pièce : la courbe promise est la somme des courbes des pièces.
+        apports: decouper(r.depot, r.pieces).into_iter().map(|sompi| Apport { txid: txid.clone(), sompi, daa }).collect(),
     };
     enregistrer(&e)?;
-    println!("Coffre créé (cœur v0.6) : {} TKAS à l'adresse {}", r.depot as f64 / 1e8, adresse(&art)?);
+    println!("Coffre créé (cœur v0.6) : {} TKAS en {} pièce(s) à l'adresse {}", r.depot as f64 / 1e8, r.pieces, adresse(&art)?);
     println!("Transaction : {}", explorer(&txid));
     liberer(&c).await?;
     Ok(txid)
@@ -152,7 +160,7 @@ pub async fn recharger(owner: &Keypair, agent: &Keypair, montant: u64) -> Res<St
     let art = coeur_de(&xonly(owner), &agent_pk(agent)).artifact()?;
     let c = connect().await?;
     let daa = virtual_daa(&c).await?;
-    let txid = verser(&c, owner, &art, montant).await?;
+    let txid = verser(&c, owner, &art, montant, 1).await?;
     e.apports.push(Apport { txid: txid.clone(), sompi: montant, daa });
     enregistrer(&e)?;
     println!("Coffre rechargé de {} TKAS (nouvelle pièce) : {}", montant as f64 / 1e8, explorer(&txid));
@@ -405,6 +413,26 @@ mod tests {
         let plein: Vec<Piece> = (0..LOT_GEL as u32).map(|i| p(i, coeur_plancher())).collect();
         let (tx, entries) = tx_gel(&art, &plein, &k(1), 2 * FEE * LOT_GEL as u64).unwrap();
         assert!(masse::masses(&tx, &entries).unwrap().standard());
+    }
+
+    /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
+    #[test]
+    fn plusieurs_pieces_rafale_et_budget_tenus() {
+        let r = crate::Regles::calculer(4_000_000_000, crate::JOUR_DAA, 200_000_000).unwrap(); // 40/jour, 2 par achat
+        assert_eq!(r.pieces, crate::PIECES_MAX);
+        assert!(r.maximum_sur(r.periode_daa) <= r.budget, "jamais plus que le budget sur la période");
+        let c = coeur(r.capacite, r.recharge_daa);
+        let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
+        let parts = decouper(r.depot, r.pieces);
+        assert_eq!(parts.iter().sum::<u64>(), r.depot);
+        let pieces: Vec<Piece> = parts.iter().map(|v| Piece { outpoint: op, valeur: *v, creation: Some(0) }).collect();
+        let etat = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+            apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect() };
+        let v = Vue { coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
+        // Au bout d'une période de recharge, k achats au plafond sont possibles d'affilée.
+        assert_eq!(v.immediate(), r.pieces as u64 * r.capacite as u64);
+        // La courbe promise sur la période ne dépasse pas le budget.
+        assert!(v.courbe(r.periode_daa as u64) <= r.budget as u64);
     }
 
     #[test]
