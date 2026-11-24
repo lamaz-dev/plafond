@@ -144,8 +144,79 @@ fn origine() -> Option<Etat> {
     serde_json::from_str(&fs::read_to_string(state_path().replace(".json", "-origine.json")).ok()?).ok()
 }
 
-/// Tableau de bord : tout est lu sur la chaîne (état, historique vérifié saut par saut).
+/// Tableau de bord du coffre (cœur v0.6) : tout est lu sur le nœud (les pièces de l'adresse).
 async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<Value> {
+    // Ancien coffre v0.5.1 : seulement s'il n'y a pas de coffre v0.6 (l'origine d'un ancien coffre
+    // gelé peut rester sur le disque).
+    if crate::coffre::charger().is_none() && (crate::load_state().is_ok() || origine().is_some()) {
+        return tableau_ancien(owner, agent, cours).await;
+    }
+    let pk = xonly(owner);
+    let rg = crate::regles();
+    let regles = regles_json(&rg);
+    let adresse = address(owner).to_string();
+    let commun = json!({ "tarif_reference_sompi": tarif_reference(), "qr_adresse": qr(&adresse), "mot_de_passe_requis": std::env::var("PROPRIETAIRE_CLE").is_ok() });
+    let Some(etat) = crate::coffre::charger() else {
+        let mut r = json!({ "sante": "aucun", "regles": regles, "cours": cours, "adresse_proprietaire": adresse });
+        fusion(&mut r, &commun);
+        return Ok(r);
+    };
+    let c = connect_silencieux().await?;
+    let v = crate::coffre::vue(&c, &pk, &crate::agent_pk(agent)).await;
+    let solde_proprio: Res<u64> = async { Ok(c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum()) }.await;
+    liberer(&c).await?;
+    let (v, solde_proprio) = (v?, solde_proprio?);
+    let solde = v.solde();
+    let apports = v.apports();
+    // Perte nette depuis la création : ce qui est sorti du coffre (paiements et frais).
+    let depense = apports.saturating_sub(solde);
+    let reserve = crate::coeur_plancher();
+    let sante = if solde == 0 || solde <= reserve { "epuise" } else if depense * 5 >= apports * 4 { "alerte" } else { "normal" };
+    let jour = crate::JOUR_DAA as u64;
+    let delai_s = |montant: u64| crate::coffre::delai(&v.coeur, &v.pieces, v.now, montant + FEE).map(|d| d / 10);
+    // La promesse faite à la création : perte nette maximale à chaque date (spec v0.6, §1b).
+    let courbe: Vec<Value> = [0u64, 3_600, 86_400, 7 * 86_400, 30 * 86_400, 90 * 86_400]
+        .iter()
+        .map(|s| json!({ "secondes": s, "perte_max_sompi": v.courbe(etat.cree_daa + s * 10) }))
+        .collect();
+    let historique: Vec<Value> = etat.apports.iter().rev().map(|a| json!({ "genre": "apport", "txid": a.txid, "montant_sompi": a.sompi, "instant_daa": a.daa })).collect();
+    let mut r = json!({
+        "sante": sante,
+        "regles": regles,
+        "solde_coffre_sompi": solde,
+        "exposition_immediate_sompi": v.immediate(),
+        "pire_24h_sompi": v.fenetre(jour),
+        "risque_pieces": v.pieces.iter().map(|p| json!({ "params": { "capacite": v.coeur.capacite, "periode": v.coeur.periode }, "creation": p.creation.unwrap_or(v.now), "valeur": p.valeur })).collect::<Vec<_>>(),
+        "risque_now": v.now,
+        "reserve_technique_sompi": reserve.min(solde),
+        "depense_periode_sompi": depense,
+        "depense_depuis_creation_sompi": depense,
+        "apports_sompi": apports,
+        "courbe": courbe,
+        "perte_nette_depuis_creation_sompi": depense,
+        "courbe_maintenant_sompi": v.courbe(v.now),
+        "prochain_achat_min_secondes": delai_s(2_000_000),
+        "prochain_achat_plafond_secondes": delai_s((rg.plafond as u64).saturating_sub(FEE)),
+        "solde_proprietaire_sompi": solde_proprio,
+        "adresse_proprietaire": adresse,
+        "historique": historique,
+        "cours": cours,
+        "technique": {
+            "reseau": "Kaspa testnet-10",
+            "contrat": "Plafond, cœur v0.6 (sans mémoire, covenant SilverScript)",
+            "adresse_coffre": v.adresse,
+            "pieces": v.pieces.len(),
+            "capacite_sompi": v.coeur.capacite,
+            "periode_daa": v.coeur.periode,
+            "empreinte_source_contrat": hex::encode(blake2b_simd::Params::new().hash_length(32).hash(crate::coeur::SOURCE.as_bytes()).as_bytes()),
+        },
+    });
+    fusion(&mut r, &commun);
+    Ok(r)
+}
+
+/// Tableau de bord d'un ancien coffre v0.5.1 (historique vérifié saut par saut).
+async fn tableau_ancien(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<Value> {
     let pk = xonly(owner);
     let rg = crate::regles();
     let regles = regles_json(&rg);
@@ -218,16 +289,15 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let reserve = masse::survival_floor(FEE) as i64;
     // Moteur de risque (spec/moteur-de-risque.md) : bornes garanties par le contrat, sans déduire la
     // réserve technique (borne prudente : le chiffre affiché n'est jamais en dessous du vrai pire cas).
-    let couloir = crate::risque::Couloir { agent: hex::encode(xonly(agent)), params: p, creation, valeur: etat.valeur };
-    let expo = couloir.immediate(now);
-    let pire_24h = couloir.fenetre(now, crate::JOUR_DAA);
+    let a = p.available(now, creation).clamp(0, etat.valeur as i64);
+    let expo = a;
+    let pire_24h = (a as i128 + p.capacity as i128 * crate::JOUR_DAA as i128 / p.refill_period.max(1) as i128).min(etat.valeur as i128) as i64;
     let mut r = json!({
         "sante": sante,
         "regles": regles,
         "solde_coffre_sompi": etat.valeur,
         "exposition_immediate_sompi": expo,
         "pire_24h_sompi": pire_24h,
-        "risque_couloir": { "params": serde_json::to_value(&couloir.params)?, "creation": creation, "valeur": etat.valeur, "now": now },
         "reserve_technique_sompi": reserve.min(etat.valeur as i64),
         "depense_periode_sompi": depense_periode,
         "solde_proprietaire_sompi": solde_proprio,
@@ -665,10 +735,13 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                                     ligne[cle] = t[cle].clone();
                                 }
                                 ligne["achats"] = json!(t["historique"].as_array().map(|h| h.iter().filter(|m| m["genre"] == "achat").count()).unwrap_or(0));
-                                let rc = &t["risque_couloir"];
-                                if let (Ok(params), Some(creation), Some(valeur), Some(now)) = (serde_json::from_value(rc["params"].clone()), rc["creation"].as_i64(), rc["valeur"].as_u64(), rc["now"].as_i64()) {
+                                if let Some(now) = t["risque_now"].as_i64() {
                                     instant = instant.max(now); // le plus tard : borne prudente (le disponible ne fait que croître)
-                                    couloirs.push(crate::risque::Couloir { agent: a.nom.clone(), params, creation, valeur });
+                                }
+                                for rc in t["risque_pieces"].as_array().into_iter().flatten() {
+                                    if let (Ok(params), Some(creation), Some(valeur)) = (serde_json::from_value(rc["params"].clone()), rc["creation"].as_i64(), rc["valeur"].as_u64()) {
+                                        couloirs.push(crate::risque::Couloir { agent: a.nom.clone(), params, creation, valeur });
+                                    }
                                 }
                             }
                             Err(e) => ligne["erreur"] = json!(e.to_string()),

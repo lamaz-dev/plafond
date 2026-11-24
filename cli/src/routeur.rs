@@ -48,46 +48,36 @@ fn reponse(statut: u16, corps: Value) -> tiny_http::Response<std::io::Cursor<Vec
         .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap())
 }
 
-/// Budget disponible maintenant, selon l'état du coffre et le score DAA du réseau.
+/// Budget disponible maintenant, lu sur le nœud (pièces du coffre et leur âge).
 async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
-    let e = load_state()?;
     let c = connect().await?;
-    let (now, creation) = instants(&c, owner_pk, agent, &e).await?;
+    let v = coffre::vue(&c, owner_pk, &xonly(agent)).await;
     liberer(&c).await?;
-    let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
+    let v = v?;
     Ok(json!({
-        "coffre": { "txid": e.txid, "index": e.index, "valeur_sompi": e.valeur },
-        "disponible_sompi": p.available(now, creation),
-        "capacite_sompi": p.capacity,
-        "max_par_paiement_sompi": p.max_per_payment,
+        "coffre": { "adresse": v.adresse, "pieces": v.pieces.len(), "valeur_sompi": v.solde() },
+        "disponible_sompi": v.immediate(),
+        "capacite_sompi": v.coeur.capacite,
+        "max_par_paiement_sompi": (v.coeur.capacite as u64).saturating_sub(FEE),
         "frais_par_paiement_sompi": FEE,
-        "recharge_complete_daa": p.refill_period,
-        "garanti_par": "covenant AgentBudget (consensus Kaspa)",
+        "recharge_complete_daa": v.coeur.periode,
+        "prochain_paiement_plafond_secondes": coffre::delai(&v.coeur, &v.pieces, v.now, v.coeur.capacite as u64).map(|d| d / 10),
+        "garanti_par": "covenant Plafond cœur v0.6 (verrou relatif du consensus Kaspa)",
     }))
 }
 
-/// Paiement de démonstration diffusé sans contrôle local (agent compromis simulé).
+/// Paiement de démonstration diffusé sans contrôle local (agent compromis simulé) : la
+/// transaction annonce tout l'âge réel de la pièce, et c'est le réseau qui tranche.
 async fn agent_compromis(owner_pk: &[u8], agent: &Keypair, service: &Address, montant: i64) -> Res<Value> {
-    let e = load_state()?;
-    let c = connect().await?;
-    let (now, creation) = instants(&c, owner_pk, agent, &e).await?;
-    let p = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
-    let (tx, next) = build_pay_pk(owner_pk, agent, &e, montant, pay_to_address_script(service), now, creation)?;
-    let r = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
-        Ok(txid) => {
-            save_state(&next)?;
-            json!({ "accepte_par_le_reseau": true, "transaction": txid.to_string(), "explorateur": explorer(&txid.to_string()) })
-        }
+    Ok(match coffre::payer(owner_pk, agent, montant.max(0) as u64, pay_to_address_script(service), true, 0).await {
+        Ok(txid) => json!({ "accepte_par_le_reseau": true, "transaction": txid, "explorateur": explorer(&txid) }),
         Err(err) => json!({
             "accepte_par_le_reseau": false,
             "raison_du_noeud": err.to_string(),
             "montant_sompi": montant,
-            "max_par_paiement_sompi": p.max_per_payment,
-            "disponible_sompi": p.available(now, creation),
+            "max_par_paiement_sompi": (regles().capacite as u64).saturating_sub(FEE),
         }),
-    };
-    liberer(&c).await?;
-    Ok(r)
+    })
 }
 
 fn lire_json(req: &mut tiny_http::Request) -> Result<Value, String> {
@@ -279,10 +269,10 @@ pub fn lancer(handle: Handle, cfg: Config) -> Res<()> {
         return Err("ROUTEUR_CLE trop courte (32 caractères minimum)".into());
     }
     let demo = cfg.demo.is_some();
-    let p0 = VaultParams::pour(&cfg.owner_pk, &cfg.agent, 0, 0);
+    let plafond = (regles().capacite as u64).saturating_sub(FEE) as i64;
     let politique = Politique {
         origines: env::var("ROUTEUR_ORIGINES").map(|v| v.split(',').map(|s| s.trim().trim_end_matches('/').to_ascii_lowercase()).filter(|s| !s.is_empty()).collect()).unwrap_or_default(),
-        max_requete: env::var("ROUTEUR_MAX_REQUETE").ok().and_then(|v| v.parse().ok()).unwrap_or(p0.max_per_payment).min(p0.max_per_payment),
+        max_requete: env::var("ROUTEUR_MAX_REQUETE").ok().and_then(|v| v.parse().ok()).unwrap_or(plafond).min(plafond),
         demo,
     };
     x402::BLOQUER_INTERNE.store(!demo, std::sync::atomic::Ordering::Relaxed);

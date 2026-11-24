@@ -1,1 +1,14 @@
-essai-relais # nouvel essai horodaté avec id de transaction, demandé sous kaspa-x402#40, 24 nov. 2026
+# Essai complet du cœur v0.6 sur testnet-10 (24 nov. 2026)
+etat
+deployer                       # coffre v0.6 : 4 TKAS/h, 0,5 au plus par achat, 5 TKAS déposés, démarre à zéro
+pause 30
+etat                           # disponible ≈ 0 : un mandat neuf démarre à zéro
+payer 5000000                  # 0,05 TKAS : refusé localement, budget pas encore disponible (≈ 70 s)
+pause 240
+essai-routeur                  # agent Python : achat 0,2 ; 1 TKAS refusé ; agent compromis refusé par le réseau
+payer 45000000 --sans-verif    # juste après un achat : le réseau refuse (verrou relatif)
+pause 90
+payer 5000000                  # 0,05 TKAS à l'heure : accepté
+etat
+recuperer                      # gel : toutes les pièces reviennent au propriétaire
+etat

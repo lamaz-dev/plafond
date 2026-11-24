@@ -1,15 +1,22 @@
 //! Moteur de risque (spec/moteur-de-risque.md) : perte maximale garantie, calculée à partir des
 //! paramètres des contrats et de l'état de la chaîne. Lecture seule : ne détient aucun fonds.
-//! Test de garantie : `fuzz::depense_reelle_sous_la_perte_maximale_annoncee`.
+//! Test de garantie : les fuzzings de `coeur.rs` vérifient `Coeur::fenetre` fenêtre par fenêtre.
 
-use crate::VaultParams;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// Un couloir AgentBudget tel qu'il est sur la chaîne.
+/// Rythme d'un coffre cœur v0.6 : capacité C et période R (tout ce qu'il faut pour borner).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rythme {
+    pub capacite: i64,
+    pub periode: i64,
+}
+
+/// Une pièce d'un coffre, telle qu'elle est sur la chaîne.
 pub struct Couloir {
     pub agent: String,
-    pub params: VaultParams,
-    /// Score DAA d'inscription du coffre courant (`OpTxInputDaaScore`).
+    pub params: Rythme,
+    /// Score DAA d'inscription de la pièce (prudence : non confirmée = prête maintenant).
     pub creation: i64,
     pub valeur: u64,
 }
@@ -22,22 +29,26 @@ pub struct Engagement {
 }
 
 impl Couloir {
-    /// M1 du couloir : `min(V, A)`, A étant exactement ce que le script accepterait maintenant.
+    fn coeur(&self) -> crate::coeur::Coeur {
+        crate::coeur::Coeur { owner: vec![], agent: vec![], capacite: self.params.capacite.max(1), periode: self.params.periode.max(1) }
+    }
+    fn age(&self, now: i64) -> u64 {
+        (now - self.creation).max(0) as u64
+    }
+
+    /// M1 de la pièce : `min(V, C, C·âge/R)`, exactement ce que le script et le réseau accepteraient.
     pub fn immediate(&self, now: i64) -> i64 {
-        self.params.available(now, self.creation).clamp(0, self.valeur as i64)
+        self.coeur().immediate(self.valeur, self.age(now)) as i64
     }
 
-    /// M2 du couloir sur D scores DAA : `min(V, A + C × D / R)` (lemme et théorème de borne-de-perte.md).
+    /// M2 de la pièce sur D : `min(V, min(C, C·âge/R) + C·D/R)` (spec/borne-de-perte-v0.6.md, §1).
     pub fn fenetre(&self, now: i64, d: i64) -> i64 {
-        let a = self.params.available(now, self.creation).max(0) as i128;
-        let recharge = self.params.capacity as i128 * d.max(0) as i128 / self.params.refill_period.max(1) as i128;
-        (a + recharge).min(self.valeur as i128) as i64
+        self.coeur().fenetre(self.valeur, self.age(now), d.max(0) as u64) as i64
     }
 
-    /// Vendeurs payables : `None` = tout vendeur (pas de liste blanche).
+    /// Vendeurs payables : le cœur v0.6 n'a pas de liste blanche (tout vendeur).
     pub fn vendeurs(&self) -> Option<Vec<String>> {
-        let zero = hex::encode([0u8; 32]);
-        (self.params.use_allowlist != 0).then(|| self.params.payees.iter().filter(|p| **p != zero).cloned().collect())
+        None
     }
 }
 
@@ -99,43 +110,35 @@ pub fn rapport(couloirs: &[Couloir], engagements: &[Engagement], now: i64, d: i6
 mod tests {
     use super::*;
 
-    fn couloir(agent: &str, tokens: i64, valeur: u64, liste: bool) -> Couloir {
-        let k = |b: u8| secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let mut params = VaultParams::ours(&k(1), &k(2), tokens, 1_000);
-        params.capacity = 100;
-        params.refill_period = 1_000;
-        if liste {
-            params.use_allowlist = 1;
-            params.payees[0] = "aa".repeat(32);
-        }
-        Couloir { agent: agent.into(), params, creation: 1_000, valeur }
+    fn couloir(agent: &str, valeur: u64, creation: i64) -> Couloir {
+        Couloir { agent: agent.into(), params: Rythme { capacite: 100, periode: 1_000 }, creation, valeur }
     }
 
     #[test]
     fn formules_de_la_spec() {
-        let c = couloir("a", 40, 10_000, false);
-        assert_eq!(c.immediate(1_000), 40); // aucun temps écoulé
-        assert_eq!(c.immediate(1_500), 90); // 40 + 500 × 100 / 1000
+        let c = couloir("a", 10_000, 1_000);
+        assert_eq!(c.immediate(1_000), 0); // pièce neuve : rien tout de suite
+        assert_eq!(c.immediate(1_500), 50); // 500 × 100 / 1000
         assert_eq!(c.immediate(9_999), 100); // plafonné à la capacité
-        assert_eq!(c.fenetre(1_500, 2_000), 290); // 90 + 2000 × 100 / 1000
-        let petit = couloir("a", 40, 60, false);
-        assert_eq!((petit.immediate(1_500), petit.fenetre(1_500, 2_000)), (60, 60)); // jamais plus que le coffre
+        assert_eq!(c.fenetre(1_500, 2_000), 250); // 50 + 2000 × 100 / 1000
+        assert_eq!(c.fenetre(9_999, 2_000), 300); // 100 + 200
+        let petit = couloir("a", 60, 0);
+        assert_eq!((petit.immediate(1_500), petit.fenetre(1_500, 2_000)), (60, 60)); // jamais plus que la pièce
     }
 
     #[test]
     fn vendeurs_et_limites_affichees() {
         let r = rapport(
-            &[couloir("a", 40, 10_000, false), couloir("b", 40, 10_000, true)],
+            &[couloir("a", 10_000, 0), couloir("b", 10_000, 0)],
             &[Engagement { agent: "b".into(), vendeur: "bb".repeat(32), valeur: 7 }],
             1_000,
             1_000,
         );
-        assert_eq!(r["perte_max_immediate_sompi"], "87");
-        assert_eq!(r["perte_max_fenetre_sompi"], "287");
+        assert_eq!(r["perte_max_immediate_sompi"], "207");
+        assert_eq!(r["perte_max_fenetre_sompi"], "407");
         assert_eq!(r["perte_max_mandats_sompi"], "20007"); // capital alloué + séquestre ouvert
         let v = r["par_vendeur"].as_array().unwrap();
-        assert!(v.iter().any(|x| x["vendeur"] == "*" && x["fenetre"] == "140" && x["restreint"] == false));
-        assert!(v.iter().any(|x| x["vendeur"] == "aa".repeat(32) && x["fenetre"] == "140"));
+        assert!(v.iter().any(|x| x["vendeur"] == "*" && x["fenetre"] == "400" && x["restreint"] == false));
         assert!(r["non_couvert"].as_array().unwrap().iter().any(|x| x.as_str().unwrap().contains("agent:a sans liste blanche")));
         assert_eq!(r["par_agent"].as_array().unwrap().len(), 2);
     }

@@ -1,4 +1,5 @@
-//! Tests à propriétés (fuzzing d'état) du coffre AgentBudget et du séquestre DeliveryEscrow.
+//! Tests à propriétés (fuzzing d'état) de l'ancien coffre AgentBudget v0.5.1 (gardé pour rapatrier
+//! les coffres existants) et du séquestre DeliveryEscrow. Le cœur v0.6 a les siens dans coeur.rs.
 //!
 //! Principe : un modèle de référence (quelques lignes de Rust, lisibles par un auditeur) prédit si
 //! chaque transaction doit être acceptée. `proptest` génère des séquences aléatoires d'actions honnêtes
@@ -399,53 +400,8 @@ proptest! {
         }
     }
 
-    /// Moteur de risque (spec/moteur-de-risque.md) : à un instant quelconque de la vie du coffre, ce
-    /// que le moteur annonce borne ce qu'un agent avide fait réellement accepter par le moteur de
-    /// script : une rafale immédiate ≤ M1, et toute dépense sur [now, now + D] ≤ M2(D).
-    #[test]
-    fn depense_reelle_sous_la_perte_maximale_annoncee(
-        avant in prop::collection::vec((0i64..REFILL / 2, 0i64..500, 0u8..2), 0..6),
-        apres in prop::collection::vec((0i64..REFILL / 2, 0i64..500, 0u8..2), 1..25),
-        d in 1i64..3 * REFILL,
-        value in 200_000_000u64..2_000_000_000,
-    ) {
-        let payer = |m: &mut Model, attente: i64, back: i64, mode: u8| -> i64 {
-            m.chain += attente;
-            let now = (m.chain - back).max(m.last);
-            let dispo = m.available(now) - MAX_FEE;
-            let amount = if mode == 0 { dispo.min(MAX_PER_PAYMENT) } else { (dispo / 3).min(MAX_PER_PAYMENT) };
-            if amount <= 0 {
-                return 0;
-            }
-            let (ok, _, after) = try_pay(m, amount, MAX_FEE, m.chain - now, &Cheat::None);
-            if !ok {
-                return 0;
-            }
-            *m = after;
-            amount + MAX_FEE
-        };
-        let mut m = Model::neuf(value, CAPACITY, 1_000_000, 1_000_000);
-        for (attente, back, mode) in avant {
-            payer(&mut m, attente, back, mode);
-        }
-        let now = m.chain;
-        let mut p = VaultParams::ours(&k(1), &k(2), m.tokens, m.last);
-        p.capacity = CAPACITY;
-        p.refill_period = REFILL;
-        let c = crate::risque::Couloir { agent: "a".into(), params: p, creation: m.created, valeur: m.value };
-        let (m1, m2) = (c.immediate(now), c.fenetre(now, d));
-        let mut rafale = m.clone();
-        let r = drainer(&mut rafale, now);
-        prop_assert!(r <= m1, "rafale immédiate {} > M1 annoncée {}", r, m1);
-        let mut total = 0i64;
-        for (attente, back, mode) in apres {
-            if m.chain + attente > now + d {
-                break;
-            }
-            total += payer(&mut m, attente, back, mode);
-        }
-        prop_assert!(total <= m2, "dépense {} sur la fenêtre > M2 annoncée {}", total, m2);
-    }
+    // Le moteur de risque porte désormais sur le cœur v0.6 : sa garantie est vérifiée dans
+    // coeur.rs (agent_avide_*), fenêtre par fenêtre et sur la courbe.
 }
 
 /// Non-régression de l'attaque du « temps mis de côté » (constat du 20 nov. 2026 sur v0.4) :

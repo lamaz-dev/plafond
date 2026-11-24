@@ -30,6 +30,27 @@ pub struct Coeur {
     pub periode: i64,
 }
 
+/// Paramètres publics d'un coffre, tels qu'un vendeur les reçoit (clés en hexadécimal) : tout ce
+/// qu'il faut pour recompiler le script et retrouver son adresse.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Publics {
+    pub owner: String,
+    pub agent: String,
+    pub capacite: i64,
+    pub periode: i64,
+}
+
+impl Publics {
+    pub fn coeur(&self) -> Res<Coeur> {
+        let c = Coeur { owner: hex::decode(&self.owner)?, agent: hex::decode(&self.agent)?, capacite: self.capacite, periode: self.periode };
+        if c.owner.len() != 32 || c.agent.len() != 32 {
+            return Err("clés du coffre invalides (32 octets attendus)".into());
+        }
+        c.verifier()?;
+        Ok(c)
+    }
+}
+
 impl Coeur {
     pub fn verifier(&self) -> Res<()> {
         if self.capacite <= 0 {
@@ -42,6 +63,10 @@ impl Coeur {
             return Err("capacité × période déborde".into());
         }
         Ok(())
+    }
+
+    pub fn publics(&self) -> Publics {
+        Publics { owner: hex::encode(&self.owner), agent: hex::encode(&self.agent), capacite: self.capacite, periode: self.periode }
     }
 
     pub fn artifact(&self) -> Res<SilAbiArtifact> {
@@ -87,12 +112,14 @@ pub fn build_pay(
     montant: u64,
     frais: u64,
     agent: &Keypair,
+    sequence: Option<u64>,
 ) -> Res<Transaction> {
     let spent = montant.checked_add(frais).filter(|s| *s <= valeur).ok_or("montant + frais au-delà de la pièce")?;
     if spent as i64 > c.capacite {
         return Err(format!("dépense {spent} au-delà de la capacité {}", c.capacite).into());
     }
-    let input = TransactionInput::new_with_compute_budget(piece, vec![], c.attente(spent as i64), CB_PAY);
+    // `sequence` forcée : seulement pour démontrer le refus du réseau (paiement trop tôt).
+    let input = TransactionInput::new_with_compute_budget(piece, vec![], sequence.unwrap_or_else(|| c.attente(spent as i64)), CB_PAY);
     let outputs = vec![
         TransactionOutput { value: montant, script_public_key: beneficiaire, covenant: None },
         TransactionOutput { value: valeur - spent, script_public_key: vault_spk(art), covenant: None },
@@ -190,7 +217,7 @@ mod tests {
         let c = coeur(200_000_000, 864_000);
         let art = c.artifact().unwrap();
         let valeur = 1_000_000_000;
-        let tx = build_pay(&c, &art, TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), valeur, externe(), 50_000_000, 20_000, &k(2)).unwrap();
+        let tx = build_pay(&c, &art, TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), valeur, externe(), 50_000_000, 20_000, &k(2), None).unwrap();
         let entree = UtxoEntry::new(valeur, vault_spk(&art), 1_000, false, None);
         let unites = script(&tx, &entree).expect("paiement construit par l'outil accepté par le script");
         eprintln!("cœur v0.6 : {} octets, paiement = {unites} unités de calcul", octets(&art));
@@ -200,8 +227,8 @@ mod tests {
         assert!(consensus(&tx, &entree, 1_000 + attente), "âge exactement égal au délai : accepté");
         // L'outil refuse ce qui dépasse la capacité ou la pièce.
         let op = TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0);
-        assert!(build_pay(&c, &art, op, valeur, externe(), 200_000_000, 1, &k(2)).is_err());
-        assert!(build_pay(&c, &art, op, 1_000, externe(), 999, 2, &k(2)).is_err());
+        assert!(build_pay(&c, &art, op, valeur, externe(), 200_000_000, 1, &k(2), None).is_err());
+        assert!(build_pay(&c, &art, op, 1_000, externe(), 999, 2, &k(2), None).is_err());
         // Paramètres absurdes refusés par l'outil.
         assert!(coeur(0, 864_000).artifact().is_err());
         assert!(coeur(1, 0).artifact().is_err());
@@ -238,7 +265,7 @@ mod tests {
         let v = 1_000_000_000u64;
         let frais = crate::FEE; // frais par défaut de l'outil
         let op = TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0);
-        let tx = build_pay(&c, &art, op, v, externe(), 20_000_000, frais, &k(2)).unwrap();
+        let tx = build_pay(&c, &art, op, v, externe(), 20_000_000, frais, &k(2), None).unwrap();
         let m = crate::masse::masses(&tx, &[UtxoEntry::new(v, vault_spk(&art), 0, false, None)]).unwrap();
         let (p06, p051) = (plancher_v06(crate::FEE), crate::masse::survival_floor(crate::FEE));
         eprintln!("v0.6 : calcul {} g, transitoire {} g, stockage {} g ; plancher d'un couloir {:.4} KAS (v0.5.1 : {:.4} KAS)",

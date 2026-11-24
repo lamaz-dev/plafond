@@ -251,7 +251,8 @@ mod tests {
         }
         assert!(Regles::calculer(10 * req, JOUR_DAA, 6 * req).is_err(), "plafond > moitié du budget");
         assert!(Regles::calculer(10 * req, 12_345, req).is_err(), "période inconnue");
-        assert_eq!(Regles::standard().budget, 2 * Regles::standard().capacite);
+        assert_eq!(Regles::standard().capacite, Regles::standard().plafond, "cœur v0.6 : la capacité est le plafond par achat");
+        assert!(Regles::standard().maximum_sur(Regles::standard().periode_daa) <= Regles::standard().budget);
     }
 
     #[test]

@@ -21,14 +21,14 @@ async fn solde(c: &KaspaRpcClient, k: &Keypair) -> Res<u64> {
     Ok(c.get_utxos_by_addresses(vec![address(k)]).await?.iter().map(|u| u.utxo_entry.amount).sum())
 }
 
-/// Attend que la dernière sortie du coffre soit inscrite (un paiement enchaîné non confirmé est refusé
-/// par le contrat : c'est voulu).
+/// Attend que les pièces du coffre soient inscrites (un paiement depuis une pièce non confirmée est
+/// refusé par le réseau : c'est voulu, le verrou relatif court depuis l'inscription).
 async fn attendre_inscription(owner_pk: &[u8], agent: &Keypair, quoi: &str) -> Res<()> {
     let debut = Instant::now();
     let c = connect_silencieux().await?;
     loop {
-        if let Ok(e) = load_state() {
-            if creation_coffre(&c, owner_pk, agent, &e).await.is_ok() {
+        if let Ok(v) = coffre::vue(&c, owner_pk, &xonly(agent)).await {
+            if !v.pieces.is_empty() && v.pieces.iter().all(|p| p.creation.is_some()) {
                 liberer(&c).await?;
                 return Ok(());
             }
@@ -152,8 +152,9 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
         etapes.push(Etape { numero, titre, ok, detail });
         ok
     };
-    // Paramètres : 2 unités par jour, 0,5 au plus par achat → exposition immédiate 0,5.
-    let regles = Regles::calculer(200_000_000, JOUR_DAA, 50_000_000)?;
+    // Paramètres : 2 unités par heure, 0,5 au plus par achat. Cœur v0.6 : le budget part de zéro
+    // et se remplit au rythme de 1,5 unité par heure ; la perte maximale immédiate est nulle.
+    let regles = Regles::calculer(200_000_000, 36_000, 50_000_000)?;
     let c = connect().await?;
     let tresorerie_avant = solde(&c, &owner).await?;
     let besoin = regles.depot + 10_000_000;
@@ -174,7 +175,9 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     let k = agents::cle(&a, &principal)?;
     let r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(deployer(&owner, &k)));
     let ok = match &r {
-        Ok(tx) => note(2, "Lui attribuer un budget", true, format!("2 unités par jour, 0,5 au plus par achat ; perte maximale immédiate {} ; coffre ouvert : {}", unites(regles.capacite), explorer(tx))),
+        Ok(tx) => note(2, "Lui attribuer un budget", true, format!(
+            "2 unités par heure, 0,5 au plus par achat ; courbe promise : 0 maintenant, au plus {} au bout d'une heure, jamais plus que {} (le dépôt) ; coffre ouvert : {}",
+            unites(regles.maximum_sur(36_000) - regles.capacite), unites(regles.depot as i64), explorer(tx))),
         Err(e) => note(2, "Lui attribuer un budget", false, e.to_string()),
     };
     if !ok {
@@ -207,13 +210,15 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     let owner_pk = xonly(&owner);
     avec_coffre(&etat_agent, a.regles, None, || bloquant(attendre_inscription(&owner_pk, &cle_agent, "coffre")))?;
 
-    // 5. Il paie un service (service de démonstration que nous opérons)
-    let r = avec_coffre(&etat_agent, a.regles, None, || bloquant(crate::payer_agent(&owner_pk, &cle_agent, 30_000_000, &service, false)));
+    // 5. Il paie un service (service de démonstration que nous opérons). Le budget se remplit depuis
+    // l'ouverture : l'outil attend qu'il couvre l'achat (quelques minutes), le réseau fait le reste.
+    println!("      le budget se remplit depuis l'ouverture : attente que 0,05 unité (+ frais) soit disponible…");
+    let r = avec_coffre(&etat_agent, a.regles, None, || bloquant(coffre::payer(&owner_pk, &cle_agent, 5_000_000, pay_to_address_script(&service), false, 900)));
     if r.is_ok() {
-        agents::noter(&defaut, &a.nom, "paiement", Some(30_000_000));
+        agents::noter(&defaut, &a.nom, "paiement", Some(5_000_000));
     }
     let ok = match &r {
-        Ok(tx) => note(5, "Payer un service", true, format!("0,3 unité payée au service de démonstration {service} : {}", explorer(tx))),
+        Ok(tx) => note(5, "Payer un service", true, format!("0,05 unité payée au service de démonstration {service} : {}", explorer(tx))),
         Err(e) => note(5, "Payer un service", false, e.to_string()),
     };
     if !ok {
@@ -221,13 +226,14 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     }
     avec_coffre(&etat_agent, a.regles, None, || bloquant(attendre_inscription(&owner_pk, &cle_agent, "paiement")))?;
 
-    // 6. Il tente de dépasser son budget : c'est le réseau qui refuse
-    let r = avec_coffre(&etat_agent, a.regles, None, || bloquant(crate::payer_agent(&owner_pk, &cle_agent, 45_000_000, &service, true)));
+    // 6. Il tente de dépasser son budget : c'est le réseau qui refuse. La transaction annonce tout
+    // l'âge réel de la pièce (le maximum que le réseau accepte) ; le contrat exige davantage.
+    let r = avec_coffre(&etat_agent, a.regles, None, || bloquant(coffre::payer(&owner_pk, &cle_agent, 45_000_000, pay_to_address_script(&service), true, 0)));
     if matches!(&r, Err(e) if e.to_string().starts_with("REFUSÉ")) {
         agents::noter(&defaut, &a.nom, "bloque", Some(45_000_000));
     }
     match &r {
-        Err(e) if e.to_string().starts_with("REFUSÉ") => note(6, "Bloqué au-delà du budget", true, format!("0,45 unité demandée (sous le plafond par achat, au-delà du budget restant) : {e}")),
+        Err(e) if e.to_string().starts_with("REFUSÉ") => note(6, "Bloqué au-delà du budget", true, format!("0,45 unité demandée juste après un achat (sous le plafond, au-delà du budget disponible) : {e}")),
         Ok(tx) => note(6, "Bloqué au-delà du budget", false, format!("paiement accepté alors qu'il devait être refusé : {}", explorer(tx))),
         Err(e) => note(6, "Bloqué au-delà du budget", false, format!("erreur inattendue : {e}")),
     };

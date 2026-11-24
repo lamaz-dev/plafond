@@ -74,7 +74,7 @@ fn requirement(offer: &Offer, pay_to: &Address) -> Value {
             "profile": PROFILE,
             "paymentFlow": "upfront",
             "finality": "accepted",
-            "vaultTemplate": "agent-budget-v0.5.1"
+            "vaultTemplate": "plafond-coeur-v0.6"
         }
     })
 }
@@ -117,14 +117,14 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
     // Ordre des contrôles (R12) : d'abord tout ce qui ne coûte rien (forme, prix, plafond,
     // signature de l'agent), ensuite seulement la recompilation et les appels au nœud.
 
-    // a. Paramètres annoncés (lecture seule).
-    let params: VaultParams = serde_json::from_value(p["vault"]["params"].clone()).map_err(|_| "paramètres du coffre invalides")?;
+    // a. Paramètres annoncés (lecture seule) : cœur v0.6, quatre paramètres publics.
+    let publics: crate::coeur::Publics = serde_json::from_value(p["vault"]["params"].clone()).map_err(|_| "paramètres du coffre invalides")?;
     let txid_in = p["vault"]["outpoint"]["txid"].as_str().ok_or("outpoint manquant")?;
     let index_in = p["vault"]["outpoint"]["index"].as_u64().ok_or("outpoint manquant")? as u32;
-    if Some(params.asset.as_str()) != pl["accepted"]["asset"].as_str() {
-        return Err("la monnaie du coffre ne correspond pas à celle de l'offre".into());
+    if pl["accepted"]["asset"].as_str() != Some("KAS") {
+        return Err("la monnaie de l'offre n'est pas le KAS".into());
     }
-    // b. Transaction : dépense bien ce coffre et paie exactement le prix au vendeur.
+    // b. Transaction : dépense bien cette pièce du coffre et paie exactement le prix au vendeur.
     let tx_bytes = hex::decode(p["transaction"].as_str().ok_or("transaction manquante")?).map_err(|_| "transaction illisible")?;
     let mut tx: Transaction = borsh::from_slice(&tx_bytes).map_err(|_| "transaction non décodable")?;
     tx.finalize();
@@ -143,13 +143,13 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
         return Err("la sortie 0 ne paie pas exactement le prix au vendeur".into());
     }
 
-    // c. Plafond par paiement inscrit dans le coffre.
+    // c. Plafond par paiement : la capacité du coffre (frais compris).
     let price = offer.price as i64;
-    if price > params.max_per_payment {
+    if price >= publics.capacite {
         return Err(format!(
-            "refusé avant diffusion : prix {} TKAS > plafond par paiement du coffre ({} TKAS)",
+            "refusé avant diffusion : prix {} TKAS ≥ plafond par paiement du coffre ({} TKAS, frais compris)",
             price as f64 / 1e8,
-            params.max_per_payment as f64 / 1e8
+            publics.capacite as f64 / 1e8
         ));
     }
     // c bis. Autorisation de la requête par la clé agent inscrite dans le coffre.
@@ -163,43 +163,48 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
         return Err("paiement destiné à une autre requête".into());
     }
     let digest = auth_digest(&txid, &req_hash, &pay_to.to_string(), &offer.price.to_string(), expires);
-    let agent_pk = XOnlyPublicKey::from_slice(&hex::decode(&params.agent).map_err(|_| "clé agent invalide")?).map_err(|_| "clé agent invalide")?;
+    let agent_pk = XOnlyPublicKey::from_slice(&hex::decode(&publics.agent).map_err(|_| "clé agent invalide")?).map_err(|_| "clé agent invalide")?;
     let sig = Signature::from_slice(&hex::decode(a["signature"].as_str().unwrap_or("")).unwrap_or_default()).map_err(|_| "signature invalide")?;
     secp256k1::SECP256K1
         .verify_schnorr(&sig, &Message::from_digest(digest), &agent_pk)
         .map_err(|_| "autorisation : signature de l'agent invalide")?;
     println!("[VENDEUR] autorisation valide : signée par la clé agent du coffre pour cette requête");
 
-    // d. Coffre authentique : recompilation (mise en cache) puis présence sur la chaîne, à chaque requête.
-    let spk = cached_spk(&params)?;
+    // d. Coffre authentique : script recompilé (mis en cache), pièce présente à son adresse. Le
+    // script ne change jamais : l'adresse EST l'identité du coffre, sans lignée à suivre.
+    let coeur = publics.coeur().map_err(|e| format!("paramètres du coffre refusés : {e}"))?;
+    let spk = cached_spk(&publics)?;
+    if tx.outputs[1].script_public_key != spk {
+        return Err("la sortie 1 ne revient pas au coffre".into());
+    }
     let vault_addr = extract_script_pub_key_address(&spk, Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?;
     let utxos = relance!(rpc.get_utxos_by_addresses(vec![vault_addr.clone()]))?;
-    let on_chain = utxos.iter().find(|u| u.outpoint.transaction_id.to_string() == txid_in && u.outpoint.index == index_in);
+    let on_chain = utxos.iter().find(|u| u.outpoint.transaction_id.to_string() == txid_in && u.outpoint.index == index_in && u.utxo_entry.script_public_key == spk);
     let Some(vault_utxo) = on_chain else {
-        return Err("coffre non authentique : aucun coffre AgentBudget avec ces paramètres n'existe sur la chaîne".into());
+        return Err("coffre non authentique : aucune pièce de coffre Plafond avec ces paramètres n'existe sur la chaîne".into());
     };
-    let Some(lineage) = vault_utxo.utxo_entry.covenant_id else {
-        return Err("fonds hors lignée : cette sortie n'appartient à aucun coffre (identifiant de covenant absent)".into());
-    };
-    println!(
-        "[VENDEUR] coffre authentique : script AgentBudget recompilé = sortie on-chain ({} TKAS), lignée {}",
-        vault_utxo.utxo_entry.amount as f64 / 1e8,
-        lineage
-    );
+    if vault_utxo.utxo_entry.block_daa_score == u64::MAX {
+        return Err("pièce du coffre pas encore confirmée".into());
+    }
+    println!("[VENDEUR] coffre authentique : script Plafond recompilé = pièce on-chain ({} TKAS)", vault_utxo.utxo_entry.amount as f64 / 1e8);
 
-    // e. Solvabilité, avant toute diffusion.
-    let price = offer.price as i64;
-    let now = (relance!(rpc.get_block_dag_info())?.virtual_daa_score - 100) as i64;
-    // v0.5 : recharge comptée depuis l'inscription réelle du coffre (comme le contrat).
-    let available = params.available(now, vault_utxo.utxo_entry.block_daa_score as i64);
+    // e. Solvabilité, avant toute diffusion : la dépense (prix + frais) est permise par l'âge de la
+    // pièce, et la transaction annonce un délai que le réseau acceptera.
+    let now = relance!(rpc.get_block_dag_info())?.virtual_daa_score;
+    let age = now.saturating_sub(vault_utxo.utxo_entry.block_daa_score);
     let spent = vault_utxo.utxo_entry.amount as i64 - tx.outputs[1].value as i64; // prix + frais
-    if spent - price > params.max_fee || spent < price {
-        return Err("frais de la transaction hors des limites du coffre".into());
+    if spent < price || spent > coeur.capacite {
+        return Err("dépense de la transaction hors des limites du coffre".into());
     }
-    if spent > available {
-        return Err(format!("refusé avant diffusion : budget restant du coffre {} TKAS < prix + frais", available as f64 / 1e8));
+    let exige = coeur.attente(spent);
+    let seq = tx.inputs[0].sequence;
+    if seq & (1 << 63) != 0 || (seq & 0xffff_ffff) < exige {
+        return Err("délai annoncé insuffisant : le réseau refuserait ce paiement".into());
     }
-    println!("[VENDEUR] solvable : budget restant {} TKAS ≥ prix {} TKAS", available as f64 / 1e8, price as f64 / 1e8);
+    if exige > age {
+        return Err(format!("refusé avant diffusion : budget pas encore disponible (encore {} s)", (exige - age) / 10 + 1));
+    }
+    println!("[VENDEUR] solvable : âge de la pièce {age} ≥ délai exigé {exige} pour {} TKAS", spent as f64 / 1e8);
 
     // f. Diffusion puis attente de l'acceptation par le réseau.
     rpc.submit_transaction(crate::garde_diffusion(&tx).map_err(|e| e.to_string())?, false).await.map_err(|e| format!("rejetée par le réseau : {e}"))?;
@@ -222,7 +227,7 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
 }
 
 /// Cache des scripts déjà recompilés (protège le vendeur contre un déluge de fausses demandes).
-fn cached_spk(params: &VaultParams) -> Result<kaspa_consensus_core::tx::ScriptPublicKey, String> {
+fn cached_spk(params: &crate::coeur::Publics) -> Result<kaspa_consensus_core::tx::ScriptPublicKey, String> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<String, kaspa_consensus_core::tx::ScriptPublicKey>>> = OnceLock::new();
@@ -231,7 +236,7 @@ fn cached_spk(params: &VaultParams) -> Result<kaspa_consensus_core::tx::ScriptPu
     if let Some(spk) = cache.lock().unwrap().get(&key) {
         return Ok(spk.clone());
     }
-    let artifact = compile_params(params).map_err(|e| format!("recompilation impossible : {e}"))?;
+    let artifact = params.coeur().and_then(|c| c.artifact()).map_err(|e| format!("recompilation impossible : {e}"))?;
     let spk = vault_spk(&artifact);
     let mut c = cache.lock().unwrap();
     if c.len() > 10_000 {
@@ -367,26 +372,43 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
     let pay_to = Address::try_from(req["payTo"].as_str().unwrap_or(""))?;
     println!("[AGENT] 402 reçu : {} TKAS à payer à {}", amount as f64 / 1e8, pay_to);
 
-    let e = load_state()?;
-    let rpc = handle.block_on(connect())?;
-    let (now, creation) = handle.block_on(instants(&rpc, owner_pk, agent, &e))?;
-    let mut params = VaultParams::pour(owner_pk, agent, e.tokens, e.last_daa);
     if let Some(m) = max {
         if amount > m {
             println!("[AGENT] je refuse : prix supérieur au plafond de cette requête");
             return Ok(Achat::refus(amount, format!("prix {amount} sompi supérieur au plafond demandé ({m})")));
         }
     }
-    if mode == Mode::Normal && (amount > params.max_per_payment || amount + FEE as i64 > params.available(now, creation)) {
-        println!("[AGENT] je refuse moi-même : prix hors du budget de mon coffre");
-        return Ok(Achat::refus(amount, "hors du budget du coffre : plafond par paiement ou budget disponible dépassé"));
+    let rpc = handle.block_on(connect())?;
+    let vue = handle.block_on(coffre::vue(&rpc, owner_pk, &xonly(agent)));
+    handle.block_on(liberer(&rpc))?;
+    let vue = vue?;
+    let spent = amount as u64 + FEE;
+    let prete = vue.pieces.iter().filter(|p| p.valeur > spent && p.creation.is_some_and(|cr| cr + vue.coeur.attente(spent as i64) + 20 <= vue.now)).max_by_key(|p| p.valeur);
+    let piece = match (&mode, prete) {
+        (_, Some(p)) => p.clone(),
+        (&Mode::Normal, None) => {
+            let attente = coffre::delai(&vue.coeur, &vue.pieces, vue.now, spent).map(|d| format!(" (disponible dans {} s)", d / 10 + 1)).unwrap_or_default();
+            println!("[AGENT] je refuse moi-même : prix hors du budget disponible de mon coffre{attente}");
+            return Ok(Achat::refus(amount, format!("hors du budget du coffre : plafond par paiement ou budget disponible dépassé{attente}")));
+        }
+        (_, None) => vue.pieces.iter().filter(|p| p.creation.is_some()).max_by_key(|p| p.valeur).cloned().ok_or("aucune pièce confirmée dans le coffre")?,
+    };
+    if mode == Mode::Normal && spent as i64 > vue.coeur.capacite {
+        println!("[AGENT] je refuse moi-même : prix au-delà du plafond par paiement");
+        return Ok(Achat::refus(amount, "hors du budget du coffre : plafond par paiement dépassé"));
     }
-    let (tx, next_state) = build_pay_pk(owner_pk, agent, &e, amount, pay_to_address_script(&pay_to), now, creation)?;
+    let art = vue.coeur.artifact()?;
+    let tx = crate::coeur::build_pay(&vue.coeur, &art, piece.outpoint, piece.valeur, pay_to_address_script(&pay_to), amount as u64, FEE, agent, None)
+        .or_else(|_| {
+            // Agent tricheur (tests) : la transaction est construite quand même, le vendeur et le réseau tranchent.
+            crate::coeur::build_pay(&crate::coeur::Coeur { capacite: i64::MAX / vue.coeur.periode, ..vue.coeur.clone() }, &art, piece.outpoint, piece.valeur, pay_to_address_script(&pay_to), amount as u64, FEE, agent, Some(vue.now.saturating_sub(piece.creation.unwrap_or(vue.now)).min(u32::MAX as u64)))
+        })?;
+    let mut params = vue.coeur.publics();
     if mode == Mode::FakeVault {
-        params.capacity *= 100; // l'agent ment sur son budget
-        params.max_per_payment *= 100;
+        params.capacite *= 100; // l'agent ment sur son budget
         println!("[AGENT] (test) j'annonce un faux coffre avec un budget 100 fois plus grand");
     }
+    let outpoint = json!({ "txid": piece.outpoint.transaction_id.to_string(), "index": piece.outpoint.index });
     let txid = tx.id().to_string();
     let req_hash = request_hash("GET", url);
     let expires = now_unix() + 60;
@@ -399,7 +421,7 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
             "type": "covenant-budget-transaction",
             "profile": PROFILE,
             "transaction": hex::encode(borsh::to_vec(&tx)?),
-            "vault": { "params": params, "outpoint": { "txid": e.txid, "index": e.index } },
+            "vault": { "params": params, "outpoint": outpoint },
             "requestHash": req_hash,
             "authorization": { "version": "x402cov-auth-v0", "expiresAt": expires, "signature": hex::encode(sig.as_ref()) }
         }
@@ -412,7 +434,6 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
             println!("[AGENT] ✅ contenu reçu : « {content} »");
             let tx = settlement["transaction"].as_str().unwrap_or("?").to_string();
             println!("[AGENT] reçu de paiement : transaction {tx}");
-            save_state(&next_state)?;
             Ok(Achat { statut: 200, contenu: content, montant: amount, txid: Some(tx), refus: None })
         }
         Err(ureq::Error::Status(402, r)) => {
