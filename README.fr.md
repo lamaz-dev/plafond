@@ -5,15 +5,26 @@
 </picture>
 </p>
 
-<h3 align="center">Donnez un budget à vos agents, pas toute votre trésorerie.</h3>
+<h3 align="center">Quel est votre pire scénario ?</h3>
 
-<p align="center">Même piraté, un agent ne peut pas dépasser sa limite : c'est le réseau Kaspa qui l'impose.</p>
+<p align="center">Plafond vous dit combien vos agents IA peuvent perdre au maximum, maintenant et sur les prochaines 24 heures, et le réseau Kaspa l'impose, même si un agent est piraté.</p>
 
 <p align="center"><a href="https://lamaz-dev.github.io/plafond/">Site</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Télécharger</a> · <a href="DEMO.fr.md">Lancer la démo</a> · <a href="ROADMAP.md">Feuille de route</a> · <a href="SECURITY.md">Sécurité</a></p>
 
 # Plafond
 
-Budgets de dépense pour agents IA, imposés par covenant sur Kaspa L1 (SilverScript). Le projet s'appelait auparavant `kaspa-agent-vault`.
+Un moteur de risque pour agents IA, garanti par des covenants Kaspa. Le projet s'appelait auparavant `kaspa-agent-vault`.
+
+Les agents ne se verront confier de l'argent à grande échelle que si leur exposition financière est mesurable, vérifiable et garantie. Plafond répond en permanence à une seule question, en quatre chiffres :
+
+| | |
+|---|---|
+| **Perte maximale maintenant** | ce qui pourrait partir si tous les agents devenaient hostiles à l'instant |
+| **Perte maximale sur 24 h** | la même chose, sur les prochaines 24 heures |
+| **Couvert** | ce que le réseau impose lui-même |
+| **Non couvert** | ce que la garantie n'atteint pas, dit clairement |
+
+Les budgets, coffres et modes de paiement sont les moyens ; le pire scénario garanti est le produit ([spécification du moteur](spec/moteur-de-risque.md)).
 
 *[English](README.md) · Français*
 

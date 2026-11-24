@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plafond: give your AI agents a budget, not your whole treasury</title>
-<meta name="description" content="Plafond gives each AI agent a spending budget enforced by the Kaspa network. Even if it is hacked, an agent cannot exceed its limit. Open source prototype on Kaspa testnet-10.">
+<title>Plafond: what is your AI agents' worst case?</title>
+<meta name="description" content="A risk engine for AI agents, enforced by Kaspa covenants: maximum loss now, over 24 hours, covered and not covered, live. Open source prototype on Kaspa testnet-10, not audited.">
 <link rel="icon" type="image/svg+xml" href="assets/plafond-icone.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <meta property="og:title" content="Plafond">
-<meta property="og:description" content="Give your agents a budget, not your whole treasury.">
+<meta property="og:description" content="What is your AI agents' worst case? Maximum loss, guaranteed by Kaspa covenants.">
 <meta property="og:image" content="assets/plafond-logo-fond-sombre.png">
 <style>
 @font-face{font-family:"Space Grotesk";src:url(assets/fonts/SpaceGrotesk.woff2) format("woff2");font-weight:300 700;font-display:swap}
@@ -90,8 +90,8 @@ html[lang=en] [data-l=en],html[lang=fr] [data-l=fr]{display:revert}
   <div class="hero">
     <div class="enveloppe">
       <div class="statut">● <span data-l="en">Open-source prototype · Kaspa testnet-10 · not audited yet</span><span data-l="fr">Prototype open source · testnet-10 de Kaspa · pas encore audité</span></div>
-      <h1><span data-l="en">Give your agents a budget, <em>not your whole treasury.</em></span><span data-l="fr">Donnez un budget à vos agents, <em>pas toute votre trésorerie.</em></span></h1>
-      <p class="sous"><span data-l="en">Each AI agent gets its own vault with a spending limit. The limit is enforced by the Kaspa network, not by our servers: even if the agent is hacked, it can't exceed it.</span><span data-l="fr">Chaque agent IA reçoit son propre coffre, avec une limite de dépense. C'est le réseau Kaspa qui l'impose, pas nos serveurs : même piraté, l'agent ne peut pas la dépasser.</span></p>
+      <h1><span data-l="en">What is your <em>worst case?</em></span><span data-l="fr">Quel est votre <em>pire scénario ?</em></span></h1>
+      <p class="sous"><span data-l="en">Plafond tells you how much your AI agents can lose at most, right now and over the next 24 hours. The Kaspa network enforces it, not our servers: even a hacked agent can't go beyond.</span><span data-l="fr">Plafond vous dit combien vos agents IA peuvent perdre au maximum, maintenant et sur les prochaines 24 heures. C'est le réseau Kaspa qui l'impose, pas nos serveurs : même un agent piraté ne peut pas aller au-delà.</span></p>
       <div class="boutons">
         <a class="btn plein" href="#essayer"><span data-l="en">Run the demo</span><span data-l="fr">Lancer la démo</span></a>
         <a class="btn" href="https://github.com/lamaz-dev/plafond"><span data-l="en">Read the code</span><span data-l="fr">Lire le code</span></a>
@@ -106,24 +106,24 @@ html[lang=en] [data-l=en],html[lang=fr] [data-l=fr]{display:revert}
 
   <section id="comment">
     <div class="enveloppe">
-      <h2><span data-l="en">Three guarantees, written into the network</span><span data-l="fr">Trois garanties, inscrites dans le réseau</span></h2>
-      <p class="intro"><span data-l="en">Agents now pay for APIs and services on their own. Plafond decides how much they can spend, and the rule holds even when everything else fails.</span><span data-l="fr">Les agents paient désormais seuls leurs API et leurs services. Plafond fixe combien ils peuvent dépenser, et la règle tient même quand tout le reste lâche.</span></p>
+      <h2><span data-l="en">One question, four figures</span><span data-l="fr">Une question, quatre chiffres</span></h2>
+      <p class="intro"><span data-l="en">Agents will only be trusted with money at scale if their exposure is measurable, verifiable and guaranteed. Plafond keeps the answer on screen, live, as agents pay, get blocked or get stopped.</span><span data-l="fr">Les agents ne se verront confier de l'argent à grande échelle que si leur exposition est mesurable, vérifiable et garantie. Plafond garde la réponse à l'écran, en direct, quand un agent paie, se fait bloquer ou est arrêté.</span></p>
       <div class="grille">
         <div class="carte"><div class="pastille">1</div>
-          <h3><span data-l="en">A budget that refills</span><span data-l="fr">Un budget qui se recharge</span></h3>
-          <p><span data-l="en">For example 2 units per day, at most 0.5 per purchase. Beyond that, the network rejects the payment. Fees count inside the budget.</span><span data-l="fr">Par exemple 2 unités par jour, 0,5 au plus par achat. Au-delà, le réseau refuse le paiement. Les frais sont comptés dans le budget.</span></p></div>
+          <h3><span data-l="en">Maximum loss now</span><span data-l="fr">Perte maximale maintenant</span></h3>
+          <p><span data-l="en">What could leave if every agent turned hostile this second. Not an estimate: the exact amount the network would still accept.</span><span data-l="fr">Ce qui pourrait partir si tous les agents devenaient hostiles à l'instant. Pas une estimation : le montant exact que le réseau accepterait encore.</span></p></div>
         <div class="carte"><div class="pastille">2</div>
-          <h3><span data-l="en">An emergency stop</span><span data-l="fr">Un arrêt d'urgence</span></h3>
-          <p><span data-l="en">One click and the funds of every vault return to your treasury. It works even if the agent's server is compromised.</span><span data-l="fr">Un clic, et les fonds de tous les coffres reviennent dans votre trésorerie. Ça marche même si le serveur de l'agent est compromis.</span></p></div>
+          <h3><span data-l="en">Maximum loss over 24 h</span><span data-l="fr">Perte maximale sur 24 h</span></h3>
+          <p><span data-l="en">Budgets refill over time; this figure includes that. An emergency stop brings it to zero in one click.</span><span data-l="fr">Les budgets se rechargent avec le temps ; ce chiffre en tient compte. L'arrêt d'urgence le ramène à zéro en un clic.</span></p></div>
         <div class="carte"><div class="pastille">3</div>
-          <h3><span data-l="en">No server to trust</span><span data-l="fr">Aucun serveur à croire sur parole</span></h3>
-          <p><span data-l="en">Your keys stay on your device. Even if Plafond disappeared, you could find and freeze your vaults from any Kaspa node.</span><span data-l="fr">Vos clés restent chez vous. Même si Plafond disparaissait, vous retrouveriez et geleriez vos coffres depuis n'importe quel nœud Kaspa.</span></p></div>
+          <h3><span data-l="en">Covered, not covered</span><span data-l="fr">Couvert, non couvert</span></h3>
+          <p><span data-l="en">What the network enforces, and what it doesn't reach, said plainly. Anyone can recompute it from public data, without trusting us.</span><span data-l="fr">Ce que le réseau impose, et ce qu'il n'atteint pas, dit clairement. Tout le monde peut refaire le calcul à partir de données publiques, sans nous croire sur parole.</span></p></div>
       </div>
 
       <div class="preuves" style="margin-top:20px">
         <div class="chiffre"><b>7/7</b><span data-l="en">demo steps verified on testnet-10</span><span data-l="fr">étapes de la démo vérifiées sur testnet-10</span></div>
         <div class="chiffre"><b>0</b><span data-l="en">over-budget payments accepted by the network</span><span data-l="fr">paiement hors budget accepté par le réseau</span></div>
-        <div class="chiffre"><b>40</b><span data-l="en">risks analysed in the threat model</span><span data-l="fr">risques analysés dans le modèle de menace</span></div>
+        <div class="chiffre"><b>50</b><span data-l="en">risks analysed in the threat model</span><span data-l="fr">risques analysés dans le modèle de menace</span></div>
         <div class="chiffre"><b>1</b><span data-l="en">command to run the whole demo</span><span data-l="fr">commande pour lancer toute la démo</span></div>
       </div>
     </div>

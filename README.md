@@ -5,15 +5,26 @@
 </picture>
 </p>
 
-<h3 align="center">Give your agents a budget, not your whole treasury.</h3>
+<h3 align="center">What is your worst case?</h3>
 
-<p align="center">Even if it's hacked, an agent can't exceed its limit: the Kaspa network enforces it.</p>
+<p align="center">Plafond tells you how much your AI agents can lose at most, right now and over the next 24 hours, and the Kaspa network enforces it, even if an agent is hacked.</p>
 
 <p align="center"><a href="https://lamaz-dev.github.io/plafond/">Website</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Download</a> · <a href="DEMO.md">Run the demo</a> · <a href="ROADMAP.md">Roadmap</a> · <a href="SECURITY.md">Security</a></p>
 
 # Plafond
 
-Covenant-enforced spending budgets for AI agents on Kaspa L1, written in SilverScript. *Plafond* is French for "ceiling". The project was previously called `kaspa-agent-vault`.
+A risk engine for AI agents, enforced by Kaspa covenants. *Plafond* is French for "ceiling". The project was previously called `kaspa-agent-vault`.
+
+Agents will only be trusted with money at scale if their financial exposure is measurable, verifiable and guaranteed. Plafond answers one question at all times, in four figures:
+
+| | |
+|---|---|
+| **Maximum loss now** | what could leave if every agent turned hostile this second |
+| **Maximum loss over 24 h** | the same, over the next 24 hours |
+| **Covered** | what the network itself enforces |
+| **Not covered** | what the guarantee does not reach, said plainly |
+
+The budgets, vaults and payment modes underneath are the means; the guaranteed worst case is the product ([risk engine spec](spec/moteur-de-risque.md)).
 
 *English · [Français](README.fr.md)*
 
