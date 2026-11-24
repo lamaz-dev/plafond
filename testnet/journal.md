@@ -663,3 +663,33 @@ VERDICT : ÉCHEC
 (code de sortie 1)
 
 ```
+
+## 2026-11-24 11:26 UTC
+
+```
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Porte-monnaie du relais : kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4 (29700000 sompi)
+Diagnostic /health : HTTP 200
+  {"ok":true,"enabled":true,"gateway":"kaspa-x402-testnet","releaseVersion":"1.0.1","hostedExactSettlementEnabled":true,"exactProfile":"standard-native","chainBroadcastMode":"pnn","chainEvidenceSource":"pnn","chainTrustMode":"trusted-single-source","chainEvidenceAuthorities":1}
+Diagnostic /canary : HTTP 200
+  {"ok":true,"enabled":true,"exactHeads":{"total":0,"available":0,"claimed":0,"unavailable":0,"retired":0},"canary":{"checkedAt":"2026-11-24T11:16:20.648Z","trigger":"scheduled","ok":true,"checks":[{"name":"kaspa-chain","status":"ok","detail":"PNN chain health returned testnet-10 evidence","evidence":{"ok":true,"networkId":"testnet-10","endpoint":"wss://vector-10.kaspa.green","virtualDaaScore":"631834233"}},{"name":"schema-url","status":"ok","detail":"payment-required schema resolved","evidence":{
+Diagnostic /exact : HTTP 402 (offre 402 : {"accepts":[{"amount":"20000000","asset":"KAS","extra":{"binding":"kaspa-exact-v2","finality":"accepted","payToScriptPublicKey":"000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac","paymentFlow":"upfront","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2)
+GET https://demo.kaspa-x402.org/exact
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Transaction de paiement signée 2026-11-24T11:27:22.395Z : tentative 21f6a62d399c7089fcc09521abcbb3dde51d01104d9015b03d48f5d4e613b581, transaction 6837e74168aa97b717b5fa9a436ae424e70faa2bd4865e058955e126ddaa4cb7, entrées b137fd8ecbd66b00e6df107876bf6e0385e00bc0521ae681a98e5f9ebbf45f93:1
+2026-11-24T11:27:34.676Z réponse 503 {"error":"exact_settlement_recovery_required"} : nouvel envoi de la même requête signée dans 10 s (1/6)
+2026-11-24T11:27:54.152Z réponse 503 {"error":"exact_settlement_recovery_required"} : nouvel envoi de la même requête signée dans 10 s (2/6)
+2026-11-24T11:28:16.234Z réponse 503 {"error":"exact_settlement_recovery_required"} : nouvel envoi de la même requête signée dans 10 s (3/6)
+2026-11-24T11:28:35.645Z réponse 503 {"error":"exact_settlement_recovery_required"} : nouvel envoi de la même requête signée dans 10 s (4/6)
+2026-11-24T11:28:59.122Z réponse 503 {"error":"exact_settlement_recovery_required"} : nouvel envoi de la même requête signée dans 10 s (5/6)
+2026-11-24T11:29:21.122Z réponse 503 {"error":"exact_settlement_recovery_required"} : nouvel envoi de la même requête signée dans 10 s (6/6)
+Réponse à la tentative payée : HTTP 503 (2026-11-24T11:29:40.523Z)
+  content-type: application/json; charset=utf-8
+  corps : {"error":"exact_settlement_recovery_required"}
+Échec : invalid_kaspa_settlement_response paid retry response is missing PAYMENT-RESPONSE
+VERDICT : ÉCHEC
+(code de sortie 1)
+
+```
