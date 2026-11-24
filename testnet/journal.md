@@ -693,3 +693,126 @@ VERDICT : ÉCHEC
 (code de sortie 1)
 
 ```
+
+## 2026-11-24 16:32 UTC
+
+```
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632023840
+Solde du propriétaire : 995.17 TKAS (7 UTXO)
+Coffre : pas encore déployé
+
+$ vault-cli deployer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.6) : 5 TKAS à l'adresse kaspatest:pp4me74nq5xs3llwv4lxjyd6tzsst29m2q29efjqs6fm83g39r8tz4y3ufxxr
+Transaction : https://tn10.kaspa.stream/transactions/de54a55966a26542e22a24d0309279ed990da9f794e465da05fa67f88ba1df7b
+
+$ vault-cli pause 30
+(pause de 30 s)
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+(nœud injoignable, essai 2/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Error: "réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC"
+(code de sortie 1)
+
+$ vault-cli payer 5000000
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/845152a01e23d66ddd9b26bb85eed08f039d4b738a00f957e792b27a9273e2f4
+
+$ vault-cli pause 240
+(pause de 240 s)
+
+$ routeur (démo) + agent Python
+Budget de l'agent : 0.26220104 TKAS disponibles, 0.485 TKAS max par paiement
+
+=== 1. L'agent achète une donnée (0,2 TKAS) ===
+Contenu : Météo du réseau Kaspa : 10 blocs/s, mempool calme, frais bas.
+Payé 0.2 TKAS depuis le coffre : https://tn10.kaspa.stream/transactions/6da83d6275b8bd0fb46433ac6690403885ed5f9e08e2ecd2b08284b3ab5f3b9f
+
+=== 2. Le vendeur demande 1 TKAS, au-dessus du plafond de 0,5 ===
+Refusé avant tout paiement : prix 100000000 sompi supérieur au plafond demandé (48500000)
+
+=== 3. Agent compromis : il contourne le logiciel et diffuse 1 TKAS directement ===
+Le réseau Kaspa REFUSE la transaction : elle viole le covenant du coffre.
+Réponse du nœud : REFUSÉ par le réseau : RPC Server (remote error) -> Rejected transaction bca98bd4a33061bb49678017d71d5e86d5e71bbcb33b7f6006233173876ad144: failed to verify the signature script: script ran, but verification failed
+
+Budget restant : 0.05735951 TKAS
+VERDICT : le coffre a payé ce qui était permis et le réseau a bloqué le reste.
+--- journal du routeur ---
+
+[AGENT] GET http://127.0.0.1:8402/meteo-kaspa
+[VENDEUR] /meteo-kaspa : paiement requis (0.2 TKAS)
+[AGENT] 402 reçu : 0.2 TKAS à payer à kaspatest:qquknj8t2nw0nctxgg3kfcqfzwpq9uj5vjsd44rgvpl3neqakdnmwy8muhgdl
+[AGENT] paiement signé depuis le coffre, envoi au vendeur
+[VENDEUR] autorisation valide : signée par la clé agent du coffre pour cette requête
+[VENDEUR] coffre authentique : script Plafond recompilé = pièce on-chain (4.935 TKAS)
+[VENDEUR] solvable : âge de la pièce 2713 ≥ délai exigé 2212 pour 0.215 TKAS
+[VENDEUR] paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/6da83d6275b8bd0fb46433ac6690403885ed5f9e08e2ecd2b08284b3ab5f3b9f
+[AGENT] ✅ contenu reçu : « Météo du réseau Kaspa : 10 blocs/s, mempool calme, frais bas. »
+[AGENT] reçu de paiement : transaction 6da83d6275b8bd0fb46433ac6690403885ed5f9e08e2ecd2b08284b3ab5f3b9f
+[ROUTEUR] l'agent demande http://127.0.0.1:8402/rapport-premium
+
+[AGENT] GET http://127.0.0.1:8402/rapport-premium
+[VENDEUR] /rapport-premium : paiement requis (1 TKAS)
+[AGENT] 402 reçu : 1 TKAS à payer à kaspatest:qquknj8t2nw0nctxgg3kfcqfzwpq9uj5vjsd44rgvpl3neqakdnmwy8muhgdl
+[AGENT] je refuse : prix supérieur au plafond de cette requête
+[ROUTEUR] démo : paiement de 1 TKAS diffusé SANS contrôle local
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+
+$ vault-cli payer 45000000 --sans-verif
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Paiement REFUSÉ par le réseau : RPC Server (remote error) -> Rejected transaction 42f46b37f0ca2da8d55869481a77d6ceb486e886faa67a06bc84d399e87f5a85: failed to verify the signature script: Unsatisfied lock time: locktime requirement not satisfied -- locktime is greater than the transaction locktime: 4783 > 600
+(code de sortie 2)
+
+$ vault-cli pause 90
+(pause de 90 s)
+
+$ vault-cli payer 5000000
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/31256050beea873135acf84063841011f1a88914acce69c41124ac0271cbabe1
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632030112
+Solde du propriétaire : 990.125 TKAS (5 UTXO)
+Coffre (cœur v0.6) kaspatest:pp4me74nq5xs3llwv4lxjyd6tzsst29m2q29efjqs6fm83g39r8tz4y3ufxxr : 4.655 TKAS en 1 pièce(s)
+  disponible maintenant : 0.0264437 TKAS ; pire cas sur 24 h : 4.655 TKAS
+  perte nette depuis la création : 0.345 TKAS (courbe promise : 0.60927474 TKAS)
+
+$ vault-cli recuperer
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+tentative 1 : RPC Server (remote error) -> Rejected transaction 89570617fddf15bb8e18c1f87e7967700c042cade44de9ae6b93ada8c8fa0ac3: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 1 refusée : RPC Server (remote error) -> Rejected transaction 89570617fddf15bb8e18c1f87e7967700c042cade44de9ae6b93ada8c8fa0ac3: replace by fee found no double spending transaction in the mempool
+tentative 2 : RPC Server (remote error) -> Rejected transaction 1f7021434f17837fac09ef071ac57e387a55a1e9d73a6d68c08ad46d70b9df53: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 2 refusée : RPC Server (remote error) -> Rejected transaction 1f7021434f17837fac09ef071ac57e387a55a1e9d73a6d68c08ad46d70b9df53: replace by fee found no double spending transaction in the mempool
+tentative 3 : RPC Server (remote error) -> Rejected transaction fed14dc43ae6e3839c82529adc86468a5f5e089e867967905d353e1ba88c6aac: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 3 refusée : RPC Server (remote error) -> Rejected transaction fed14dc43ae6e3839c82529adc86468a5f5e089e867967905d353e1ba88c6aac: replace by fee found no double spending transaction in the mempool
+tentative 4 : RPC Server (remote error) -> Rejected transaction 16b93ac9db69822d8154e802c1c588f912cad1bdb8e069f42b06c79c47568014: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 4 refusée : RPC Server (remote error) -> Rejected transaction 16b93ac9db69822d8154e802c1c588f912cad1bdb8e069f42b06c79c47568014: replace by fee found no double spending transaction in the mempool
+tentative 5 : RPC Server (remote error) -> Rejected transaction 6307d971549a6f460fe54cf5ba94a9fb49933c59be8cd215311d47995399b920: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 5 refusée : RPC Server (remote error) -> Rejected transaction 6307d971549a6f460fe54cf5ba94a9fb49933c59be8cd215311d47995399b920: replace by fee found no double spending transaction in the mempool
+tentative 6 : RPC Server (remote error) -> Rejected transaction e2d1a8c22e85f4d2a3603efbac756d8e19b9a69aac451d240e66d91cf16edaed: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 6 refusée : RPC Server (remote error) -> Rejected transaction e2d1a8c22e85f4d2a3603efbac756d8e19b9a69aac451d240e66d91cf16edaed: replace by fee found no double spending transaction in the mempool
+tentative 7 : RPC Server (remote error) -> Rejected transaction 1e47662c296684473bd1d8724654877e20b01892fa29b094a8984b2beee4e00f: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 7 refusée : RPC Server (remote error) -> Rejected transaction 1e47662c296684473bd1d8724654877e20b01892fa29b094a8984b2beee4e00f: replace by fee found no double spending transaction in the mempool
+tentative 8 : RPC Server (remote error) -> Rejected transaction 3017eadfc75f42746732f19ca50e797c1559b0e80c5ee66d66041cfad6f6bdfd: failed to verify the signature script: script units exceeded the amount committed in the input: used=100589, limit=59999 ; remplacement du paiement en attente
+tentative 8 refusée : RPC Server (remote error) -> Rejected transaction 3017eadfc75f42746732f19ca50e797c1559b0e80c5ee66d66041cfad6f6bdfd: replace by fee found no double spending transaction in the mempool
+Error: "gel incomplet : 1 pièce(s) encore dans le coffre, relancer"
+(code de sortie 1)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632030648
+Solde du propriétaire : 990.125 TKAS (5 UTXO)
+Coffre (cœur v0.6) kaspatest:pp4me74nq5xs3llwv4lxjyd6tzsst29m2q29efjqs6fm83g39r8tz4y3ufxxr : 4.655 TKAS en 1 pièce(s)
+  disponible maintenant : 0.07835893 TKAS ; pire cas sur 24 h : 4.655 TKAS
+  perte nette depuis la création : 0.345 TKAS (courbe promise : 0.66118996 TKAS)
+
+```
