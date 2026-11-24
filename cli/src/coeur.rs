@@ -18,7 +18,9 @@ pub const SOURCE: &str = include_str!("../../contracts/coeur.sil");
 pub const PERIODE_MAX: i64 = (1i64 << 32) - 1;
 /// Budgets de calcul déclarés (marge incluse), mesurés par `budget_de_calcul_suffisant`.
 pub const CB_PAY: u16 = 12;
-pub const CB_OWNER: u16 = 5;
+/// `ownerControl` : une vérification de signature (≈ 10 unités) ; 5 était trop peu (essai testnet du
+/// 24 nov. 2026 : « script units exceeded … used=100589, limit=59999 »).
+pub const CB_OWNER: u16 = 12;
 
 /// Paramètres d'un coffre. Le script refuse lui-même les valeurs dangereuses ; l'outil refuse en
 /// plus les valeurs absurdes (capacité ou période nulles : coffre inutilisable).
@@ -273,6 +275,22 @@ mod tests {
         assert!(m.standard());
         assert!(m.compute * 100 <= frais, "les frais couvrent la masse de calcul");
         assert!(p06 < p051, "le plancher baisse sans identifiant de covenant");
+    }
+
+    /// Le budget de calcul déclaré pour le gel couvre ce que coûte vraiment `ownerControl`.
+    #[test]
+    fn budget_de_calcul_du_gel_suffisant() {
+        let c = coeur(200_000_000, 864_000);
+        let art = c.artifact().unwrap();
+        let v = 1_000_000_000u64;
+        let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_OWNER);
+        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(v - 3_000_000, externe())], 0, Default::default(), 0, vec![]);
+        let entree = UtxoEntry::new(v, vault_spk(&art), 1_000, false, None);
+        let s = sign(&tx, std::slice::from_ref(&entree), 0, &k(1));
+        tx.inputs[0].signature_script = vault_sigscript(&art, "ownerControl", &[s.into()]).unwrap();
+        let unites = script(&tx, &entree).expect("gel accepté par le script");
+        eprintln!("gel (ownerControl) = {unites} unités de calcul");
+        assert!(unites <= CB_OWNER as u64, "budget du gel insuffisant : {unites} > {CB_OWNER}");
     }
 
     #[test]
