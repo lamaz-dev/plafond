@@ -816,3 +816,28 @@ Coffre (cœur v0.6) kaspatest:pp4me74nq5xs3llwv4lxjyd6tzsst29m2q29efjqs6fm83g39r
   perte nette depuis la création : 0.345 TKAS (courbe promise : 0.66118996 TKAS)
 
 ```
+
+## 2026-11-24 16:44 UTC
+
+```
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632032752
+Solde du propriétaire : 990.125 TKAS (5 UTXO)
+Coffre (cœur v0.6) kaspatest:pp4me74nq5xs3llwv4lxjyd6tzsst29m2q29efjqs6fm83g39r8tz4y3ufxxr : 4.655 TKAS en 1 pièce(s)
+  disponible maintenant : 0.28261714 TKAS ; pire cas sur 24 h : 4.655 TKAS
+  perte nette depuis la création : 0.345 TKAS (courbe promise : 0.86544818 TKAS)
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+1 pièce(s) rapatriée(s) : 4.625 TKAS, https://tn10.kaspa.stream/transactions/89570617fddf15bb8e18c1f87e7967700c042cade44de9ae6b93ada8c8fa0ac3
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632033290
+Solde du propriétaire : 994.75 TKAS (6 UTXO)
+Coffre : pas encore déployé
+
+```
