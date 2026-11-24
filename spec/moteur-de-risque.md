@@ -1,6 +1,9 @@
 # Moteur de risque : mesurer la perte maximale garantie
 
-> **Statut (24 nov. 2026) : spécification, pas encore implémentée.**
+> **Statut (24 nov. 2026) : implémenté dans la console pour les couloirs AgentBudget**
+> (`cli/src/risque.rs`, garanti par le test `depense_reelle_sous_la_perte_maximale_annoncee` contre
+> le vrai moteur de script). Les séquestres ouverts en ligne de commande ne sont pas encore suivis
+> par la console ; l'ardoise reste à construire.
 > Elle s'appuie sur la borne démontrée et testée de `spec/borne-de-perte.md` (AgentBudget v0.5.1)
 > et sur le séquestre DeliveryEscrow v0.3. Ni la borne ni ce document n'ont encore été audités.
 > Rédigée comme un standard ouvert : n'importe quel outil peut calculer ces quatre mesures et

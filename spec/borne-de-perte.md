@@ -120,6 +120,7 @@ confirmé attend la confirmation (environ une seconde).
 | `coffre_non_confirme_refuse` | H2 |
 | `parametres_aberrants_sans_danger_pour_les_fonds` | H4 |
 | `recharge_arrondie_vers_le_bas` | la recharge procède par paliers (division entière) et s'arrondit vers le bas : 1 unité de temps sur une période plus longue que la capacité ne recharge rien (relecture externe du 22 nov. 2026) |
+| `depense_reelle_sous_la_perte_maximale_annoncee` | le moteur de risque : à un instant quelconque, une rafale immédiate ne dépasse pas M1 (atteinte au sompi près) et la dépense sur `[now, now + D]` ne dépasse pas M2(D) (`spec/moteur-de-risque.md`) |
 | `frais_au_plafond_exact` | frais = `maxFee` acceptés, `maxFee` + 1 refusés |
 
 | `faille_v04_demontree` | la faille sur le contrat v0.4 archivé : 3 × C sur une période (le test doit continuer à la montrer) |

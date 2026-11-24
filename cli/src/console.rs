@@ -194,16 +194,18 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     // Réserve technique : sous ce solde, plus aucun paiement n'est diffusable (masse de stockage,
     // KIP-9) ; elle reste dans le coffre jusqu'à ce que le propriétaire la récupère.
     let reserve = masse::survival_floor(FEE) as i64;
-    let depensable = (etat.valeur as i64 - reserve).max(0);
-    let expo = disponible.min(depensable).max(0);
-    // Au pire sur 24 h : ce qui est dépensable maintenant + la recharge de 24 h, jamais plus que le coffre.
-    let pire_24h = expo.saturating_add(((rg.capacite as i128 * crate::JOUR_DAA as i128) / rg.recharge_daa as i128).min(i64::MAX as i128) as i64).min(depensable);
+    // Moteur de risque (spec/moteur-de-risque.md) : bornes garanties par le contrat, sans déduire la
+    // réserve technique (borne prudente : le chiffre affiché n'est jamais en dessous du vrai pire cas).
+    let couloir = crate::risque::Couloir { agent: hex::encode(xonly(agent)), params: p, creation, valeur: etat.valeur };
+    let expo = couloir.immediate(now);
+    let pire_24h = couloir.fenetre(now, crate::JOUR_DAA);
     let mut r = json!({
         "sante": sante,
         "regles": regles,
         "solde_coffre_sompi": etat.valeur,
         "exposition_immediate_sompi": expo,
         "pire_24h_sompi": pire_24h,
+        "risque_couloir": { "params": serde_json::to_value(&couloir.params)?, "creation": creation, "valeur": etat.valeur, "now": now },
         "reserve_technique_sompi": reserve.min(etat.valeur as i64),
         "depense_periode_sompi": depense_periode,
         "solde_proprietaire_sompi": solde_proprio,
@@ -615,6 +617,8 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     let c = cours.lire();
                     let mut vus = Vec::new();
                     let mut solde = None;
+                    let mut couloirs = Vec::new();
+                    let mut instant = 0i64;
                     for a in &liste {
                         let Ok(k) = agents::cle(a, &agent_principal) else { continue };
                         let t = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(tableau(&owner, &k, c.clone())));
@@ -628,6 +632,11 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                                     ligne[cle] = t[cle].clone();
                                 }
                                 ligne["achats"] = json!(t["historique"].as_array().map(|h| h.iter().filter(|m| m["genre"] == "achat").count()).unwrap_or(0));
+                                let rc = &t["risque_couloir"];
+                                if let (Ok(params), Some(creation), Some(valeur), Some(now)) = (serde_json::from_value(rc["params"].clone()), rc["creation"].as_i64(), rc["valeur"].as_u64(), rc["now"].as_i64()) {
+                                    instant = instant.max(now); // le plus tard : borne prudente (le disponible ne fait que croître)
+                                    couloirs.push(crate::risque::Couloir { agent: a.nom.clone(), params, creation, valeur });
+                                }
                             }
                             Err(e) => ligne["erreur"] = json!(e.to_string()),
                         }
@@ -643,7 +652,8 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     }
                     let compte = lire_compte(cle_ch);
                     json_rep(200, json!({
-                        "agents": vus, "solde_proprietaire_sompi": solde, "cours": c, "tarif_reference_sompi": tarif_reference(),
+                        "agents": vus, "solde_proprietaire_sompi": solde,
+                        "risque": crate::risque::rapport(&couloirs, &[], instant, crate::JOUR_DAA), "cours": c, "tarif_reference_sompi": tarif_reference(),
                         "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))
                 }

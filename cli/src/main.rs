@@ -50,6 +50,7 @@ mod double_auth;
 mod secrets;
 mod console;
 mod retrouver;
+mod risque;
 mod relais;
 mod routeur;
 mod sequestre;
