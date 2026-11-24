@@ -99,6 +99,25 @@ fn qr(texte: &str) -> Option<String> {
     Some(format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg)))
 }
 
+/// Règles d'un mandat : budget, période, plafond par achat et, en option, durée en jours.
+/// Avec une durée, le capital alloué vaut budget × nombre de périodes : c'est la perte maximale
+/// garantie du mandat sur toute sa vie (le coffre ne peut pas dépenser plus que ce qu'il contient).
+fn regles_mandat(v: &Value) -> Res<(crate::Regles, Option<i64>)> {
+    let (Some(b), Some(p), Some(m)) = (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) else {
+        return Err("budget, période et plafond par achat requis".into());
+    };
+    let mut r = crate::Regles::calculer(b, p, m)?;
+    let duree = v["duree_jours"].as_i64().filter(|j| *j > 0);
+    if let Some(j) = duree {
+        if j > 366 {
+            return Err("durée du mandat : 366 jours au plus".into());
+        }
+        let periodes = (j * crate::JOUR_DAA + p - 1) / p;
+        r.depot = (b as u64).saturating_mul(periodes as u64).max(100_000_000);
+    }
+    Ok((r, duree))
+}
+
 /// Règles telles que l'utilisateur les lit (budget sur sa période, plafond, expositions).
 fn regles_json(r: &crate::Regles) -> Value {
     json!({
@@ -111,6 +130,9 @@ fn regles_json(r: &crate::Regles) -> Value {
         "maximum_periode_sompi": r.maximum_sur(r.periode_daa),
         "recharge_secondes": r.recharge_daa / 10,
         "depot_initial_sompi": r.depot,
+        // le mandat : capital alloué = perte maximale garantie sur toute sa vie
+        "capital_alloue_sompi": r.depot,
+        "perte_max_mandat_sompi": r.depot,
         "frais_max_par_achat_sompi": 3_000_000,
         // compatibilité
         "budget_garanti_par_periode_sompi": r.budget,
@@ -623,9 +645,19 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     for a in &liste {
                         let Ok(k) = agents::cle(a, &agent_principal) else { continue };
                         let t = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(tableau(&owner, &k, c.clone())));
-                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a) });
+                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a), "echeance": a.echeance });
                         match t {
                             Ok(t) => {
+                                // Échéance du mandat atteinte : révocation automatique (les fonds reviennent en
+                                // trésorerie). Confort : la garantie reste le capital alloué.
+                                let actif = !matches!(t["sante"].as_str(), Some("gele") | Some("aucun") | None);
+                                if actif && a.echeance.is_some_and(|e| crate::double_auth::maintenant() >= e) {
+                                    let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(geler(&owner, &k, false, 0)));
+                                    journal(json!({ "echeance": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                                    if r.is_ok() {
+                                        agents::noter(&defaut, &a.nom, "echeance", None);
+                                    }
+                                }
                                 if t["solde_proprietaire_sompi"].is_u64() {
                                     solde = t["solde_proprietaire_sompi"].as_u64();
                                 }
@@ -678,13 +710,14 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     if v["confirmation"].as_str() != Some("CREER") {
                         json_rep(400, json!({ "erreur": "confirmation requise" }))
                     } else {
-                        let regles = match (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) {
-                            (Some(b), Some(p), Some(m)) => crate::Regles::calculer(b, p, m).map(Some),
-                            _ => Err("règles manquantes : budget, période et plafond par achat".into()),
-                        };
-                        match regles.and_then(|r| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), r)) {
+                        let mandat = regles_mandat(&v);
+                        let duree = mandat.as_ref().ok().and_then(|(_, d)| *d);
+                        match mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r))) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                             Ok(a) => {
+                                if let Some(j) = duree {
+                                    let _ = agents::fixer_echeance(&defaut, &a.id, Some(crate::double_auth::maintenant() + j as u64 * 86_400));
+                                }
                                 let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, agents::xonly_pub(&a, &agent_principal), || handle.block_on(deployer(&owner, &k))));
                                 journal(json!({ "nouvel_agent": a.id, "coffre": r.as_ref().map_err(|e| e.to_string()) }));
                                 match r {
@@ -696,12 +729,13 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     }
                 }
                 // Aperçu des règles avant création : la plateforme calcule, l'utilisateur ne règle que 3 choses.
-                ("POST", "/api/regles") => match (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) {
-                    (Some(b), Some(p), Some(m)) => match crate::Regles::calculer(b, p, m) {
-                        Ok(r) => json_rep(200, regles_json(&r)),
-                        Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
-                    },
-                    _ => json_rep(400, json!({ "erreur": "budget, période et plafond par achat requis" })),
+                ("POST", "/api/regles") => match regles_mandat(&v) {
+                    Ok((r, duree)) => {
+                        let mut j = regles_json(&r);
+                        j["duree_jours"] = json!(duree);
+                        json_rep(200, j)
+                    }
+                    Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                 },
                 // ---------- Secrets de l'agent : écriture seule ----------
                 // La valeur est chiffrée pour la clé publique de l'agent puis effacée ; aucune route ne la
@@ -1123,6 +1157,22 @@ mod tests {
         for f in [ch.to_string(), format!("{ch}.precedent")] {
             let _ = std::fs::remove_file(f);
         }
+    }
+
+    #[test]
+    fn mandat_finance_par_budget_fois_duree() {
+        let v = |j: i64| json!({ "budget_sompi": 2_000_000_000i64, "periode_daa": crate::JOUR_DAA, "plafond_sompi": 200_000_000i64, "duree_jours": j });
+        // 20 par jour pendant 30 jours : 600 alloués, perte maximale garantie du mandat = 600
+        let (r, d) = regles_mandat(&v(30)).unwrap();
+        assert_eq!((r.depot, d), (60_000_000_000, Some(30)));
+        assert_eq!(regles_json(&r)["perte_max_mandat_sompi"], 60_000_000_000u64);
+        // budget hebdomadaire sur 10 jours : 2 semaines entamées
+        let mut w = v(10);
+        w["periode_daa"] = json!(7 * crate::JOUR_DAA);
+        assert_eq!(regles_mandat(&w).unwrap().0.depot, 4_000_000_000);
+        // sans durée : une période, comme avant
+        assert_eq!(regles_mandat(&v(0)).unwrap(), (crate::Regles::calculer(2_000_000_000, crate::JOUR_DAA, 200_000_000).unwrap(), None));
+        assert!(regles_mandat(&v(400)).is_err());
     }
 
     #[test]

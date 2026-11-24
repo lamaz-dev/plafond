@@ -55,7 +55,8 @@ pub fn rapport(couloirs: &[Couloir], engagements: &[Engagement], now: i64, d: i6
             let e: i64 = engagements.iter().filter(|x| &x.agent == a).map(|x| x.valeur as i64).sum();
             let cs = couloirs.iter().filter(|c| &c.agent == a);
             let (m1, m2) = cs.fold((e, e), |(m1, m2), c| (m1 + c.immediate(now), m2 + c.fenetre(now, d)));
-            json!({ "agent": a, "immediate": s(m1), "fenetre": s(m2) })
+            let vie: i64 = e + couloirs.iter().filter(|c| &c.agent == a).map(|c| c.valeur as i64).sum::<i64>();
+            json!({ "agent": a, "immediate": s(m1), "fenetre": s(m2), "mandat": s(vie) })
         })
         .collect();
     // Par vendeur : couloirs sans liste blanche → « tout vendeur » ; sinon chaque vendeur listé.
@@ -86,6 +87,8 @@ pub fn rapport(couloirs: &[Couloir], engagements: &[Engagement], now: i64, d: i6
         "fenetre_daa": s(d),
         "perte_max_immediate_sompi": s(couloirs.iter().map(|c| c.immediate(now)).sum::<i64>() + engage),
         "perte_max_fenetre_sompi": s(couloirs.iter().map(|c| c.fenetre(now, d)).sum::<i64>() + engage),
+        // Sur toute la vie des mandats : le capital alloué (tant que le propriétaire n'en ajoute pas).
+        "perte_max_mandats_sompi": s(couloirs.iter().map(|c| c.valeur as i64).sum::<i64>() + engage),
         "par_agent": par_agent,
         "par_vendeur": vendeurs.iter().map(|(v, x, r)| json!({ "vendeur": v, "fenetre": s(*x), "restreint": r })).collect::<Vec<_>>(),
         "non_couvert": non_couvert,
@@ -129,6 +132,7 @@ mod tests {
         );
         assert_eq!(r["perte_max_immediate_sompi"], "87");
         assert_eq!(r["perte_max_fenetre_sompi"], "287");
+        assert_eq!(r["perte_max_mandats_sompi"], "20007"); // capital alloué + séquestre ouvert
         let v = r["par_vendeur"].as_array().unwrap();
         assert!(v.iter().any(|x| x["vendeur"] == "*" && x["fenetre"] == "140" && x["restreint"] == false));
         assert!(v.iter().any(|x| x["vendeur"] == "aa".repeat(32) && x["fenetre"] == "140"));

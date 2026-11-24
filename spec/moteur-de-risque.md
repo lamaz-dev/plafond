@@ -44,6 +44,7 @@ sans toucher aux autres.
 | **M1. Perte maximale immédiate** | Ce qui peut quitter le contrôle du propriétaire à l'instant présent si tous les agents deviennent hostiles. |
 | **M2. Perte maximale sur une durée D** | La même chose sur toute fenêtre qui commence maintenant et dure `D`. Par défaut, D = 24 h. |
 | **M3. Exposition par agent** | M1 et M2 restreintes aux couloirs et aux engagements d'un agent. |
+| **M5. Perte maximale du mandat** | Sur toute la vie d'un mandat (et de l'ensemble des mandats) : son capital alloué. |
 | **M4. Exposition par vendeur** | Ce qui peut finir chez un vendeur donné : engagements ouverts chez lui, plus ce que les couloirs peuvent encore lui payer. |
 
 « Perte » veut dire : des fonds qui sortent du contrôle du propriétaire, frais compris. Un paiement
@@ -116,6 +117,16 @@ M2(D) = Σ_i L2_i(D) + Σ_j E_j
 M3(agent) = mêmes sommes, restreintes aux couloirs et séquestres de cet agent
 ```
 
+**M5 (vie des mandats)** : `M5 = Σ_i V_i + Σ_j E_j`, par mandat ou pour l'ensemble.
+*Justification :* un couloir ne peut dépenser que ce qu'il contient ; ce chiffre ne dépend ni du temps
+ni d'une échéance. Il ne bouge que si le propriétaire ajoute des fonds (il augmente alors du montant
+ajouté) ou révoque (il tombe à 0).
+
+**Mandat et durée.** Un mandat de budget `b` par période `p` et de durée `n` jours reçoit
+`b × ⌈n × 864 000 / p⌉` à l'ouverture (« capital alloué ») : sa perte maximale garantie est fixée dès
+la création. La révocation automatique à l'échéance est un confort opérationnel (elle suppose la
+console ouverte) ; la garantie repose sur le capital alloué, pas sur la date.
+
 **M4 (vendeur `v`)** :
 
 ```
@@ -160,6 +171,7 @@ Le moteur affiche toujours ce tableau à côté des chiffres.
 | ✅ | Exposition par vendeur pour les couloirs **avec** liste blanche |
 | ⚠ | Exposition par vendeur sans liste blanche : égale à celle de l'agent entier |
 | ❌ | Portefeuille ordinaire de l'agent, ou tout fonds hors des coffres Plafond |
+| ⚠ | Révocation automatique à l'échéance d'un mandat : seulement si la console est ouverte (le capital alloué reste garanti) |
 | ❌ | Clé du propriétaire compromise (elle peut tout faire, par construction : H5) |
 | ❌ | Coffres de versions refusées (v0.4, v0.5) ou de contrats inconnus |
 

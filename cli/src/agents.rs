@@ -30,6 +30,10 @@ pub struct Agent {
     /// Date de connexion : la clé privée a été remise à l'agent et effacée de la console.
     #[serde(default)]
     pub connecte_le: Option<u64>,
+    /// Échéance du mandat (secondes Unix) : la console le révoque automatiquement à cette date.
+    /// Confort, pas garantie : la garantie est le capital alloué (spec/moteur-de-risque.md).
+    #[serde(default)]
+    pub echeance: Option<u64>,
 }
 
 fn dossier(etat_defaut: &str) -> PathBuf {
@@ -49,6 +53,14 @@ pub fn noter(etat_defaut: &str, agent: &str, genre: &str, sompi: Option<i64>) {
     crate::sobriete::borner(&chemin.to_string_lossy(), crate::sobriete::JOURNAL_MAX);
 }
 
+/// Fixe l'échéance d'un mandat (révocation automatique par la console).
+pub fn fixer_echeance(etat_defaut: &str, id: &str, echeance: Option<u64>) -> Res<()> {
+    let mut agents = charger(etat_defaut);
+    let a = agents.iter_mut().find(|a| a.id == id).ok_or("mandat inconnu")?;
+    a.echeance = echeance;
+    enregistrer(etat_defaut, &agents)
+}
+
 /// Les `n` derniers événements, du plus ancien au plus récent.
 pub fn evenements(etat_defaut: &str, n: usize) -> Vec<serde_json::Value> {
     let texte = std::fs::read_to_string(dossier(etat_defaut).join("evenements.jsonl")).unwrap_or_default();
@@ -64,7 +76,7 @@ pub fn charger(etat_defaut: &str) -> Vec<Agent> {
     let lu: Option<Vec<Agent>> = std::fs::read_to_string(chemin_registre(etat_defaut)).ok().and_then(|t| serde_json::from_str(&t).ok());
     match lu {
         Some(v) if !v.is_empty() => v,
-        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None }],
+        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None, echeance: None }],
     }
 }
 
@@ -109,6 +121,7 @@ pub fn nouveau(etat_defaut: &str, nom: &str, regles: Option<crate::Regles>) -> R
         cree_le: crate::double_auth::maintenant(),
         publique: Some(hex::encode(cle.public_key().serialize())),
         connecte_le: None,
+        echeance: None,
     };
     agents.push(a.clone());
     enregistrer(etat_defaut, &agents)?;
