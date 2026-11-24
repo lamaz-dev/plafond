@@ -25,6 +25,39 @@ La perte maximale du système sur `[a, a + D]` est la somme de ce terme sur les 
 `min(V, C·(a + D − x)/R)`. C'est exactement ce que calcule `Coeur::fenetre`, et ce que le
 fuzzing vérifie fenêtre par fenêtre.
 
+## 1b. La promesse faite à la création : une courbe, jamais dépassée
+
+**Théorème (courbe de perte nette).** Un mandat est créé au score `t₀` avec des pièces de
+valeur `Vₖ` et d'âge `gₖ`. À tout instant `t ≥ t₀`, la **perte nette** du propriétaire depuis la
+création (tout ce qui est sorti de ses coffres, moins tout ce qui y est revenu) vérifie
+
+    perte_nette(t) ≤ Σₖ min(Vₖ, min(C, C·gₖ/R) + C·(t − t₀)/R)  +  Σ apports du propriétaire après t₀
+
+Pour un mandat neuf (`g = 0`), la courbe est simplement **C·(t − t₀)/R, plafonnée au capital**.
+
+Cette courbe ne dépend d'**aucune hypothèse** sur ce que fait l'agent ensuite : coffres frères,
+transferts entre eux, dépôts de tiers, argent volé puis rendu pour être « pré-positionné »
+(R52). Démonstration : une pièce déposée par quelqu'un d'autre que le propriétaire ne peut laisser
+sortir plus que sa valeur, et cette valeur est comptée comme « revenue ». Ce qu'elle laisse sortir
+est donc compensé. Il ne reste que les arbres issus des pièces du propriétaire, bornés par le
+théorème du §1 avec `a = t₀`.
+
+**Ce que la courbe garantit, et ce qu'elle ne garantit pas :**
+- **Garanti, pour toujours** : tous les chiffres affichés à la création du mandat (perte
+  immédiate, perte sur 24 h, perte sur la durée) sont des points de cette courbe, car ce sont des
+  fenêtres qui commencent à la création.
+- **Garanti à tout instant** : les chiffres recalculés en direct par le moteur de risque, qui
+  compte les pièces réellement présentes (§1).
+- **Pas garanti a priori** : une fenêtre glissante qui commence plus tard, si l'agent a la clé de
+  plusieurs coffres et a pré-positionné de l'argent. La rafale peut alors dépasser `C + C·D/R` sur
+  24 h, mais jamais la courbe (`blanchiment_entre_freres_sous_la_courbe` : rafale de 11 C en un
+  instant, fenêtre glissante annoncée de 4 C dépassée, courbe tenue). Le moteur en direct voit
+  ces pièces avant la rafale.
+
+En v0.5.1, la lignée garantissait aussi les fenêtres glissantes. La v0.6 garantit la courbe sans
+lignée. La courbe est la vraie réponse à « Quel est votre pire scénario ? » : la perte totale
+jusqu'à telle date.
+
 ## 2. Les deux règles du réseau sur lesquelles tout repose
 
 Vérifiées dans le code de rusty-kaspa 2.1.0, pas supposées :
@@ -127,6 +160,8 @@ Retirées par rapport au prototype, parce que redondantes (vérifié par mutatio
 | `agent_avide_coffres_freres_sous_l_annonce_du_moteur` | deux coffres, transferts entre eux, dépôts en cours de route : idem |
 | `borne_simple_atteinte_et_jamais_depassee` | la borne `C + C·D/R` est atteinte à 1 % près : elle est serrée |
 | `coffres_freres_pre_positionnement` | démonstration de R52 |
+| `blanchiment_entre_freres_sous_la_courbe` | R52 par blanchiment : la fenêtre glissante est dépassée, la courbe tient |
+| courbe vérifiée dans les deux fuzzings | perte nette depuis la création sous la courbe, à chaque événement, avec dépôts de tiers et retours d'argent |
 
 Le banc détecte un contrat saboté : l'arrondi vers le bas, un délai divisé par deux, la capacité
 ignorée et le verrou retiré font tous échouer le fuzzing. 2 000 cas par propriété passent sans

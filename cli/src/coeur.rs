@@ -293,6 +293,48 @@ mod tests {
         assert!(immediate_b > b.immediate(u64::MAX, u64::MAX));
     }
 
+    /// R52 par blanchiment : l'agent du coffre A prend une capacité par jour vers sa propre adresse,
+    /// puis la redépose en dix pièces dans le coffre frère B, attend, et vide B d'un coup.
+    /// La rafale dépasse une fenêtre glissante de 24 h, mais la perte NETTE depuis la création
+    /// reste sous la courbe annoncée à la création de A et de B.
+    #[test]
+    fn blanchiment_entre_freres_sous_la_courbe() {
+        let (cap, r) = (200_000_000i64, 864_000u64);
+        let (a, b) = (coeur(cap, r as i64), coeur(cap, r as i64 + 1));
+        let (art_a, art_b) = (a.artifact().unwrap(), b.artifact().unwrap());
+        let poche = pay_to_address_script(&crate::address(&k(66))); // adresse de l'agent
+        let (va0, vb0) = (100 * cap as u64, 10 * cap as u64);
+        let mut va = va0;
+        let mut cree_a = 0u64;
+        let (mut sorti, mut revenu) = (0u64, 0u64);
+        let mut t = 0u64;
+        for _ in 0..10 {
+            t += r;
+            let tx = tx_pay(&art_a, va, poche.clone(), cap as u64, 0, a.attente(cap));
+            assert!(accepte(&tx, &UtxoEntry::new(va, vault_spk(&art_a), cree_a, false, None), t));
+            va -= cap as u64;
+            cree_a = t;
+            sorti += cap as u64;
+        }
+        // L'agent rend tout dans B, en dix pièces.
+        revenu += 10 * cap as u64;
+        let depot = t;
+        t += r + 1;
+        for _ in 0..10 {
+            let tx = tx_pay(&art_b, cap as u64, poche.clone(), cap as u64 - 1, 1, b.attente(cap - 1));
+            assert!(accepte(&tx, &UtxoEntry::new(cap as u64, vault_spk(&art_b), depot, false, None), t), "rafale depuis B");
+            sorti += cap as u64 - 1;
+        }
+        // Et la pièce d'origine de B, ancienne, donne aussi sa capacité.
+        sorti += b.immediate(vb0, t) as u64;
+        let net = sorti - revenu;
+        let courbe = a.fenetre(va0, 0, t) + b.fenetre(vb0, t, t);
+        let fenetre_24h = a.fenetre(va, t - cree_a, r) + b.fenetre(vb0, t, r);
+        eprintln!("rafale en un instant {} ; perte nette {net} ≤ courbe {courbe} ; fenêtre glissante annoncée {fenetre_24h}", sorti - 10 * cap as u64);
+        assert!(net <= courbe, "la courbe annoncée à la création tient");
+        assert!(sorti - 10 * cap as u64 > fenetre_24h, "la fenêtre glissante, elle, est dépassée");
+    }
+
     // ------------------------------------------------ fuzzing : moteur + consensus = modèle
 
     #[derive(Clone, Debug)]
@@ -303,6 +345,8 @@ mod tests {
         Desactivee,
         BitHautEtDelai,
         DeuxPuissance32,
+        /// La plus forte : tout l'âge réel de la pièce, le maximum que le réseau accepte.
+        ToutLAge,
         Hasard(u64),
     }
 
@@ -314,11 +358,12 @@ mod tests {
             1 => Just(Seq::Desactivee),
             1 => Just(Seq::BitHautEtDelai),
             1 => Just(Seq::DeuxPuissance32),
+            4 => Just(Seq::ToutLAge),
             1 => any::<u64>().prop_map(Seq::Hasard),
         ]
     }
 
-    fn valeur_seq(s: &Seq, attente: u64) -> u64 {
+    fn valeur_seq(s: &Seq, attente: u64, age: u64) -> u64 {
         match s {
             Seq::Honnete => attente,
             Seq::MoinsUn => attente.saturating_sub(1),
@@ -326,6 +371,7 @@ mod tests {
             Seq::Desactivee => SEQUENCE_LOCK_TIME_DISABLED | attente,
             Seq::BitHautEtDelai => (1u64 << 40) | attente,
             Seq::DeuxPuissance32 => 1u64 << 32,
+            Seq::ToutLAge => age.min(u32::MAX as u64),
             Seq::Hasard(v) => *v,
         }
     }
@@ -364,9 +410,9 @@ mod tests {
             let art = c.artifact().unwrap();
             let montant = ((cap as f64 * part) as u64).max(1);
             let attente = c.attente((montant + frais) as i64);
-            let sq = valeur_seq(&s, attente);
             // Les erreurs se cachent à la frontière : l'âge est souvent pris à ±3 du délai exigé.
             let age = if pres_de_la_frontiere { (attente as i64 + ecart).max(0) as u64 } else { age_hasard };
+            let sq = valeur_seq(&s, attente, age);
             let tx = tx_pay(&art, valeur, externe(), montant, frais, sq);
             let cree = 1_000u64;
             let entree = UtxoEntry::new(valeur, vault_spk(&art), cree, false, None);
@@ -388,14 +434,16 @@ mod tests {
     enum Pas {
         /// L'agent dépense depuis la pièce n° i (modulo) ; `avidite` ∈ [0, 1.2] de ce qui est permis.
         Payer { i: usize, avidite: f64, frais: u64, vers_frere: bool, s: Seq },
-        /// Le propriétaire (ou un tiers) dépose une nouvelle pièce.
-        Deposer { coffre: usize, valeur: u64 },
+        /// Dépôt d'une nouvelle pièce : par le propriétaire (`tiers` faux), ou par quelqu'un
+        /// d'autre (`tiers` vrai), y compris l'agent qui « rend » de l'argent pris plus tôt pour
+        /// le pré-positionner dans un coffre frère (blanchiment, R52).
+        Deposer { coffre: usize, valeur: u64, tiers: bool },
     }
 
     fn pas() -> impl Strategy<Value = (u64, Pas)> {
-        let payer = (any::<usize>(), 0.0f64..1.2, 0u64..500_000, any::<bool>(), seq())
+        let payer = (any::<usize>(), prop_oneof![3 => 0.0f64..1.2, 1 => 1.0f64..3.0], 0u64..500_000, any::<bool>(), seq())
             .prop_map(|(i, avidite, frais, vers_frere, s)| Pas::Payer { i, avidite, frais, vers_frere, s });
-        let deposer = (0usize..2, 1u64..3_000_000_000).prop_map(|(coffre, valeur)| Pas::Deposer { coffre, valeur });
+        let deposer = (0usize..2, 1u64..3_000_000_000, any::<bool>()).prop_map(|(coffre, valeur, tiers)| Pas::Deposer { coffre, valeur, tiers });
         // Écart de temps : 0 (même bloc), petit, ou grand.
         let dt = prop_oneof![1 => Just(0u64), 3 => 1u64..2_000, 3 => 1u64..2_000_000];
         (dt, prop_oneof![6 => payer, 1 => deposer])
@@ -411,6 +459,10 @@ mod tests {
         let mut instantanes: Vec<(u64, Vec<Piece>)> = vec![];
         let mut pertes: Vec<(u64, u64)> = vec![];
         let mut depots: Vec<(u64, Piece)> = vec![];
+        let mut apports: Vec<(u64, Piece)> = vec![]; // dépôts du propriétaire
+        let mut retours: Vec<(u64, u64)> = vec![]; // dépôts de tiers (argent qui revient)
+        let initiales = pieces.clone();
+        let debut = t;
         let mut acceptes = 0;
         for (dt, p) in pas {
             t += dt;
@@ -418,8 +470,13 @@ mod tests {
                 instantanes.push((t, pieces.clone()));
             }
             match p {
-                Pas::Deposer { coffre, valeur } => {
+                Pas::Deposer { coffre, valeur, tiers } => {
                     let pc = Piece { coffre: *coffre % coffres.len(), valeur: *valeur, cree: t };
+                    if *tiers {
+                        retours.push((t, *valeur));
+                    } else {
+                        apports.push((t, pc.clone()));
+                    }
                     depots.push((t, pc.clone()));
                     pieces.push(pc);
                 }
@@ -439,7 +496,7 @@ mod tests {
                     let montant = spent - frais;
                     let frere = (pc.coffre + 1) % coffres.len();
                     let dest = if *vers_frere && frere != pc.coffre { vault_spk(&arts[frere]) } else { externe() };
-                    let sq = valeur_seq(s, c.attente(spent as i64));
+                    let sq = valeur_seq(s, c.attente(spent as i64), t - pc.cree);
                     let tx = tx_pay(&arts[pc.coffre], pc.valeur, dest.clone(), montant, frais, sq);
                     let entree = UtxoEntry::new(pc.valeur, vault_spk(&arts[pc.coffre]), pc.cree, false, None);
                     let ok = accepte(&tx, &entree, t);
@@ -460,6 +517,21 @@ mod tests {
         }
         let fin = t;
         let _ = acceptes;
+        // La courbe annoncée à la création : à tout instant x, la perte NETTE du propriétaire
+        // depuis la création (sorties moins argent revenu) reste sous
+        //   Σ pièces initiales  min(V, min(C, C·âge/R) + C·(x − début)/R)
+        // + Σ apports du propriétaire  min(V, C·(x − apport)/R).
+        // Aucune hypothèse sur les coffres frères ni sur les dépôts de tiers.
+        let mut moments: Vec<u64> = pertes.iter().map(|p| p.0).chain(retours.iter().map(|r| r.0)).chain([fin]).collect();
+        moments.sort();
+        for x in moments {
+            let sorti: u64 = pertes.iter().filter(|(y, _)| *y <= x).map(|(_, v)| v).sum();
+            let revenu: u64 = retours.iter().filter(|(y, _)| *y <= x).map(|(_, v)| v).sum();
+            let courbe: u64 = initiales.iter().map(|p| coffres[p.coffre].fenetre(p.valeur, debut - p.cree, x - debut)).sum::<u64>()
+                + apports.iter().filter(|(y, _)| *y <= x).map(|(y, p)| coffres[p.coffre].fenetre(p.valeur, 0, x - y)).sum::<u64>();
+            prop_assert!(sorti as i128 - revenu as i128 <= courbe as i128,
+                "courbe dépassée à {} : sorti {} − revenu {} > {}", x, sorti, revenu, courbe);
+        }
         // Vérification de la borne sur toutes les fenêtres [a, a + D].
         for (a, presentes) in &instantanes {
             for d in [0u64, 1, 1_000, 86_400, 864_000, 3 * 864_000, fin - a] {

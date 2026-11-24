@@ -44,3 +44,10 @@ borne : délai sans arrondi, délai divisé par deux, capacité ignorée, verrou
 « moteur = modèle » laissait d'abord passer trois d'entre eux, parce que ses âges, tirés au
 hasard, tombaient rarement près du délai exigé. Ils sont maintenant concentrés à ±3 de ce délai,
 et les quatre sabotages sont détectés.
+
+Deuxième passage (24 nov., soir) : avec le contrôle « moteur = modèle » désactivé, le fuzzing de
+la borne **seul** ne voyait pas le délai divisé par deux. L'agent simulé n'était pas assez avide :
+il ne demandait jamais plus de 1,2 fois la dépense permise, avec un délai calculé honnêtement.
+Il annonce maintenant aussi tout l'âge réel de la pièce et demande jusqu'à 3 fois la dépense
+permise. Les quatre sabotages sont alors détectés par les seuls contrôles de borne : fenêtres, et
+courbe de perte nette sauf pour l'arrondi, qui ne coûte qu'une unité par paiement.

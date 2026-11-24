@@ -30,11 +30,12 @@
    contrat séparé si un client l'exige.
 4. **Le plafond de frais n'est plus une garantie du contrat.** Les frais sont comptés dans la
    dépense, donc la borne tient quels qu'ils soient ; l'outil plafonne les frais qu'il signe.
-5. **L'immunité aux coffres frères (R52) et aux dépôts de tiers (R53).** Sans lignée, toute pièce
-   à l'adresse est dépensable par l'agent au rythme permis. La borne reste vraie sur les pièces
-   présentes, donc les chiffres **en direct** du moteur de risque restent justes. En revanche, le
-   chiffre annoncé **à la création** d'un mandat ne vaut plus si l'agent a la clé d'un autre
-   coffre du même propriétaire.
+5. **La garantie des fenêtres glissantes futures quand l'agent a plusieurs coffres** (R52).
+   *Corrigé le 24 nov., soir :* la promesse faite **à la création** n'est **pas** perdue. La perte
+   nette depuis la création reste sous la courbe `C·t/R`, plafonnée au capital, quoi que fasse
+   l'agent (preuve v0.6, §1b, vérifiée par le fuzzing). Ce qui se perd : une fenêtre de 24 h qui
+   commencerait plus tard pourrait dépasser `C + C·D/R` si l'agent a pré-positionné de l'argent
+   dans un coffre frère. Les chiffres en direct restent justes.
 
 ## 3. Ce que la v0.6 gagne
 
@@ -75,8 +76,13 @@ tout paiement après l'échéance invalide.
 4. La console et les mandats : capital alloué et pièces multiples.
 5. Un essai complet sur testnet-10, puis la mise à jour du README, du site et de la spec.
 
-## 6. Recommandation du chef de projet
+## 6. Recommandation du chef de projet (mise à jour)
 
-Adopter la v0.6 **avec l'option A**. La promesse du produit, « Quel est votre pire scénario ? »,
-est un chiffre donné **à la création** du mandat. Seule la lignée la garde vraie dans tous les
-cas, pour 11 octets. L'option B est à prototyper ensuite, séparément.
+Adopter la v0.6 **sans lignée**, avec la **courbe de perte** comme promesse :
+- à la création, le propriétaire voit la courbe « perte maximale jusqu'à telle date », garantie
+  par le seul verrou du réseau ;
+- en direct, le moteur affiche les fenêtres à venir, calculées sur les pièces présentes ;
+- l'outil donne une clé d'agent par mandat : pour donner plus à un agent, on agrandit son mandat.
+  On ne lui en donne pas un second.
+
+L'option A (lignée) reste possible pour un client qui exige aussi les fenêtres glissantes a priori.
