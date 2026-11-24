@@ -31,13 +31,14 @@ The budgets, vaults and payment modes underneath are the means; the guaranteed w
 **Status**
 
 - ✅ testnet-10
-- ✅ loss bound proven on paper and verified by automated tests against the real Kaspa script engine ([proof](spec/borne-de-perte.md))
+- ✅ **stateless core v0.6**: 211 bytes, 4 parameters, one rule (wait in proportion to what you spend), enforced by the network's relative lock ([contract](contracts/coeur.sil))
+- ✅ **curve promised at creation**: a mandate's total loss never exceeds `C × t / R`, capped at its capital, whatever the agent does; proven on paper and verified by tests against the real Kaspa script engine ([proof, in French](spec/borne-de-perte-v0.6.md), [comparison with v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - ✅ reproducible in one command: `./verify-proof.sh`
 - ✅ automated CI on every push, long fuzzing campaign every week
 - ⚠️ not independently reviewed, not audited
 - ⚠️ no mainnet deployment; do not use with real funds
 
-Security advisories: [v0.4 rate-limit flaw, fixed in v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md) · [findings of the first independent review, fixed in v0.5.1](spec/advisories/2026-11-20-v0.5-relecture-independante.md).
+History: up to v0.5.1 the vault was a stateful token bucket with a KIP-20 lineage ([v0.5.1 proof](spec/borne-de-perte.md)); the tool can still freeze such vaults. Security advisories: [v0.4 rate-limit flaw, fixed in v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md) · [findings of the first independent review, fixed in v0.5.1](spec/advisories/2026-11-20-v0.5-relecture-independante.md).
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Overview
@@ -46,11 +47,15 @@ An agent pays for its services on its own (HTTP 402 / x402), but it cannot excee
 owner: the limit is enforced by a covenant, so the network rejects an overspend even if the agent's keys
 and software are compromised.
 
-The repository contains two contracts and a demo tool:
+The repository contains the vault contract, payment modes and a demo tool:
 
-- [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5.1): a token-bucket budget
-  refilled from the DAA score at which the network recorded the vault, a per-payment cap, fees counted inside the budget, an optional payee allowlist,
-  one KIP-20 lineage per vault, single-input spends with an empty payload, and an owner override.
+- [`contracts/coeur.sil`](contracts/coeur.sil) (core v0.6, stateless): to spend `s`, the vault coin must be
+  at least `ceil(s × R / C)` DAA units old, which the network checks itself (relative lock). No counter, no
+  agent-supplied time, no lineage: the address is the vault's identity. Four parameters (owner, agent,
+  capacity `C` = cap per purchase, period `R`), single-input spends, one payee, owner override. A new
+  mandate starts at zero and fills up over time; there is no burst beyond one purchase of `C`.
+- [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5.1, previous core): kept so
+  existing vaults can be frozen.
 - [`contracts/delivery_escrow.sil`](contracts/delivery_escrow.sil) (DeliveryEscrow v0.3): pay on delivery.
   The vendor claims with a verifier's Schnorr signature over `blake2b(requestHash ‖ resultHash ‖ escrow outpoint)`, so one proof pays one escrow; without
   it, anyone can refund the owner after a relative timeout.
@@ -72,7 +77,7 @@ This runs the tool tests, including stateful property-based tests (proptest) tha
 transaction with `kaspa-txscript` and compare the result with a reference model. For a longer run:
 
 ```bash
-FUZZ_CASES=5000 cargo test --release --locked fuzz
+FUZZ_CASES=5000 cargo test --release --locked coeur::
 ```
 
 Contract tests run against the pinned SilverScript compiler:
@@ -82,7 +87,7 @@ git clone https://github.com/kaspanet/silverscript /tmp/silverscript
 git -C /tmp/silverscript checkout 443d519e6688fa03d24c69432763b13e6abe4486
 cp tests/*.rs contracts/*.sil /tmp/silverscript/silverscript-lang/tests/
 cd /tmp/silverscript
-cargo test --release -p silverscript-lang --test agent_budget_tests --test delivery_escrow_tests
+cargo test --release -p silverscript-lang --test coeur_tests --test agent_budget_tests --test delivery_escrow_tests --test ardoise_tests
 ```
 
 ## Reproducible bytecode

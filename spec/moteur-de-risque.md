@@ -1,11 +1,11 @@
 # Moteur de risque : mesurer la perte maximale garantie
 
-> **Statut (24 nov. 2026) : implémenté dans la console pour les couloirs AgentBudget**
-> (`cli/src/risque.rs`, garanti par le test `depense_reelle_sous_la_perte_maximale_annoncee` contre
-> le vrai moteur de script). Les séquestres ouverts en ligne de commande ne sont pas encore suivis
-> par la console ; l'ardoise reste à construire.
-> Elle s'appuie sur la borne démontrée et testée de `spec/borne-de-perte.md` (AgentBudget v0.5.1)
-> et sur le séquestre DeliveryEscrow v0.3. Ni la borne ni ce document n'ont encore été audités.
+> **Statut (24 nov. 2026, soir) : implémenté dans la console pour le cœur v0.6**
+> (`cli/src/risque.rs`, garanti par les fuzzings de `cli/src/coeur.rs` contre le vrai moteur de
+> script et les règles du réseau). Un couloir est désormais **une pièce** du coffre. Les séquestres
+> ouverts en ligne de commande ne sont pas encore suivis par la console.
+> Elle s'appuie sur la borne démontrée et testée de `spec/borne-de-perte-v0.6.md` (courbe promise
+> comprise) et sur le séquestre DeliveryEscrow v0.3. Ni la borne ni ce document n'ont encore été audités.
 > Rédigée comme un standard ouvert : n'importe quel outil peut calculer ces quatre mesures et
 > doit obtenir les mêmes chiffres.
 
@@ -54,47 +54,48 @@ légitime est une perte au sens de ce moteur : il mesure l'exposition, pas l'int
 
 ### 4.1 Notations
 
-Pour un couloir AgentBudget `i` (paramètres du contrat, état courant de la lignée) :
+Pour une pièce `i` d'un coffre cœur v0.6 (paramètres publics du contrat, pièce lue sur le nœud) :
 
-- `C_i` capacité (`capacity`), `R_i` période de recharge (`refillPeriod`), en scores DAA ;
-- `T_i` jetons de l'état courant (`tokens`) ;
-- `d_i` score DAA d'inscription du coffre courant (lu par le script avec `OpTxInputDaaScore`) ;
-- `V_i` valeur du coffre courant, en sompi ;
+- `C_i` capacité (`capacity`, le plafond par achat frais compris), `R_i` période (`period`), en scores DAA ;
+- `c_i` score DAA d'inscription de la pièce ; `g_i = now − c_i` son âge (pièce non confirmée : `g_i = 0`,
+  borne sûre puisqu'elle ne peut être dépensée qu'après son inscription) ;
+- `V_i` valeur de la pièce, en sompi ;
 - `now` score DAA virtuel courant.
 
-Toutes les divisions sont entières et arrondies vers le bas, comme dans le contrat ; ces arrondis
-ne jouent jamais contre le propriétaire.
+Toutes les divisions sont entières et arrondies vers le bas ; ces arrondis ne jouent jamais contre
+le propriétaire.
 
-### 4.2 Couloir AgentBudget (étage 2, paiement direct)
+### 4.2 Pièce d'un coffre (étage 2, paiement direct)
 
-**Disponible à l'instant** (exactement ce que le script accepterait maintenant) :
-
-```
-A_i = min(C_i, T_i + min(max(now − d_i, 0), R_i) × C_i / R_i)
-```
-
-**Perte maximale immédiate** du couloir :
+**Perte maximale immédiate** de la pièce (exactement ce que le script et le réseau accepteraient
+maintenant) :
 
 ```
-L1_i = min(V_i, A_i)
+L1_i = min(V_i, C_i, C_i × g_i / R_i)
 ```
 
-**Perte maximale sur D** (D en scores DAA) :
+**Perte maximale sur D** (D en scores DAA), la pièce et toutes ses descendantes :
 
 ```
-L2_i(D) = min(V_i, A_i + C_i × D / R_i)        tant que le propriétaire ne recharge pas le coffre
+L2_i(D) = min(V_i, min(C_i, C_i × g_i / R_i) + C_i × D / R_i)
 ```
 
-*Justification.* Le lemme de `borne-de-perte.md` donne, pour le premier paiement accepté après `now`
-à l'instant `t ≥ now` : `a ≤ A_i + C_i (t − now) / R_i`. La somme télescopique du théorème, partie de
-ce paiement, borne alors toute dépense sur `[now, now + D]` par `A_i + C_i × D / R_i`. C'est la borne
-du corollaire, resserrée par l'état réel du couloir au lieu d'un coffre supposé plein.
+*Justification.* Théorème du §1 de `borne-de-perte-v0.6.md`. Il couvre aussi ce que l'agent
+transfère vers un coffre frère : une pièce ne laisse jamais sortir plus que ce qu'elle a reçu.
 
-Une recharge du propriétaire augmente `V_i` ; elle ne change ni `A_i` ni la vitesse de recharge.
-Le moteur recalcule après chaque recharge.
+**Courbe promise à la création** d'un mandat créé au score `t₀` par des apports `(Vₖ, xₖ)` du
+propriétaire :
 
-Le plafond par paiement (`maxPerPayment`) limite chaque paiement, pas le total : il n'entre pas
-dans M1 et M2.
+```
+Courbe(t) = Σₖ min(Vₖ, C × (t − xₖ) / R)        perte nette maximale depuis la création
+```
+
+Elle ne dépend d'aucune hypothèse sur ce que fait l'agent ensuite (§1b de la preuve). La console
+l'affiche à la création, puis la perte nette réelle à côté.
+
+Une pièce déposée par n'importe qui à l'adresse du coffre est comptée comme les autres : le chiffre
+surestime alors la perte du propriétaire (c'est l'argent de qui l'a déposé), sans jamais la
+sous-estimer.
 
 ### 4.3 Séquestre DeliveryEscrow (étage 3)
 
@@ -166,10 +167,10 @@ Le moteur affiche toujours ce tableau à côté des chiffres.
 
 | | Couvert par la garantie |
 |---|---|
-| ✅ | Fonds dans les coffres AgentBudget v0.5.1 de la lignée suivie |
+| ✅ | Fonds dans les coffres cœur v0.6 (toutes les pièces de l'adresse) ; courbe promise à la création |
 | ✅ | Séquestres DeliveryEscrow v0.3 ouverts depuis ces coffres |
-| ✅ | Exposition par vendeur pour les couloirs **avec** liste blanche |
-| ⚠ | Exposition par vendeur sans liste blanche : égale à celle de l'agent entier |
+| ⚠ | Exposition par vendeur : le cœur v0.6 n'a pas de liste blanche, elle est égale à celle de l'agent entier |
+| ⚠ | Fenêtre glissante qui commence plus tard, pour un agent qui a la clé de plusieurs coffres (R52) : couverte en direct, pas a priori ; la courbe, elle, tient |
 | ❌ | Portefeuille ordinaire de l'agent, ou tout fonds hors des coffres Plafond |
 | ⚠ | Révocation automatique à l'échéance d'un mandat : seulement si la console est ouverte (le capital alloué reste garanti) |
 | ❌ | Clé du propriétaire compromise (elle peut tout faire, par construction : H5) |
@@ -183,7 +184,7 @@ Hypothèses dont dépendent les chiffres :
   la durée réelle varie légèrement. Le moteur affiche D en heures et en scores DAA.
 - **Lecture de la chaîne.** Les chiffres valent pour l'état lu sur le nœud interrogé. Un vérificateur
   prudent interroge plusieurs nœuds indépendants.
-- **Réorganisation.** La borne porte sur l'historique final (`borne-de-perte.md`, section 4) ; un
+- **Réorganisation.** La borne porte sur l'historique final (le réseau revalide le verrou relatif) ; un
   chiffre calculé juste avant une réorganisation est recalculé après.
 
 ## 7. Vérifiable par n'importe qui

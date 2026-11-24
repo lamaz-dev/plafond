@@ -16,7 +16,7 @@ pub struct Rythme {
 pub struct Couloir {
     pub agent: String,
     pub params: Rythme,
-    /// Score DAA d'inscription de la pièce (prudence : non confirmée = prête maintenant).
+    /// Score DAA d'inscription de la pièce (non confirmée : l'instant présent, âge 0, borne sûre).
     pub creation: i64,
     pub valeur: u64,
 }

@@ -304,7 +304,8 @@ impl Vue {
     pub fn solde(&self) -> u64 {
         self.pieces.iter().map(|p| p.valeur).sum()
     }
-    /// Pièce non confirmée : prudence, on la compte comme si elle était prête dès maintenant.
+    /// Pièce non confirmée : âge 0. C'est une borne sûre, pas une approximation : elle ne peut être
+    /// dépensée qu'après son inscription, et son âge ne courra qu'à partir de là.
     fn age(&self, p: &Piece) -> u64 {
         p.creation.map(|cr| self.now.saturating_sub(cr)).unwrap_or(0)
     }

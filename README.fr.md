@@ -35,7 +35,8 @@ Les budgets, coffres et modes de paiement sont les moyens ; le pire scénario ga
 **Statut**
 
 - ✅ testnet-10
-- ✅ borne de perte démontrée sur papier et vérifiée par tests automatisés contre le vrai moteur de Kaspa ([preuve](spec/borne-de-perte.md))
+- ✅ **cœur v0.6, sans mémoire** : 211 octets, 4 paramètres, une seule règle (attendre en proportion de ce qu'on dépense), imposée par le verrou relatif du réseau ([contrat](contracts/coeur.sil))
+- ✅ **courbe promise à la création** : la perte totale d'un mandat ne dépasse jamais `C × t / R`, plafonnée au capital, quoi que fasse l'agent ; démontrée sur papier et vérifiée par tests contre le vrai moteur de Kaspa ([preuve](spec/borne-de-perte-v0.6.md), [comparaison avec la v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - 🧪 ardoise (prototype) : micropaiements répétés chez un vendeur, signés hors chaîne par l'agent et réglés en une seule transaction ; contrat de 35 lignes et tests contre le vrai moteur, commandes de l'outil à venir ([contrat](contracts/ardoise.sil))
 - ✅ moteur de risque : perte maximale immédiate, sur 24 h, par agent et par vendeur, avec ce que la garantie ne couvre pas ([spécification](spec/moteur-de-risque.md)), affiché dans la console et vérifié par test contre le vrai moteur de Kaspa
 - ✅ reproductible en une commande : `./verify-proof.sh`
@@ -43,7 +44,7 @@ Les budgets, coffres et modes de paiement sont les moyens ; le pire scénario ga
 - ⚠️ pas encore relu de façon indépendante, non audité
 - ⚠️ aucun déploiement mainnet : ne pas utiliser avec des fonds réels
 
-Avis de sécurité : [faille de la limite par période en v0.4, corrigée en v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md) · [constats de la première relecture indépendante, corrigés en v0.5.1](spec/advisories/2026-11-20-v0.5-relecture-independante.md).
+Historique : jusqu'à la v0.5.1, le coffre était un seau à jetons avec état et lignée KIP-20 ([preuve v0.5.1](spec/borne-de-perte.md)) ; il reste gelable par l'outil. Avis de sécurité : [faille de la limite par période en v0.4, corrigée en v0.5](spec/advisories/2026-11-20-v0.4-temps-mis-de-cote.md) · [constats de la première relecture indépendante, corrigés en v0.5.1](spec/advisories/2026-11-20-v0.5-relecture-independante.md).
 >
 > ⚠️ **Unaudited prototype, testnet-10 only.** Never deposit real (mainnet) KAS into these contracts.
 > Public review before audit: report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
@@ -55,24 +56,30 @@ Kaspa (covenant SilverScript), pas par un logiciel.
 ## Architecture
 
 ```
-contracts/   AgentBudget (coffre à budget) et DeliveryEscrow (paiement à la livraison), en SilverScript commenté
-tests/       25 tests du coffre + 10 du séquestre, dans le moteur de script de Kaspa (outil : 21 tests dont fuzzing d'état)
+contracts/   coeur.sil (le coffre, v0.6), DeliveryEscrow (paiement à la livraison), Ardoise ; ancien AgentBudget v0.5.1
+tests/       tests des contrats dans le moteur de script de Kaspa ; l'outil a 94 tests, dont le fuzzing de la borne
 cli/         outil en ligne de commande : déployer, payer, récupérer, démo x402 sur le testnet-10
 spec/        spécification du profil x402 « covenant-budget » (paiement direct depuis le coffre)
 testnet/     commandes à exécuter (commande.txt), journal des résultats, état public du coffre
 .github/     exécution automatique sur le testnet via GitHub Actions
 ```
 
-## Le coffre AgentBudget (v0.5.1, prototype non audité)
+## Le coffre : cœur v0.6 (prototype non audité)
 
-- Plafond par paiement et budget rechargé en continu, plafonné (pas d'accumulation).
-- Liste blanche de destinataires optionnelle.
-- Couloirs parallèles pour les paiements simultanés, impossibles à combiner.
-- Frais de transaction décomptés du budget (impossible de vider le coffre par les frais).
-- Lignée unique suivie par le réseau (identifiant de covenant KIP-20) : pas de coffre cloné.
-- Paiements de l'agent sans données attachées : pas d'instructions de bridge cachées.
-- Monnaie du budget en paramètre : KAS aujourd'hui, Kaspa Dollar (KSD) réservé.
-- Contrôle total du propriétaire : dépense hors budget, recharge dans la même lignée, récupération.
+Une seule règle : pour dépenser une somme, la pièce du coffre doit avoir attendu un temps
+proportionnel à cette somme depuis sa création. C'est le réseau Kaspa qui vérifie ce délai (verrou
+relatif) : il n'y a ni compteur, ni date fournie par l'agent, ni état à suivre.
+
+- **Quatre paramètres** : propriétaire, agent, capacité `C` (le plafond par achat, frais compris),
+  période `R` (le temps pour regagner toute la capacité).
+- **Courbe promise à la création** : perte totale au plus `C × t / R` au bout du temps `t`, jamais plus
+  que le capital déposé. Un mandat neuf démarre à zéro et son budget se remplit au fil du temps.
+- **L'adresse est l'identité du coffre** : le script ne change jamais. Un vendeur recompile le script
+  à partir des quatre paramètres et vérifie la pièce sur la chaîne, sans indexeur ni lignée.
+- **Un tiers de frais en moins** que la v0.5.1, et des coffres plus petits possibles (0,08 KAS).
+- **Contrôle total du propriétaire** : rechargement (une nouvelle pièce), gel de toutes les pièces.
+- **Ce que la v0.6 ne fait pas** : pas de rafale (un achat d'au plus `C`, puis attente), pas de liste
+  blanche de vendeurs dans le contrat. Détail : [comparaison](spec/comparaison-v0.5.1-v0.6.md).
 
 Modèle de menace : `spec/threat-model.md`. Prime aux bugs : `BUG-BOUNTY.md`.
 
@@ -85,13 +92,13 @@ propriétaire. Ni l'un ni l'autre ne peut détourner les fonds ni gonfler les fr
 ## Profil x402 « covenant-budget »
 
 Un agent paie un service x402 directement depuis son coffre. Le vendeur vérifie que le
-coffre est authentique (recompilation du script), qu'il est solvable (budget lisible sur la
+coffre est authentique (recompilation du script à partir de ses quatre paramètres), qu'il est solvable (âge de la pièce lisible sur la
 chaîne) et que la clé agent du coffre a autorisé cette requête, avant toute diffusion.
-Démo : commande `demo-x402` (voir `testnet/journal.md`). Spécification : `spec/kaspa-covenant-budget-v0.md`.
+Le vendeur vérifie aussi que l'âge de la pièce couvre la dépense. Démo : commande `demo-x402` (voir `testnet/journal.md`). Spécification : `spec/kaspa-covenant-budget-v0.md`.
 
 ## Lancer les tests
 
-Voir la section « Reproduce » du [README anglais](README.md#reproduce) : tests de l'outil (dont fuzzing d'état), empreintes du bytecode, tests des contrats sur SilverScript figé.
+Voir la section « Build & Test » du [README anglais](README.md#build--test) : tests de l'outil (dont fuzzing d'état), empreintes du bytecode, tests des contrats sur SilverScript figé.
 
 ## Testnet-10
 

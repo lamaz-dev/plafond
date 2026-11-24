@@ -1,4 +1,2 @@
-# Gel du coffre v0.6 après correction du budget de calcul de ownerControl (24 nov. 2026)
-etat
-recuperer
+# Cœur v0.6 adopté sur main (24 nov. 2026) : simple vérification de l'état
 etat

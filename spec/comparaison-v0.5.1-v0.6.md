@@ -67,14 +67,18 @@ tout paiement après l'échéance invalide.
 - Activation sur testnet-10 à vérifier.
 - À garder hors du cœur, en variante pour les mandats à durée fixe.
 
-## 5. Ce qu'il resterait à faire pour adopter la v0.6
+## 5. Adoption (faite le 24 nov. 2026, soir)
 
-1. Le moteur de risque : un couloir devient « les pièces de l'adresse », avec
-   `Coeur::immediate` et `Coeur::fenetre`.
-2. Les commandes de l'outil : création, paiement, gel. `build_pay` existe et est testé.
-3. Le relais x402 : nouveau `vaultTemplate`.
-4. La console et les mandats : capital alloué et pièces multiples.
-5. Un essai complet sur testnet-10, puis la mise à jour du README, du site et de la spec.
+La v0.6 est maintenant le cœur de Plafond. Elle est branchée dans :
+- l'outil (`cli/src/coffre.rs`) ;
+- le moteur de risque, où un couloir est désormais une pièce du coffre ;
+- la console, qui affiche la courbe promise et le délai avant le prochain achat ;
+- le routeur et le relais x402 (`vaultTemplate` `plafond-coeur-v0.6`) ;
+- la démo ;
+- le script de preuve `verify-proof.sh`.
+
+Elle a été essayée sur testnet-10 : `spec/essai-testnet-2026-11-24-v0.6.md`. Les anciens coffres
+v0.5.1 restent gelables.
 
 ## 6. Recommandation du chef de projet (mise à jour)
 

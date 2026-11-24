@@ -5,7 +5,7 @@ name: testnet-10
 # Dépôt lab : mêmes règles que le dépôt public, plus l'essai du relais vers Kaspa x402.
 on:
   push:
-    branches: [main, coeur-v0.6]
+    branches: [main]
     paths: [testnet/commande.txt]
   workflow_dispatch:
 
