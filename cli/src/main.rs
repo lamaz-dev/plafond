@@ -51,6 +51,12 @@ mod secrets;
 mod console;
 mod retrouver;
 mod risque;
+mod sobriete;
+
+/// Mémoire plafonnée (voir sobriete.rs) ; les tests n'y sont pas soumis.
+#[cfg(not(test))]
+#[global_allocator]
+static MEMOIRE: sobriete::Plafonne = sobriete::Plafonne;
 mod relais;
 mod routeur;
 mod sequestre;
@@ -939,10 +945,17 @@ pub async fn geler(owner: &Keypair, agent: &Keypair, sans_etat: bool, version: u
         Ok(id_gel)
 }
 
-#[tokio::main]
+// Deux fils d'exécution au plus : Plafond attend surtout le réseau, il n'a pas besoin de tous les cœurs.
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Res<()> {
+    sobriete::regler_memoire();
+    let dossier_compte = env::var("PLAFOND_DOSSIER").unwrap_or_else(|_| "compte".into());
+    sobriete::nettoyer(&[std::path::Path::new("."), std::path::Path::new(&dossier_compte)]);
     let args: Vec<String> = env::args().collect();
     let cmd = args.get(1).map(String::as_str).unwrap_or("aide");
+    if matches!(cmd, "plafond" | "console" | "demo" | "routeur") {
+        sobriete::priorite_basse();
+    }
 
     if cmd == "empreintes" {
         print!("{}", empreintes()?);

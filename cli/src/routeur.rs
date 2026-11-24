@@ -256,6 +256,7 @@ fn journaliser(chemin: &str, entree: Value) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(chemin) {
         let _ = writeln!(f, "{e}");
     }
+    crate::sobriete::borner(chemin, crate::sobriete::JOURNAL_MAX);
 }
 
 pub struct Config {

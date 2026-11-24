@@ -15,6 +15,7 @@ La console s'ouvre dans votre navigateur (http://127.0.0.1:8404). Laissez la fen
 Votre compte reste dans le dossier « compte », à côté de ce fichier : ni e-mail, ni serveur.
 Des KAS de test gratuits : https://faucet-tn10.kaspanet.io/
 Vérifier ce fichier : comparez son empreinte SHA-256 avec SHA256SUMS.txt publié avec la version.
+Sobriété : Plafond tourne en priorité basse et ne dépasse jamais 512 Mo de mémoire (réglable : PLAFOND_MEMOIRE_MO=256) ; journaux limités à 1 Mo, vieux rapports de démo effacés automatiquement.
 
 ENGLISH
 -------
@@ -29,4 +30,5 @@ The console opens in your browser (http://127.0.0.1:8404). Keep the terminal win
 Your account stays in the "compte" folder next to this file: no email, no server.
 Free test KAS: https://faucet-tn10.kaspanet.io/
 Verify the download: compare its SHA-256 with SHA256SUMS.txt published with the release.
+Light footprint: Plafond runs at low priority and never uses more than 512 MB of memory (adjustable: PLAFOND_MEMOIRE_MO=256); logs capped at 1 MB, old demo reports removed automatically.
 The program's terminal messages are in French; the console page is in English, French and Japanese.

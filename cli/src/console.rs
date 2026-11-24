@@ -239,6 +239,7 @@ fn journal(entree: Value) {
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open("console-journal.jsonl") {
         let _ = writeln!(f, "{ligne}");
     }
+    crate::sobriete::borner("console-journal.jsonl", crate::sobriete::JOURNAL_MAX);
 }
 
 /// La démo ouvre la console dans le navigateur par défaut (rien à recopier pour la filmer).
