@@ -101,10 +101,21 @@ const transport = createNodeBoundedFetch({
   lookup: async (hote) => (await dns.resolve4(hote)).map((address) => ({ address, family: 4 })),
 });
 // Journal de la tentative payée : statut, en-têtes x402 et corps de la réponse du vendeur.
+// Une 503 « exact_settlement_recovery_required » n'est pas un refus : le vendeur reprend le règlement.
+// On renvoie alors la MÊME requête signée (jamais une nouvelle transaction), comme le prévoit la
+// spec 8b et comme le montre la PR kaspa-x402 #42 (503 → 200 sur la même requête).
+const REPRISES = 6;
 const fetchJournalise = async (input, init = {}) => {
-  const r = await transport.fetch(input, init);
   const h = init.headers ?? {};
   const paye = typeof h.get === "function" ? h.get("payment-signature") : Object.entries(h).find(([k]) => k.toLowerCase() === "payment-signature")?.[1];
+  let r = await transport.fetch(input, init);
+  for (let n = 1; paye && r.status === 503 && n <= REPRISES; n++) {
+    const corps = await r.clone().text().catch(() => "");
+    if (!corps.includes("exact_settlement_recovery_required")) break;
+    console.log(`Réponse 503 (reprise du règlement en cours) : nouvel envoi de la même requête signée dans 10 s (${n}/${REPRISES})`);
+    await new Promise((ok) => setTimeout(ok, 10_000));
+    r = await transport.fetch(input, init);
+  }
   if (paye) {
     let corps = "";
     try { corps = await r.clone().text(); } catch {}
