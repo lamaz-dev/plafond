@@ -228,6 +228,34 @@ pub async fn payer(owner_pk: &[u8], agent: &Keypair, montant: u64, dest: ScriptP
     }
 }
 
+/// Pièces rapatriées par lot : au-delà, la transaction dépasserait la masse standard (mesuré par
+/// `gel_par_lots_sous_la_masse_standard`).
+pub const LOT_GEL: usize = 40;
+
+/// Pièces à rapatrier, en lots, plus grosses d'abord. Une pièce sous le plancher KIP-9 ne peut pas
+/// servir à un paiement (sa sortie serait trop lourde) : elle est sans danger et n'est pas rapatriée,
+/// sinon des centaines de pièces minuscules déposées par un tiers (R53) rendraient le gel impossible.
+pub fn lots(pieces: &[Piece]) -> Vec<Vec<Piece>> {
+    let mut utiles: Vec<Piece> = pieces.iter().filter(|p| p.creation.is_some() && p.valeur >= coeur_plancher()).cloned().collect();
+    utiles.sort_by(|a, b| b.valeur.cmp(&a.valeur));
+    utiles.chunks(LOT_GEL).map(|c| c.to_vec()).collect()
+}
+
+/// Transaction de gel d'un lot : toutes ses pièces vers l'adresse du propriétaire.
+pub fn tx_gel(art: &SilAbiArtifact, lot: &[Piece], owner: &Keypair, frais: u64) -> Res<(Transaction, Vec<UtxoEntry>)> {
+    let total: u64 = lot.iter().map(|p| p.valeur).sum();
+    let entries: Vec<UtxoEntry> = lot.iter().map(|p| UtxoEntry::new(p.valeur, vault_spk(art), p.creation.unwrap_or(0), false, None)).collect();
+    let inputs = lot.iter().map(|p| TransactionInput::new_with_compute_budget(p.outpoint, vec![], 0, coeur::CB_OWNER)).collect();
+    let sortie = TransactionOutput::new(total.checked_sub(frais).ok_or("lot trop petit pour les frais du gel")?, pay_to_address_script(&address(owner)));
+    let mut tx = Transaction::new(1, inputs, vec![sortie], 0, Default::default(), 0, vec![]);
+    for i in 0..tx.inputs.len() {
+        let s = sign(&tx, &entries, i, owner);
+        tx.inputs[i].signature_script = vault_sigscript(art, "ownerControl", &[s.into()])?;
+    }
+    tx.finalize();
+    Ok((tx, entries))
+}
+
 /// Gel prioritaire : le propriétaire rapatrie TOUTES les pièces de l'adresse (`ownerControl`).
 /// Un paiement de l'agent en attente sur une pièce est remplacé (frais plus élevés) ; s'il passe
 /// quand même, sa continuation est une nouvelle pièce, rapatriée au tour suivant.
@@ -239,50 +267,45 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
     let mut ids = vec![];
     for tentative in 1..=8u64 {
         let ps = pieces(&c, &art).await?;
-        let confirmees: Vec<&Piece> = ps.iter().filter(|p| p.creation.is_some()).collect();
-        if confirmees.is_empty() {
-            if ps.is_empty() {
-                break;
+        let lots = lots(&ps);
+        if lots.is_empty() {
+            // Plus rien d'utilisable ; une continuation encore non confirmée peut arriver.
+            if ps.iter().any(|p| p.creation.is_none() && p.valeur >= coeur_plancher()) {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
             }
-            tokio::time::sleep(Duration::from_secs(2)).await; // continuation pas encore confirmée
-            continue;
+            break;
         }
-        let total: u64 = confirmees.iter().map(|p| p.valeur).sum();
-        let frais = (2 * FEE * confirmees.len() as u64 * tentative).min(total / 2);
-        let entries: Vec<UtxoEntry> = confirmees.iter().map(|p| UtxoEntry::new(p.valeur, vault_spk(&art), p.creation.unwrap_or(0), false, None)).collect();
-        let inputs = confirmees.iter().map(|p| TransactionInput::new_with_compute_budget(p.outpoint, vec![], 0, coeur::CB_OWNER)).collect();
-        let mut tx = Transaction::new(1, inputs, vec![TransactionOutput::new(total - frais, pay_to_address_script(&proprio))], 0, Default::default(), 0, vec![]);
-        for i in 0..tx.inputs.len() {
-            let s = sign(&tx, &entries, i, owner);
-            tx.inputs[i].signature_script = vault_sigscript(&art, "ownerControl", &[s.into()])?;
-        }
-        tx.finalize();
-        let id = tx.id();
-        let envoi = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                println!("tentative {tentative} : {err} ; remplacement du paiement en attente");
-                c.submit_transaction_replacement(garde_diffusion(&tx)?).await.map(|_| ()).map_err(|e| e.to_string())
+        for lot in &lots {
+            let total: u64 = lot.iter().map(|p| p.valeur).sum();
+            let frais = (2 * FEE * lot.len() as u64 * tentative).min(total / 2);
+            let (tx, _) = tx_gel(&art, lot, owner, frais)?;
+            let id = tx.id();
+            let envoi = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                Ok(_) => Ok(()),
+                Err(err) => {
+                    println!("tentative {tentative} : {err} ; remplacement du paiement en attente");
+                    c.submit_transaction_replacement(garde_diffusion(&tx)?).await.map(|_| ()).map_err(|e| e.to_string())
+                }
+            };
+            if let Err(err) = envoi {
+                println!("tentative {tentative} refusée : {err}");
+                continue;
             }
-        };
-        if let Err(err) = envoi {
-            println!("tentative {tentative} refusée : {err}");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        }
-        for _ in 0..30 {
-            if c.get_utxos_by_addresses(vec![proprio.clone()]).await?.iter().any(|u| u.outpoint.transaction_id == id) {
-                println!("{} pièce(s) rapatriée(s) : {} TKAS, {}", confirmees.len(), (total - frais) as f64 / 1e8, explorer(&id.to_string()));
-                ids.push(id.to_string());
-                break;
+            for _ in 0..30 {
+                if c.get_utxos_by_addresses(vec![proprio.clone()]).await?.iter().any(|u| u.outpoint.transaction_id == id) {
+                    println!("{} pièce(s) rapatriée(s) : {} TKAS, {}", lot.len(), (total - frais) as f64 / 1e8, explorer(&id.to_string()));
+                    ids.push(id.to_string());
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
-    let reste = pieces(&c, &art).await?;
+    let reste = lots(&pieces(&c, &art).await?).concat();
     liberer(&c).await?;
     if !reste.is_empty() {
-        return Err(format!("gel incomplet : {} pièce(s) encore dans le coffre, relancer", reste.len()).into());
+        return Err(format!("gel incomplet : {} pièce(s) utilisables encore dans le coffre, relancer", reste.len()).into());
     }
     if ids.is_empty() {
         return Err("coffre déjà vide".into());
@@ -357,6 +380,31 @@ mod tests {
         assert_eq!(delai(&c, &ps, 1_000, spent), Some(attente + MARGE));
         assert_eq!(delai(&c, &ps, 1_000 + attente + MARGE, spent), Some(0));
         assert_eq!(delai(&c, &ps[1..], 5_000_000, spent), None, "aucune pièce utilisable");
+    }
+
+    /// R53 : un tiers dépose des centaines de pièces minuscules. Le gel les ignore (elles ne peuvent
+    /// pas payer) et rapatrie les vraies pièces par lots, chacun sous la masse standard.
+    #[test]
+    fn gel_par_lots_sous_la_masse_standard() {
+        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let art = coeur(50_000_000, 288_000).artifact().unwrap();
+        let p = |i: u32, v: u64| Piece { outpoint: TransactionOutpoint::new(TransactionId::from_bytes([7; 32]), i), valeur: v, creation: Some(1) };
+        let mut ps: Vec<Piece> = (0..500).map(|i| p(i, 5_000)).collect(); // poussière
+        ps.extend((500..600).map(|i| p(i, coeur_plancher()))); // 100 pièces juste au plancher
+        ps.push(p(600, 3_000_000_000));
+        let l = lots(&ps);
+        assert_eq!(l.iter().map(|x| x.len()).sum::<usize>(), 101, "la poussière est ignorée");
+        assert_eq!(l[0][0].valeur, 3_000_000_000, "plus grosses pièces d'abord");
+        for lot in &l {
+            let (tx, entries) = tx_gel(&art, lot, &k(1), 2 * FEE * lot.len() as u64).unwrap();
+            let m = masse::masses(&tx, &entries).unwrap();
+            eprintln!("lot de {} pièces : calcul {} g, stockage {} g", lot.len(), m.compute, m.storage);
+            assert!(m.standard(), "lot de {} pièces non diffusable", lot.len());
+        }
+        // Et un lot plein de pièces au plancher reste diffusable.
+        let plein: Vec<Piece> = (0..LOT_GEL as u32).map(|i| p(i, coeur_plancher())).collect();
+        let (tx, entries) = tx_gel(&art, &plein, &k(1), 2 * FEE * LOT_GEL as u64).unwrap();
+        assert!(masse::masses(&tx, &entries).unwrap().standard());
     }
 
     #[test]
