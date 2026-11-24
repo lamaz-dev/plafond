@@ -1,12 +1,1 @@
-# Une commande par ligne. Pousser ce fichier lance l exécution sur le testnet-10.
-# Console du propriétaire : données du tableau de bord sur le vrai réseau (20 nov. 2026)
-deployer
-pause 20
-payer 20000000
-pause 15
-payer 30000000
-pause 15
-tableau
-recuperer
-pause 15
-tableau
+essai-relais # après le correctif kaspa-x402 #42 (issue #40), 24 nov. 2026
