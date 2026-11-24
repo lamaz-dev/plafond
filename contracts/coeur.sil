@@ -1,0 +1,59 @@
+pragma silverscript ^0.1.0;
+
+// Cœur v0.6 (branche coeur-v0.6) — budget d'agent SANS MÉMOIRE.
+//
+// Règle unique : pour dépenser `spent` sompi (paiement + frais), la pièce du coffre doit avoir
+// attendu au moins ceil(spent × period / capacity) unités DAA depuis sa création.
+// Le délai est contrôlé par le réseau lui-même (verrou relatif : OpCheckSequenceVerify dans le
+// script, règle de consensus check_sequence_lock) : il n'y a ni compteur, ni horodatage fourni par
+// l'agent, ni état à faire suivre, ni lignée (KIP-20). Le script ne change jamais : l'adresse du
+// coffre est son identité.
+//
+// Borne prouvée (spec/borne-de-perte-v0.6.md) : sur toute fenêtre de D unités DAA, une pièce
+// déposée par le propriétaire et toutes ses descendantes perdent au plus
+// capacity + capacity × D / period.
+//
+// Ce que le script ne vérifie pas parce que le réseau le garantit déjà : les sorties ne dépassent
+// jamais les entrées (donc 0 ≤ paiement ≤ spent), et la pièce a vraiment l'âge annoncé.
+// Les frais sont comptés dans `spent` : la borne tient quels qu'ils soient.
+//
+//  - pay          : l'agent paie UN bénéficiaire ; le reste revient à la même adresse.
+//  - ownerControl : le propriétaire fait ce qu'il veut (gel, retrait, rechargement).
+
+contract Coeur(
+    pubkey ownerKey, // propriétaire : contrôle total
+    pubkey agentKey, // agent : ne peut que payer, au rythme permis
+    int capacity,    // dépense maximale d'un seul paiement (frais compris), en sompi
+    int period       // unités DAA pour regagner toute la capacité (864 000 ≈ 1 jour)
+) {
+    entry pay(sig agentSig) {
+        require(checkSig(agentSig, agentKey));
+
+        // Porteur : le verrou relatif ne compte que 32 bits ; un délai exigé ≥ 2^32 serait tronqué
+        // (2^32 lu comme 0). Comme spent ≤ capacity, le délai exigé reste ≤ period < 2^32.
+        // Porteur : capacity × period ne déborde pas, le calcul du délai reste exact.
+        // (Capacité ou période nulle ou négative : aucun paiement possible, sans danger.)
+        require(period < 4294967296 && capacity <= 9223372036854775807 / period);
+
+        // Une seule entrée : sinon deux pièces du coffre seraient fusionnées et la valeur de
+        // l'une partirait en frais sans être comptée (R26). Deux sorties : un seul bénéficiaire,
+        // ce qui rend chaque dépense attribuable à un vendeur (moteur de risque, M4).
+        require(tx.inputs.length == 1 && tx.outputs.length == 2);
+
+        byte[] moi = tx.inputs[this.activeInputIndex].scriptPubKey;
+        require(tx.outputs[1].scriptPubKey == moi); // le reste revient au coffre
+        // Non porteur de la borne (voir la preuve) : l'agent ne fragmente pas le coffre, donc
+        // seules les actions du propriétaire ajoutent des pièces et le moteur de risque compte juste.
+        require(tx.outputs[0].scriptPubKey != moi);
+
+        int spent = tx.inputs[this.activeInputIndex].value - tx.outputs[1].value; // paiement + frais
+        require(spent <= capacity);
+
+        // Le cœur : attendre en proportion de ce qu'on dépense.
+        require(this.ageDaa >= (spent * period + capacity - 1) / capacity);
+    }
+
+    entry ownerControl(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+    }
+}
