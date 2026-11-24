@@ -584,3 +584,25 @@ Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/bors
 }
 
 ```
+
+## 2026-11-24 07:56 UTC
+
+```
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Porte-monnaie du relais : kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4 (29700000 sompi)
+Diagnostic /health : HTTP 200
+  {"ok":true,"enabled":true,"gateway":"kaspa-x402-testnet","releaseVersion":"1.0.1","hostedExactSettlementEnabled":true,"exactProfile":"standard-native","chainBroadcastMode":"pnn","chainEvidenceSource":"pnn","chainTrustMode":"trusted-single-source","chainEvidenceAuthorities":1}
+Diagnostic /canary : HTTP 200
+  {"ok":true,"enabled":true,"exactHeads":{"total":0,"available":0,"claimed":0,"unavailable":0,"retired":0},"canary":{"checkedAt":"2026-11-24T07:46:26.942Z","trigger":"scheduled","ok":true,"checks":[{"name":"kaspa-chain","status":"ok","detail":"PNN chain health returned testnet-10 evidence","evidence":{"ok":true,"networkId":"testnet-10","endpoint":"wss://vector-10.kaspa.green","virtualDaaScore":"631708669"}},{"name":"schema-url","status":"ok","detail":"payment-required schema resolved","evidence":{
+Diagnostic /exact : HTTP 402 (offre 402 : {"accepts":[{"amount":"20000000","asset":"KAS","extra":{"binding":"kaspa-exact-v2","finality":"accepted","payToScriptPublicKey":"000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac","paymentFlow":"upfront","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2)
+GET https://demo.kaspa-x402.org/exact
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Réponse à la tentative payée : HTTP 503
+  content-type: application/json; charset=utf-8
+  corps : {"error":"exact_settlement_recovery_required"}
+Échec : invalid_kaspa_settlement_response paid retry response is missing PAYMENT-RESPONSE
+VERDICT : ÉCHEC
+(code de sortie 1)
+
+```
