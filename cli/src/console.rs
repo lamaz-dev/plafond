@@ -658,6 +658,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))
                 }
+                ("GET", "/api/evenements") => json_rep(200, json!({ "evenements": agents::evenements(&defaut, 30) })),
                 ("GET", "/api/tableau") => match (&cible, cle_cible) {
                     (Some(a), Some(Ok(k))) => {
                         let c = cours.lire();
@@ -793,6 +794,9 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     (Some(a), Some(Ok(k))) => {
                         let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(geler(&owner, &k, false, 0)));
                         journal(json!({ "geler": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                        if r.is_ok() {
+                            agents::noter(&defaut, &a.nom, "arret", None);
+                        }
                         resultat(r)
                     }
                     _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
@@ -804,6 +808,9 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         let mut bilan = Vec::new();
                         for a in &liste {
                             let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
+                            if r.is_ok() {
+                                agents::noter(&defaut, &a.nom, "arret", None);
+                            }
                             bilan.push(json!({ "agent": a.id, "nom": a.nom, "transaction": r.as_ref().ok(), "erreur": r.as_ref().err().map(|e| e.to_string()) }));
                         }
                         journal(json!({ "geler_tout": bilan }));

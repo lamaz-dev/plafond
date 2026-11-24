@@ -209,6 +209,9 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
 
     // 5. Il paie un service (service de démonstration que nous opérons)
     let r = avec_coffre(&etat_agent, a.regles, None, || bloquant(crate::payer_agent(&owner_pk, &cle_agent, 30_000_000, &service, false)));
+    if r.is_ok() {
+        agents::noter(&defaut, &a.nom, "paiement", Some(30_000_000));
+    }
     let ok = match &r {
         Ok(tx) => note(5, "Payer un service", true, format!("0,3 unité payée au service de démonstration {service} : {}", explorer(tx))),
         Err(e) => note(5, "Payer un service", false, e.to_string()),
@@ -220,6 +223,9 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
 
     // 6. Il tente de dépasser son budget : c'est le réseau qui refuse
     let r = avec_coffre(&etat_agent, a.regles, None, || bloquant(crate::payer_agent(&owner_pk, &cle_agent, 45_000_000, &service, true)));
+    if matches!(&r, Err(e) if e.to_string().starts_with("REFUSÉ")) {
+        agents::noter(&defaut, &a.nom, "bloque", Some(45_000_000));
+    }
     match &r {
         Err(e) if e.to_string().starts_with("REFUSÉ") => note(6, "Bloqué au-delà du budget", true, format!("0,45 unité demandée (sous le plafond par achat, au-delà du budget restant) : {e}")),
         Ok(tx) => note(6, "Bloqué au-delà du budget", false, format!("paiement accepté alors qu'il devait être refusé : {}", explorer(tx))),
@@ -237,6 +243,9 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
         println!("      arrêt non abouti ({e}) ; nouvel essai dans 5 s");
         tokio::time::sleep(Duration::from_secs(5)).await;
         r = avec_coffre(&a.etat, a.regles, pub_agent, || bloquant(geler(&owner, &k_console, false, 0)));
+    }
+    if r.is_ok() {
+        agents::noter(&defaut, &a.nom, "arret", None);
     }
     match &r {
         Ok(tx) => {

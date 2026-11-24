@@ -36,6 +36,26 @@ fn dossier(etat_defaut: &str) -> PathBuf {
     Path::new(etat_defaut).parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Événements visibles en direct dans la console (paiement, refus, arrêt), écrits par la console,
+/// la démo ou le routeur dans le dossier du registre. Journal borné (sobriété).
+pub fn noter(etat_defaut: &str, agent: &str, genre: &str, sompi: Option<i64>) {
+    use std::io::Write;
+    let chemin = dossier(etat_defaut).join("evenements.jsonl");
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let ligne = serde_json::json!({ "instant_ms": t, "agent": agent, "genre": genre, "sompi": sompi });
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&chemin) {
+        let _ = writeln!(f, "{ligne}");
+    }
+    crate::sobriete::borner(&chemin.to_string_lossy(), crate::sobriete::JOURNAL_MAX);
+}
+
+/// Les `n` derniers événements, du plus ancien au plus récent.
+pub fn evenements(etat_defaut: &str, n: usize) -> Vec<serde_json::Value> {
+    let texte = std::fs::read_to_string(dossier(etat_defaut).join("evenements.jsonl")).unwrap_or_default();
+    let lignes: Vec<&str> = texte.lines().collect();
+    lignes[lignes.len().saturating_sub(n)..].iter().filter_map(|l| serde_json::from_str(l).ok()).collect()
+}
+
 fn chemin_registre(etat_defaut: &str) -> PathBuf {
     dossier(etat_defaut).join("agents.json")
 }
@@ -179,6 +199,21 @@ pub fn cle(a: &Agent, principal: &Keypair) -> Res<Keypair> {
 mod tests {
     use super::*;
     use crate::{JOUR_DAA, Regles};
+
+    #[test]
+    fn evenements_du_direct_dans_l_ordre_et_bornes() {
+        let d = std::env::temp_dir().join(format!("plafond-direct-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let etat = d.join("etat-coffre.json").to_string_lossy().into_owned();
+        noter(&etat, "Agent démo", "paiement", Some(30_000_000));
+        noter(&etat, "Agent démo", "bloque", None);
+        noter(&etat, "Agent démo", "arret", None);
+        let e = evenements(&etat, 2);
+        assert_eq!(e.len(), 2);
+        assert_eq!((e[0]["genre"].as_str(), e[1]["genre"].as_str()), (Some("bloque"), Some("arret")));
+        assert_eq!(evenements(&etat, 10)[0]["sompi"], 30_000_000);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 
     #[test]
     fn regles_calculees_depuis_les_trois_reglages() {

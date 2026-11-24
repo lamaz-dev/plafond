@@ -249,6 +249,11 @@ fn url_journal(u: &str) -> String {
     u.split(['?', '#']).next().unwrap_or("").to_string()
 }
 
+/// Nom affiché dans le direct de la console (ROUTEUR_NOM, défaut « routeur »).
+fn nom_routeur() -> String {
+    std::env::var("ROUTEUR_NOM").unwrap_or_else(|_| "routeur".into())
+}
+
 fn journaliser(chemin: &str, entree: Value) {
     let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let mut e = entree;
@@ -362,6 +367,7 @@ fn traiter_fetch(handle: &Handle, cfg: &Config, pol: &Politique, debit: &mut Deb
     }
     if let Err(e) = pol.verifier_url(&url) {
         journaliser(journal, json!({ "evenement": "refus-politique", "url": url_journal(&url), "raison": e }));
+        crate::agents::noter(&crate::etat_par_defaut(), &nom_routeur(), "bloque", None);
         return (403, json!({ "erreur": e }));
     }
     if !debit.autoriser(Instant::now()) {
@@ -373,6 +379,11 @@ fn traiter_fetch(handle: &Handle, cfg: &Config, pol: &Politique, debit: &mut Deb
         Ok(a) => {
             let paiement = a.txid.as_ref().map(|t| json!({ "montant_sompi": a.montant, "transaction": t, "explorateur": explorer(t) }));
             journaliser(journal, json!({ "evenement": "fetch", "url": url_journal(&url), "statut_vendeur": a.statut, "paiement": paiement.clone(), "refus": a.refus.clone() }));
+            match (&a.txid, &a.refus) {
+                (Some(_), _) => crate::agents::noter(&crate::etat_par_defaut(), &nom_routeur(), "paiement", Some(a.montant as i64)),
+                (None, Some(_)) => crate::agents::noter(&crate::etat_par_defaut(), &nom_routeur(), "bloque", None),
+                _ => {}
+            }
             let statut = if a.refus.is_some() { 402 } else { 200 };
             (statut, json!({ "statut_vendeur": a.statut, "contenu": a.contenu, "paiement": paiement, "refus": a.refus }))
         }
