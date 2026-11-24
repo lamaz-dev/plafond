@@ -143,8 +143,11 @@ Exigence de composition : **un mode de l'étage 3 n'est financé que par un coul
 financement est compté dans la borne du couloir. Ainsi, aucun mode ne peut augmenter M2 au-delà de
 la somme des couloirs plus ses propres engagements déjà ouverts.
 
-**Ardoise plafonnée (à venir).** Formule attendue : dépôt `S` bloqué par un covenant ;
-`E = S` tant que l'ardoise est ouverte, attribuée à son vendeur. À démontrer avec le contrat.
+**Ardoise (contrat v0.1, `contracts/ardoise.sil`).** Le dépôt `S` est payé depuis un couloir (donc
+compté dans sa borne), puis bloqué par le covenant. Tant que l'ardoise est ouverte :
+`E = S`, attribuée à son vendeur. *Justification :* `close` ne peut envoyer au vendeur que
+`total ≤ S` (plus au plus `maxFee` si le reste est infime), le reste au propriétaire ; `refund` ne peut
+envoyer qu'au propriétaire. Aucune sortie ne peut donc faire perdre plus que `S`.
 
 ## 6. Ce qui est garanti, et ce qui ne l'est pas
 

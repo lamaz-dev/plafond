@@ -102,6 +102,7 @@ The CLI prints its messages in French.
 
 - [spec/threat-model.md](spec/threat-model.md): risks, mitigations and the tests covering them.
 - [spec/invariants.md](spec/invariants.md): invariants and the property-based tests.
+- [contracts/ardoise.sil](contracts/ardoise.sil): the tab (prototype): repeated micropayments to one vendor, signed off-chain by the agent and settled in a single transaction; contract and tests done, tool commands to come.
 - [spec/moteur-de-risque.md](spec/moteur-de-risque.md): the risk engine (in French): maximum loss now, over 24 h, per agent and per vendor, and what the guarantee does not cover.
 - [spec/pre-audit.md](spec/pre-audit.md): scope, transaction layouts, consensus assumptions, open questions.
 - [BUG-BOUNTY.md](BUG-BOUNTY.md): rules for the planned bounty.

@@ -1,0 +1,52 @@
+pragma silverscript ^0.1.0;
+
+// Ardoise v0.1 (prototype) — micropaiements répétés chez UN vendeur, réglés en une fois.
+//
+// L'agent paie depuis son coffre AgentBudget un dépôt vers cette ardoise (le dépôt est donc compté
+// dans son budget). Ensuite, à chaque appel, l'agent signe HORS CHAÎNE un bon cumulé :
+// « je dois au total `total` sompi sur CETTE ardoise ». Rien ne passe sur la chaîne, aucun frais.
+//  - close  : le vendeur, et lui seul, encaisse le DERNIER bon (le plus élevé) ; le reste du dépôt
+//             revient au propriétaire dans la même transaction. Seul le vendeur clôt : un agent ne
+//             peut pas fermer l'ardoise avec un ancien bon plus petit.
+//  - refund : sans clôture dans le délai, n'importe qui renvoie le dépôt au propriétaire.
+// Perte maximale du propriétaire : le dépôt (spec/moteur-de-risque.md, section 5).
+// Le vendeur clôt avant le délai : après, le remboursement devient possible (même course que R22).
+
+contract Ardoise(
+    byte[32] merchantSpkHash, // empreinte blake2b du script de paiement du vendeur
+    pubkey merchantKey,       // clé du vendeur : seul lui peut clore
+    byte[32] refundSpkHash,   // empreinte blake2b du script du propriétaire
+    pubkey agentKey,          // clé de l'agent : signe les bons cumulés
+    int timeoutDaa,           // délai (en unités DAA) avant remboursement possible
+    int maxFee                // frais maximum, prélevés sur la part du vendeur
+) {
+    // Bon : signature de l'agent sur blake2b(txid de l'ardoise || index sur 4 octets || total sur 8 octets).
+    entry close(sig merchantSig, datasig voucher, int total) {
+        require(tx.inputs.length == 1);
+        require(maxFee >= 0 && timeoutDaa > 0);
+        require(checkSig(merchantSig, merchantKey));
+        int value = tx.inputs[this.activeInputIndex].value;
+        require(total > 0 && total <= value);
+        byte[] message = byte[](tx.inputs[0].outpointTxId) + byte[](tx.inputs[0].outpointIndex as byte[4]) + byte[](total as byte[8]);
+        require(checkMsgSig(voucher, blake2b(message), agentKey));
+        require(blake2b(tx.outputs[0].scriptPubKey) == merchantSpkHash);
+        require(tx.outputs[0].value >= total - maxFee);
+        if (tx.outputs.length == 1) {
+            // Reste trop petit pour une sortie (masse KIP-9) : le vendeur prend tout, au plus maxFee de plus.
+            require(total >= value - maxFee);
+        } else {
+            require(tx.outputs.length == 2);
+            require(blake2b(tx.outputs[1].scriptPubKey) == refundSpkHash);
+            require(tx.outputs[1].value >= value - total);
+        }
+    }
+
+    // Pas de clôture dans le délai : tout le dépôt revient au propriétaire.
+    entry refund() {
+        require(this.ageDaa >= timeoutDaa);
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 1);
+        require(blake2b(tx.outputs[0].scriptPubKey) == refundSpkHash);
+        require(tx.outputs[0].value >= tx.inputs[this.activeInputIndex].value - maxFee);
+    }
+}

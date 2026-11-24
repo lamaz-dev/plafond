@@ -25,6 +25,7 @@ Budgets de dépense pour agents IA, imposés par covenant sur Kaspa L1 (SilverSc
 
 - ✅ testnet-10
 - ✅ borne de perte démontrée sur papier et vérifiée par tests automatisés contre le vrai moteur de Kaspa ([preuve](spec/borne-de-perte.md))
+- 🧪 ardoise (prototype) : micropaiements répétés chez un vendeur, signés hors chaîne par l'agent et réglés en une seule transaction ; contrat de 35 lignes et tests contre le vrai moteur, commandes de l'outil à venir ([contrat](contracts/ardoise.sil))
 - ✅ moteur de risque : perte maximale immédiate, sur 24 h, par agent et par vendeur, avec ce que la garantie ne couvre pas ([spécification](spec/moteur-de-risque.md)), affiché dans la console et vérifié par test contre le vrai moteur de Kaspa
 - ✅ reproductible en une commande : `./verify-proof.sh`
 - ✅ CI automatique à chaque envoi, campagne longue de fuzzing chaque semaine

@@ -83,4 +83,4 @@ jobs:
       - name: Lancer les tests des contrats
         run: |
           cp tests/*.rs contracts/*.sil /tmp/silverscript/silverscript-lang/tests/
-          cd /tmp/silverscript && cargo test --release -p silverscript-lang --test agent_budget_tests --test delivery_escrow_tests
+          cd /tmp/silverscript && cargo test --release -p silverscript-lang --test agent_budget_tests --test delivery_escrow_tests --test ardoise_tests

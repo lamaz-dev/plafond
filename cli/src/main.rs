@@ -50,6 +50,7 @@ mod double_auth;
 mod secrets;
 mod console;
 mod retrouver;
+mod ardoise;
 mod risque;
 mod sobriete;
 
@@ -437,12 +438,14 @@ pub fn empreintes() -> Res<String> {
     let merchant = pay_to_address_script(&address(&k(3)));
     let refund = pay_to_address_script(&address(&k(1)));
     let escrow = sequestre::artifact(&merchant, &refund, &k(7), "GET:/meteo-kaspa/commande-1", sequestre::DEFAULT_TIMEOUT)?;
+    let tab = ardoise::artifact(&merchant, &xonly(&k(3)), &refund, &xonly(&k(2)), ardoise::DEFAULT_TIMEOUT)?;
     let mut r = String::new();
     r.push_str("# Empreintes reproductibles (blake2b-256). Régénérer : vault-cli empreintes > contracts/EMPREINTES.txt\n");
     r.push_str(&format!("compilateur silverscript : {}\n", SILVERSCRIPT_REV));
     r.push_str(&format!("source agent_budget.sil : {}\n", b2(SOURCE.as_bytes())));
     r.push_str(&format!("source delivery_escrow.sil : {}\n", b2(sequestre::SOURCE.as_bytes())));
-    for (name, a) in [("AgentBudget (paramètres de référence)", &vault), ("DeliveryEscrow (paramètres de référence)", &escrow)] {
+    r.push_str(&format!("source ardoise.sil : {}\n", b2(ardoise::SOURCE.as_bytes())));
+    for (name, a) in [("AgentBudget (paramètres de référence)", &vault), ("DeliveryEscrow (paramètres de référence)", &escrow), ("Ardoise (paramètres de référence)", &tab)] {
         let code = bytecode(a);
         let addr = extract_script_pub_key_address(&pay_to_script_hash_script(&code), Prefix::Testnet)?;
         r.push_str(&format!("{name} : {} octets, bytecode {}\n  adresse P2SH testnet : {addr}\n", code.len(), b2(&code)));

@@ -2,7 +2,10 @@
 compilateur silverscript : 443d519e6688fa03d24c69432763b13e6abe4486
 source agent_budget.sil : 849ca5814d6fd359c806e522fa06479ac2ee43298f1a66e97a7e9b30ec0f8223
 source delivery_escrow.sil : 5efed001d10a4591525b09c1a0753abe913a680f98ea98600ee2c447a464a1c9
+source ardoise.sil : 28c2fd0cf518971ce5863da17abaa4e999a2ac68ea137d2039a6a9adbc544126
 AgentBudget (paramètres de référence) : 577 octets, bytecode 24ff43d01e4a78f27224b6db4e1323999d20facfdaa05467afb5805d90ee5c09
   adresse P2SH testnet : kaspatest:pqj07s7sre983unjyjmdknsnywve6g86eld2q4r8476cqhvsaewqj9ekp2822
 DeliveryEscrow (paramètres de référence) : 263 octets, bytecode ff913ff347b263115aac8ac138d22686dbde27530783a62edfa50c4e1090f02d
   adresse P2SH testnet : kaspatest:prlez0lng7exxy264j9vzwxjy6rdhh382vrc8f3wm7jscnssjrcz60s87m0vs
+Ardoise (paramètres de référence) : 356 octets, bytecode 9776db472f44bcfae891944bcf7892f66c65e0b59f4fb2f490442d04792e96e7
+  adresse P2SH testnet : kaspatest:pzthdk689azte7hgjx2yhnmcjtmxce0qkk05lvh5jpzz6pre96tww49xppcf0
