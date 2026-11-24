@@ -25,6 +25,7 @@ Budgets de dépense pour agents IA, imposés par covenant sur Kaspa L1 (SilverSc
 
 - ✅ testnet-10
 - ✅ borne de perte démontrée sur papier et vérifiée par tests automatisés contre le vrai moteur de Kaspa ([preuve](spec/borne-de-perte.md))
+- 📐 moteur de risque spécifié : perte maximale immédiate, sur 24 h, par agent et par vendeur, avec ce que la garantie ne couvre pas ([spécification](spec/moteur-de-risque.md), pas encore implémenté)
 - ✅ reproductible en une commande : `./verify-proof.sh`
 - ✅ CI automatique à chaque envoi, campagne longue de fuzzing chaque semaine
 - ⚠️ pas encore relu de façon indépendante, non audité
