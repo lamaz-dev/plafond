@@ -1,1 +1,1 @@
-essai-relais # correctif kaspa-x402 #42 déployé (08:15 UTC), nouvel essai demandé par le mainteneur, 24 nov. 2026
+essai-relais # nouvel essai horodaté avec id de transaction, demandé sous kaspa-x402#40, 24 nov. 2026

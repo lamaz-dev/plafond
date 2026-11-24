@@ -112,14 +112,14 @@ const fetchJournalise = async (input, init = {}) => {
   for (let n = 1; paye && r.status === 503 && n <= REPRISES; n++) {
     const corps = await r.clone().text().catch(() => "");
     if (!corps.includes("exact_settlement_recovery_required")) break;
-    console.log(`Réponse 503 (reprise du règlement en cours) : nouvel envoi de la même requête signée dans 10 s (${n}/${REPRISES})`);
+    console.log(`${new Date().toISOString()} réponse 503 ${corps.slice(0, 120)} : nouvel envoi de la même requête signée dans 10 s (${n}/${REPRISES})`);
     await new Promise((ok) => setTimeout(ok, 10_000));
     r = await transport.fetch(input, init);
   }
   if (paye) {
     let corps = "";
     try { corps = await r.clone().text(); } catch {}
-    console.log(`Réponse à la tentative payée : HTTP ${r.status}`);
+    console.log(`Réponse à la tentative payée : HTTP ${r.status} (${new Date().toISOString()})`);
     for (const [k, v] of r.headers.entries()) if (/payment|x402|retry|content-type/i.test(k)) console.log(`  ${k}: ${k === "payment-required" ? Buffer.from(v, "base64").toString().slice(0, 600) : v.slice(0, 300)}`);
     console.log(`  corps : ${corps.slice(0, 800)}`);
   }

@@ -93,6 +93,9 @@ export class FournisseurCoffre {
       pieces = await this.#piecesLibres();
     }
     const resultat = await this.signer(request, pieces);
+    // Traçabilité pour le vendeur : heure UTC, tentative, transaction et pièces dépensées.
+    const tx = {};
+    console.log(`Transaction de paiement signée ${new Date().toISOString()} : tentative ${id}, transaction ${tx.id ?? resultat.transactionId ?? "?"}, entrées ${resultat.inputOutpoints.map((o) => `${o.txid ?? o.transactionId}:${o.index}`).join(", ")}`);
     for (const op of resultat.inputOutpoints) this.#reservees.set(cle(op), id);
     this.#tentatives.set(id, { intentHash: request.intentHash.toLowerCase(), resultat: structuredClone(resultat) });
     return resultat;
