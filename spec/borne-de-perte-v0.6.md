@@ -131,7 +131,7 @@ Chaque règle a été sabotée tour à tour ; le banc de tests a détecté les 1
 | Règle | Porteuse ? | Sans elle |
 |---|---|---|
 | signature de l'agent | oui | n'importe qui paie |
-| `period < 2^32` | oui | délai de `2^32` lu comme 0 : paiement sans attente (`delai_tronque_a_32_bits_impossible`) |
+| `period < 2^32` | non (doublée par le compilateur, voir `spec/coeur-bytecode.md`) | le compilateur ajoute déjà `délai ∈ [0, 2^32)` avant le verrou ; la garde reste par prudence |
 | `capacity ≤ MAX / period` | oui | débordement du calcul du délai |
 | une seule entrée | oui | fusion : la valeur d'une pièce part en frais sans être comptée (R26) |
 | deux sorties | oui (attribution) | un second bénéficiaire caché dans le même paiement ; le moteur de risque ne peut plus attribuer la dépense à un vendeur (M4) |

@@ -29,8 +29,9 @@ contract Coeur(
     entry pay(sig agentSig) {
         require(checkSig(agentSig, agentKey));
 
-        // Porteur : le verrou relatif ne compte que 32 bits ; un délai exigé ≥ 2^32 serait tronqué
-        // (2^32 lu comme 0). Comme spent ≤ capacity, le délai exigé reste ≤ period < 2^32.
+        // Le verrou relatif ne compte que 32 bits : le délai exigé doit rester < 2^32. Le compilateur
+        // l'impose déjà (délai ∈ [0, 2^32) avant OpCheckSequenceVerify, spec/coeur-bytecode.md) ;
+        // cette garde le double, par prudence : spent ≤ capacity donne un délai ≤ period < 2^32.
         // Porteur : capacity × period ne déborde pas, le calcul du délai reste exact.
         // (Capacité ou période nulle ou négative : aucun paiement possible, sans danger.)
         require(period < 4294967296 && capacity <= 9223372036854775807 / period);

@@ -483,6 +483,19 @@ mod tests {
         /// d'autre (`tiers` vrai), y compris l'agent qui « rend » de l'argent pris plus tôt pour
         /// le pré-positionner dans un coffre frère (blanchiment, R52).
         Deposer { coffre: usize, valeur: u64, tiers: bool },
+        /// Le propriétaire gèle un coffre au milieu des attaques : toutes ses pièces reviennent
+        /// (`ownerControl`, vérifié par le vrai moteur). Ce n'est pas une perte.
+        Geler { coffre: usize },
+    }
+
+    /// Transaction de gel d'une pièce par le propriétaire (clé 1) ; le vrai moteur doit l'accepter.
+    fn gel_accepte(art: &SilAbiArtifact, valeur: u64, cree: u64) -> bool {
+        let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([4; 32]), 0), vec![], 0, CB_OWNER);
+        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(valeur / 2, externe())], 0, Default::default(), 0, vec![]);
+        let entree = UtxoEntry::new(valeur, vault_spk(art), cree, false, None);
+        let s = sign(&tx, std::slice::from_ref(&entree), 0, &k(1));
+        tx.inputs[0].signature_script = vault_sigscript(art, "ownerControl", &[s.into()]).unwrap();
+        script(&tx, &entree).is_some()
     }
 
     fn pas() -> impl Strategy<Value = (u64, Pas)> {
@@ -491,7 +504,8 @@ mod tests {
         let deposer = (0usize..2, 1u64..3_000_000_000, any::<bool>()).prop_map(|(coffre, valeur, tiers)| Pas::Deposer { coffre, valeur, tiers });
         // Écart de temps : 0 (même bloc), petit, ou grand.
         let dt = prop_oneof![1 => Just(0u64), 3 => 1u64..2_000, 3 => 1u64..2_000_000];
-        (dt, prop_oneof![6 => payer, 1 => deposer])
+        let geler = (0usize..2).prop_map(|coffre| Pas::Geler { coffre });
+        (dt, prop_oneof![12 => payer, 2 => deposer, 1 => geler])
     }
 
     /// Simule le système et vérifie, pour chaque instant a et chaque durée D, que la perte réelle
@@ -524,6 +538,13 @@ mod tests {
                     }
                     depots.push((t, pc.clone()));
                     pieces.push(pc);
+                }
+                Pas::Geler { coffre } => {
+                    let c = *coffre % coffres.len();
+                    for p in pieces.iter().filter(|p| p.coffre == c) {
+                        prop_assert!(gel_accepte(&arts[c], p.valeur, p.cree), "le gel du propriétaire doit toujours passer");
+                    }
+                    pieces.retain(|p| p.coffre != c);
                 }
                 Pas::Payer { i, avidite, frais, vers_frere, s } => {
                     if pieces.is_empty() {
@@ -625,6 +646,17 @@ mod tests {
         }
     }
 
+    /// À écrire pendant la séance Red Team : réorganisation de chaîne. Une branche de blocs est
+    /// annulée, les paiements qu'elle contenait reviennent au mempool et sont rejoués sur l'autre
+    /// branche, avec d'autres scores DAA d'inscription. L'invariant à tenir : la perte nette reste
+    /// sous la courbe sur l'historique FINAL. Le réseau revalide les verrous relatifs, et cela doit
+    /// suffire. Squelette : rejouer `simuler` en remplaçant l'horloge par une suite non monotone.
+    #[test]
+    #[ignore = "squelette pour la séance Red Team (réorganisations)"]
+    fn reorganisation_sous_la_courbe() {
+        unimplemented!("à concevoir en séance : modèle de réorganisation (profondeur, ré-inscription des pièces)")
+    }
+
     /// La borne simple, vérifiée directement : la pièce déposée de longue date, attaquée par un
     /// agent qui dépense à chaque instant tout ce qui est permis, ne perd jamais plus que
     /// C + C × D / R sur une fenêtre de D, et atteint presque cette valeur (la borne est serrée).
@@ -653,5 +685,20 @@ mod tests {
         eprintln!("perte réelle {perte} / borne {borne}");
         assert!(perte <= borne);
         assert!(perte >= borne - borne / 100, "la borne est atteinte à 1 % près : elle est serrée");
+    }
+}
+
+#[cfg(test)]
+mod bytecode {
+    /// Écrit le bytecode du cœur (paramètres de référence) pour `tools/desassembler.py`.
+    #[test]
+    fn exporter_bytecode_de_reference() {
+        let k = |b: u8| secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let c = super::Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: crate::CAPACITY, periode: crate::JOUR_DAA };
+        let b = crate::bytecode(&c.artifact().unwrap());
+        assert_eq!(b.len(), 211);
+        if let Ok(f) = std::env::var("PLAFOND_EXPORT_BYTECODE") {
+            std::fs::write(f, hex::encode(&b)).unwrap();
+        }
     }
 }

@@ -149,9 +149,9 @@ fn parametres_aberrants_refuses() {
     assert!(!essai(i64::MAX / 1000 + 1, 1000), "capacité × période déborderait");
 }
 
-/// Pourquoi la garde `period < 2^32` est porteuse : avec period = 2^33, dépenser la moitié de la
-/// capacité exigerait 2^32 unités, que le verrou 32 bits lit comme 0. Sans la garde, l'agent
-/// paierait sans attendre (sequence 0) ; avec elle, le coffre refuse tout paiement.
+/// Délai de 2^32 : avec period = 2^33, dépenser la moitié de la capacité exigerait 2^32 unités, que
+/// le verrou 32 bits lirait comme 0. Double protection : la garde `period < 2^32` du contrat, et le
+/// contrôle `délai ∈ [0, 2^32)` que le compilateur ajoute avant le verrou (spec/coeur-bytecode.md).
 #[test]
 fn delai_tronque_a_32_bits_impossible() {
     let a = art_avec(C, 1i64 << 33);

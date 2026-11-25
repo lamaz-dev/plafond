@@ -102,8 +102,20 @@ macro_rules! relance {
     }};
 }
 
-/// Vérifie un paiement covenant-budget, le diffuse et attend son acceptation par le réseau.
-async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_to: &Address, payload_b64: &str) -> Result<Value, String> {
+/// Paiement décodé et contrôlé sans réseau (étapes a à c bis, puis recompilation du script).
+struct Prepare {
+    pub tx: Transaction,
+    pub txid: String,
+    pub price: i64,
+    pub coeur: crate::coeur::Coeur,
+    pub spk: kaspa_consensus_core::tx::ScriptPublicKey,
+    pub vault_addr: Address,
+    pub outpoint: TransactionOutpoint,
+}
+
+/// Étapes a à c bis (forme, prix, plafond, autorisation de l'agent) puis recompilation du script :
+/// rien ne passe par le réseau. Testable hors ligne.
+fn preparer(url: &str, offer: &Offer, pay_to: &Address, payload_b64: &str) -> Result<Prepare, String> {
     let raw = B64.decode(payload_b64).map_err(|_| "en-tête PAYMENT-SIGNATURE illisible")?;
     let pl: Value = serde_json::from_slice(&raw).map_err(|_| "charge utile JSON invalide")?;
     if pl["accepted"] != requirement(offer, pay_to) {
@@ -170,7 +182,7 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
         .map_err(|_| "autorisation : signature de l'agent invalide")?;
     println!("[VENDEUR] autorisation valide : signée par la clé agent du coffre pour cette requête");
 
-    // d. Coffre authentique : script recompilé (mis en cache), pièce présente à son adresse. Le
+    // d. Coffre authentique : script recompilé (mis en cache) à partir des quatre paramètres. Le
     // script ne change jamais : l'adresse EST l'identité du coffre, sans lignée à suivre.
     let coeur = publics.coeur().map_err(|e| format!("paramètres du coffre refusés : {e}"))?;
     let spk = cached_spk(&publics)?;
@@ -178,33 +190,53 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
         return Err("la sortie 1 ne revient pas au coffre".into());
     }
     let vault_addr = extract_script_pub_key_address(&spk, Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?;
-    let utxos = relance!(rpc.get_utxos_by_addresses(vec![vault_addr.clone()]))?;
-    let on_chain = utxos.iter().find(|u| u.outpoint.transaction_id.to_string() == txid_in && u.outpoint.index == index_in && u.utxo_entry.script_public_key == spk);
-    let Some(vault_utxo) = on_chain else {
+    Ok(Prepare { tx, txid, price, coeur, spk, vault_addr, outpoint: expected_in })
+}
+
+/// La pièce du coffre telle que le nœud la voit.
+struct PieceVue {
+    pub valeur: u64,
+    pub spk: kaspa_consensus_core::tx::ScriptPublicKey,
+    /// `u64::MAX` : pas encore confirmée.
+    pub block_daa: u64,
+}
+
+/// Étapes d et e sur ce que le nœud a renvoyé : la pièce existe à l'adresse du coffre, confirmée,
+/// et son âge couvre la dépense annoncée par la transaction. Testable hors ligne.
+fn controler(p: &Prepare, piece: Option<&PieceVue>, now: u64) -> Result<(), String> {
+    let Some(v) = piece.filter(|v| v.spk == p.spk) else {
         return Err("coffre non authentique : aucune pièce de coffre Plafond avec ces paramètres n'existe sur la chaîne".into());
     };
-    if vault_utxo.utxo_entry.block_daa_score == u64::MAX {
+    if v.block_daa == u64::MAX {
         return Err("pièce du coffre pas encore confirmée".into());
     }
-    println!("[VENDEUR] coffre authentique : script Plafond recompilé = pièce on-chain ({} TKAS)", vault_utxo.utxo_entry.amount as f64 / 1e8);
-
-    // e. Solvabilité, avant toute diffusion : la dépense (prix + frais) est permise par l'âge de la
-    // pièce, et la transaction annonce un délai que le réseau acceptera.
-    let now = relance!(rpc.get_block_dag_info())?.virtual_daa_score;
-    let age = now.saturating_sub(vault_utxo.utxo_entry.block_daa_score);
-    let spent = vault_utxo.utxo_entry.amount as i64 - tx.outputs[1].value as i64; // prix + frais
-    if spent < price || spent > coeur.capacite {
+    let age = now.saturating_sub(v.block_daa);
+    let spent = v.valeur as i64 - p.tx.outputs[1].value as i64; // prix + frais
+    if spent < p.price || spent > p.coeur.capacite {
         return Err("dépense de la transaction hors des limites du coffre".into());
     }
-    let exige = coeur.attente(spent);
-    let seq = tx.inputs[0].sequence;
+    let exige = p.coeur.attente(spent);
+    let seq = p.tx.inputs[0].sequence;
     if seq & (1 << 63) != 0 || (seq & 0xffff_ffff) < exige {
         return Err("délai annoncé insuffisant : le réseau refuserait ce paiement".into());
     }
     if exige > age {
         return Err(format!("refusé avant diffusion : budget pas encore disponible (encore {} s)", (exige - age) / 10 + 1));
     }
-    println!("[VENDEUR] solvable : âge de la pièce {age} ≥ délai exigé {exige} pour {} TKAS", spent as f64 / 1e8);
+    Ok(())
+}
+
+/// Vérifie un paiement covenant-budget, le diffuse et attend son acceptation par le réseau.
+async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_to: &Address, payload_b64: &str) -> Result<Value, String> {
+    let p = preparer(url, offer, pay_to, payload_b64)?;
+    let utxos = relance!(rpc.get_utxos_by_addresses(vec![p.vault_addr.clone()]))?;
+    let vault_utxo = utxos.iter().find(|u| TransactionOutpoint::from(u.outpoint.clone()) == p.outpoint);
+    let vue = vault_utxo.map(|u| PieceVue { valeur: u.utxo_entry.amount, spk: u.utxo_entry.script_public_key.clone(), block_daa: u.utxo_entry.block_daa_score });
+    let now = relance!(rpc.get_block_dag_info())?.virtual_daa_score;
+    controler(&p, vue.as_ref(), now)?;
+    println!("[VENDEUR] coffre authentique et solvable : script Plafond recompilé = pièce on-chain");
+    let (tx, txid) = (p.tx, p.txid);
+    let payeur = p.vault_addr.to_string();
 
     // f. Diffusion puis attente de l'acceptation par le réseau.
     rpc.submit_transaction(crate::garde_diffusion(&tx).map_err(|e| e.to_string())?, false).await.map_err(|e| format!("rejetée par le réseau : {e}"))?;
@@ -217,7 +249,7 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
                 "success": true,
                 "transaction": txid,
                 "network": NETWORK,
-                "payer": vault_utxo.address.as_ref().map(|a| a.to_string()).unwrap_or_default(),
+                "payer": payeur,
                 "amount": offer.price.to_string(),
                 "extensions": { "kaspa": { "binding": BINDING, "profile": PROFILE, "finality": "accepted", "paymentOutputIndex": 0 } }
             }));
@@ -534,5 +566,130 @@ mod vendeurs_malveillants {
             Err(ureq::Error::Status(c, _)) => assert_eq!(c, 302),
             Err(e) => panic!("{e}"),
         }
+    }
+}
+
+/// Le vendeur x402 attaqué hors ligne : charges utiles forgées contre `preparer` (sans réseau) et
+/// `controler` (sur ce qu'un nœud renverrait). Base pour la séance Red Team.
+#[cfg(test)]
+mod vendeur_attaque_hors_ligne {
+    use super::*;
+    use kaspa_consensus_core::tx::{ScriptPublicKey, TransactionId};
+
+    const URL: &str = "https://vendeur.exemple/meteo-kaspa";
+    const PIECE: u64 = 1_000_000_000;
+
+    fn k(b: u8) -> Keypair {
+        Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap()
+    }
+    fn coeur() -> crate::coeur::Coeur {
+        crate::coeur::Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: 50_000_000, periode: 36_000 }
+    }
+    fn vendeur() -> Address {
+        crate::address(&k(9))
+    }
+
+    /// Ce que l'attaquant peut changer dans un paiement par ailleurs valide.
+    #[derive(Default)]
+    struct Forge {
+        sequence: Option<u64>,
+        capacite_annoncee: Option<i64>,
+        url_signee: Option<&'static str>,
+        expire_dans: Option<i64>,
+        signataire: Option<u8>,
+        prix_paye: Option<u64>,
+        sortie1: Option<ScriptPublicKey>,
+        dest0: Option<ScriptPublicKey>,
+    }
+
+    fn paiement(f: Forge) -> String {
+        let c = coeur();
+        let art = c.artifact().unwrap();
+        let op = TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), 1);
+        let prix = f.prix_paye.unwrap_or(OFFERS[0].price);
+        let dest = f.dest0.unwrap_or_else(|| pay_to_address_script(&vendeur()));
+        let mut tx = crate::coeur::build_pay(&c, &art, op, PIECE, dest, prix, FEE, &k(2), f.sequence).unwrap();
+        if let Some(spk) = f.sortie1 {
+            tx.outputs[1].script_public_key = spk;
+        }
+        tx.finalize();
+        let txid = tx.id().to_string();
+        let mut params = c.publics();
+        if let Some(cap) = f.capacite_annoncee {
+            params.capacite = cap;
+        }
+        let req_hash = request_hash("GET", f.url_signee.unwrap_or(URL));
+        let expires = (now_unix() as i64 + f.expire_dans.unwrap_or(60)) as u64;
+        let digest = auth_digest(&txid, &req_hash, &vendeur().to_string(), &OFFERS[0].price.to_string(), expires);
+        let sig = k(f.signataire.unwrap_or(2)).sign_schnorr(Message::from_digest(digest));
+        let pl = json!({
+            "x402Version": 2,
+            "accepted": requirement(&OFFERS[0], &vendeur()),
+            "payload": {
+                "type": "covenant-budget-transaction", "profile": PROFILE,
+                "transaction": hex::encode(borsh::to_vec(&tx).unwrap()),
+                "vault": { "params": params, "outpoint": { "txid": op.transaction_id.to_string(), "index": op.index } },
+                "requestHash": req_hash,
+                "authorization": { "version": "x402cov-auth-v0", "expiresAt": expires, "signature": hex::encode(sig.as_ref()) }
+            }
+        });
+        B64.encode(pl.to_string())
+    }
+
+    fn piece(block_daa: u64) -> PieceVue {
+        PieceVue { valeur: PIECE, spk: vault_spk(&coeur().artifact().unwrap()), block_daa }
+    }
+    /// Âge exigé pour le paiement standard (prix + frais).
+    fn exige() -> u64 {
+        coeur().attente((OFFERS[0].price + FEE) as i64)
+    }
+
+    #[test]
+    fn paiement_honnete_accepte() {
+        let p = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge::default())).unwrap();
+        controler(&p, Some(&piece(1_000)), 1_000 + exige()).unwrap();
+    }
+
+    #[test]
+    fn forges_refusees_avant_tout_appel_au_noeud() {
+        let cas: Vec<(&str, Forge, &str)> = vec![
+            ("rejeu pour une autre requête", Forge { url_signee: Some("https://vendeur.exemple/autre"), ..Default::default() }, "autre requête"),
+            ("capacité gonflée dans les paramètres", Forge { capacite_annoncee: Some(5_000_000_000), ..Default::default() }, "sortie 1"),
+            ("autorisation expirée", Forge { expire_dans: Some(-1), ..Default::default() }, "expirée"),
+            ("autorisation signée par un autre", Forge { signataire: Some(7), ..Default::default() }, "signature de l'agent"),
+            ("prix payé inférieur", Forge { prix_paye: Some(OFFERS[0].price - 1), ..Default::default() }, "exactement le prix"),
+            ("sortie 0 vers un autre", Forge { dest0: Some(pay_to_address_script(&crate::address(&k(8)))), ..Default::default() }, "exactement le prix"),
+            ("reste détourné", Forge { sortie1: Some(pay_to_address_script(&crate::address(&k(8)))), ..Default::default() }, "sortie 1"),
+        ];
+        for (nom, f, attendu) in cas {
+            let e = preparer(URL, &OFFERS[0], &vendeur(), &paiement(f)).err().unwrap_or_else(|| panic!("{nom} : accepté"));
+            assert!(e.contains(attendu), "{nom} : « {e} » ne contient pas « {attendu} »");
+        }
+    }
+
+    #[test]
+    fn controles_sur_la_chaine() {
+        let p = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge::default())).unwrap();
+        let t = 1_000 + exige();
+        assert!(controler(&p, None, t).unwrap_err().contains("non authentique"), "pièce absente");
+        let autre = PieceVue { spk: pay_to_address_script(&vendeur()), ..piece(1_000) };
+        assert!(controler(&p, Some(&autre), t).unwrap_err().contains("non authentique"), "pièce sous un autre script");
+        assert!(controler(&p, Some(&piece(u64::MAX)), t).unwrap_err().contains("pas encore confirmée"));
+        assert!(controler(&p, Some(&piece(1_000)), t - 1).unwrap_err().contains("pas encore disponible"), "trop tôt d'une unité");
+        let courte = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge { sequence: Some(exige() - 1), ..Default::default() })).unwrap();
+        assert!(controler(&courte, Some(&piece(1_000)), t + 10_000).unwrap_err().contains("délai annoncé insuffisant"));
+        let desactivee = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge { sequence: Some((1 << 63) | exige()), ..Default::default() })).unwrap();
+        assert!(controler(&desactivee, Some(&piece(1_000)), t).unwrap_err().contains("délai annoncé insuffisant"));
+        // La pièce vaut moins que ce que l'agent prétend : la dépense réelle ne colle plus.
+        let petite = PieceVue { valeur: PIECE - 30_000_000, ..piece(1_000) };
+        assert!(controler(&p, Some(&petite), t).is_err(), "valeur de pièce mensongère");
+    }
+
+    #[test]
+    fn prix_au_dela_du_plafond_refuse() {
+        let cher = Offer { path: "/cher", price: coeur().capacite as u64, content: "" };
+        let pl = paiement(Forge::default());
+        // L'offre n'est pas celle que l'agent a acceptée : refus immédiat, quoi qu'il en soit.
+        assert!(preparer(URL, &cher, &vendeur(), &pl).is_err());
     }
 }
