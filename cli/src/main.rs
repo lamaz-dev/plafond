@@ -469,6 +469,17 @@ pub fn vault_sigscript(a: &SilAbiArtifact, entry: &str, args: &[ArtifactValue]) 
 }
 
 const SEQUESTRE: &str = "testnet/sequestre.json";
+const ARDOISE: &str = "testnet/ardoise.json";
+
+/// Ardoise ouverte et dernier bon signé par l'agent (cumulé : seul le plus élevé compte).
+#[derive(Serialize, Deserialize)]
+struct ArdoiseOuverte {
+    ardoise: ardoise::Ardoise,
+    #[serde(default)]
+    total: i64,
+    #[serde(default)]
+    bon: String,
+}
 
 /// Empreintes reproductibles : sources, version du compilateur et bytecode de référence.
 /// Quiconque recompile le dépôt au même commit doit obtenir exactement ce texte (vérifié en CI).
@@ -1367,6 +1378,73 @@ async fn main() -> Res<()> {
             }
             liberer(&c).await?;
         }
+        // Ardoise : micropaiements répétés chez UN vendeur, réglés en une seule transaction.
+        "ardoise-ouvrir" => {
+            let depot: u64 = args.get(2).ok_or("dépôt en sompi manquant")?.parse()?;
+            let timeout: i64 = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(ardoise::DEFAULT_TIMEOUT);
+            if fs::metadata(ARDOISE).is_ok() {
+                return Err("une ardoise est déjà ouverte".into());
+            }
+            let art = ardoise::artifact(&pay_to_address_script(&address(&service)), &xonly(&service), &pay_to_address_script(&address(&owner)), &agent_pk(&agent), timeout)?;
+            let spk = pay_to_script_hash_script(&bytecode(&art));
+            println!("Ardoise chez le vendeur {} : dépôt {} TKAS, délai {timeout} blocs (~{} min)", address(&service), depot as f64 / 1e8, timeout / 600);
+            match coffre::payer(&xonly(&owner), &agent, depot, spk, false, 2400).await {
+                Ok(txid) => {
+                    println!("Ardoise ouverte depuis le coffre : {}", explorer(&txid));
+                    let o = ArdoiseOuverte { ardoise: ardoise::Ardoise { txid, index: 0, depot, timeout }, total: 0, bon: String::new() };
+                    fs::write(ARDOISE, serde_json::to_string_pretty(&o)?)?;
+                }
+                Err(err) => {
+                    println!("Ardoise {err}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        "ardoise-bon" => {
+            // L'agent signe hors chaîne un bon CUMULÉ : rien ne passe sur la chaîne, aucun frais.
+            let ajout: i64 = args.get(2).ok_or("montant de l'appel en sompi manquant")?.parse()?;
+            let mut o: ArdoiseOuverte = serde_json::from_str(&fs::read_to_string(ARDOISE).map_err(|_| "aucune ardoise ouverte")?)?;
+            let total = o.total.checked_add(ajout).filter(|t| ajout > 0 && *t as u64 <= o.ardoise.depot).ok_or("bon refusé : dépasserait le dépôt de l'ardoise")?;
+            let sig = ardoise::bon(&agent, &o.ardoise, total)?;
+            if !ardoise::bon_valable(&agent_pk(&agent), &o.ardoise, total, &sig) {
+                return Err("bon invalide".into());
+            }
+            o.total = total;
+            o.bon = hex::encode(&sig);
+            fs::write(ARDOISE, serde_json::to_string_pretty(&o)?)?;
+            println!("Bon signé hors chaîne : total dû {} TKAS sur {} (aucune transaction)", total as f64 / 1e8, o.ardoise.depot as f64 / 1e8);
+        }
+        "ardoise-clore" => {
+            let o: ArdoiseOuverte = serde_json::from_str(&fs::read_to_string(ARDOISE).map_err(|_| "aucune ardoise ouverte")?)?;
+            if o.total <= 0 {
+                return Err("aucun bon à encaisser : laisser le délai passer puis rembourser".into());
+            }
+            let art = ardoise::artifact(&pay_to_address_script(&address(&service)), &xonly(&service), &pay_to_address_script(&address(&owner)), &agent_pk(&agent), o.ardoise.timeout)?;
+            let tx = ardoise::build_close(&art, &o.ardoise, &service, pay_to_address_script(&address(&owner)), hex::decode(&o.bon)?, o.total, FEE)?;
+            let c = connect().await?;
+            match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                Ok(txid) => {
+                    println!("Ardoise close par le vendeur : {} TKAS encaissés, le reste revient au propriétaire : {}", o.total as f64 / 1e8, explorer(&txid.to_string()));
+                    fs::remove_file(ARDOISE)?;
+                }
+                Err(err) => println!("Clôture REFUSÉE par le réseau : {err}"),
+            }
+            liberer(&c).await?;
+        }
+        "ardoise-rembourser" => {
+            let o: ArdoiseOuverte = serde_json::from_str(&fs::read_to_string(ARDOISE).map_err(|_| "aucune ardoise ouverte")?)?;
+            let art = ardoise::artifact(&pay_to_address_script(&address(&service)), &xonly(&service), &pay_to_address_script(&address(&owner)), &agent_pk(&agent), o.ardoise.timeout)?;
+            let tx = ardoise::build_refund(&art, &o.ardoise, pay_to_address_script(&address(&owner)), FEE)?;
+            let c = connect().await?;
+            match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                Ok(txid) => {
+                    println!("Ardoise remboursée au propriétaire (pas de clôture dans le délai) : {}", explorer(&txid.to_string()));
+                    fs::remove_file(ARDOISE)?;
+                }
+                Err(err) => println!("Remboursement REFUSÉ par le réseau (délai pas écoulé ?) : {err}"),
+            }
+            liberer(&c).await?;
+        }
         "sequestre-rembourser" => {
             let s: sequestre::Sequestre = serde_json::from_str(&fs::read_to_string(SEQUESTRE).map_err(|_| "aucun séquestre ouvert")?)?;
             let verifier = keypair_from_env("VERIFIER_SK")?;
@@ -1422,7 +1500,7 @@ async fn main() -> Res<()> {
             x402::demo(&owner, &agent).await?;
         }
         _ => {
-            println!("Commandes : cles | adresses | etat | deployer | payer <sompi> [--sans-verif] | recharger <sompi> | recuperer | demo-x402");
+            println!("Commandes : cles | adresses | etat | deployer | payer <sompi> [--sans-verif] | recharger <sompi> | recuperer | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
         }
     }
     Ok(())

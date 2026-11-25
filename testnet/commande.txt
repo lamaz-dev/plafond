@@ -1,2 +1,10 @@
-# Cœur v0.6 adopté sur main (24 nov. 2026) : simple vérification de l'état
+# Essai de l'ardoise depuis le cœur v0.6 (25 nov. 2026)
+deployer                       # coffre de test : 4 pièces, budget qui se remplit
+ardoise-ouvrir 20000000        # 0,2 TKAS vers une ardoise chez le vendeur ; attend que le budget le couvre (~26 min)
+ardoise-bon 3000000            # trois appels payés hors chaîne : aucune transaction
+ardoise-bon 3000000
+ardoise-bon 4000000
+ardoise-clore                  # le vendeur encaisse 0,1 en une transaction, le reste revient au propriétaire
+etat
+recuperer
 etat
