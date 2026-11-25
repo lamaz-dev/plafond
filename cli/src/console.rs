@@ -157,7 +157,7 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let regles = regles_json(&rg);
     let adresse = address(owner).to_string();
     let commun = json!({ "tarif_reference_sompi": tarif_reference(), "qr_adresse": qr(&adresse), "mot_de_passe_requis": std::env::var("PROPRIETAIRE_CLE").is_ok() });
-    let Some(etat) = crate::coffre::charger() else {
+    let Some(mut etat) = crate::coffre::charger() else {
         let mut r = json!({ "sante": "aucun", "regles": regles, "cours": cours, "adresse_proprietaire": adresse });
         fusion(&mut r, &commun);
         return Ok(r);
@@ -167,6 +167,9 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let solde_proprio: Res<u64> = async { Ok(c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum()) }.await;
     liberer(&c).await?;
     let (v, solde_proprio) = (v?, solde_proprio?);
+    if crate::coffre::suivre(&mut etat, &v.pieces, v.now) {
+        crate::coffre::memoriser(&etat);
+    }
     let solde = v.solde();
     let apports = v.apports();
     // Perte nette depuis la création : ce qui est sorti du coffre (paiements et frais).
@@ -180,7 +183,14 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
         .iter()
         .map(|s| json!({ "secondes": s, "perte_max_sompi": v.courbe(etat.cree_daa + s * 10) }))
         .collect();
-    let historique: Vec<Value> = etat.apports.iter().rev().map(|a| json!({ "genre": "apport", "txid": a.txid, "montant_sompi": a.sompi, "instant_daa": a.daa })).collect();
+    // Achats reconnus sur la chaîne (dépense frais compris), puis apports du propriétaire.
+    let historique: Vec<Value> = etat
+        .achats
+        .iter()
+        .rev()
+        .map(|a| json!({ "genre": "achat", "txid": a.txid, "destinataire": format!("tx {}", &a.txid[..a.txid.len().min(12)]), "montant_sompi": a.sompi, "frais_sompi": 0, "instant_daa": a.daa }))
+        .chain(etat.apports.iter().rev().map(|a| json!({ "genre": "apport", "txid": a.txid, "montant_sompi": a.sompi, "frais_sompi": 0, "instant_daa": a.daa })))
+        .collect();
     let mut r = json!({
         "sante": sante,
         "regles": regles,

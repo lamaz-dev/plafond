@@ -197,7 +197,7 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     let (kit, code) = console::preparer_kit(&a, &owner, &defaut)?;
     let serveur = std::path::Path::new(&defaut).parent().map(|p| p.to_path_buf()).unwrap_or_default().join("serveur-agent-demo").join(&a.id);
     let serveur = serveur.to_string_lossy().into_owned();
-    connexion::installer(&kit, &code, &serveur)?;
+    connexion::installer_demo(&kit, &code, &serveur)?;
     connexion::effacer_fichier(&a.cle)?;
     agents::marquer_connecte(&defaut, &a.id)?;
     let lisibles = connexion::verifier(&serveur)?;

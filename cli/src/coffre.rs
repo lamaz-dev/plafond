@@ -31,6 +31,56 @@ pub struct EtatCoeur {
     pub cree_daa: u64,
     #[serde(default)]
     pub apports: Vec<Apport>,
+    /// Pièces vues à la dernière lecture (outpoint, valeur) : sert à reconnaître les achats.
+    #[serde(default)]
+    pub vues: Vec<(String, u64)>,
+    /// Achats reconnus (les 50 derniers), plus récents en dernier.
+    #[serde(default)]
+    pub achats: Vec<AchatVu>,
+}
+
+/// Un achat de l'agent, reconnu sur la chaîne : une pièce a disparu et sa continuation est apparue.
+/// La dépense comprend les frais ; le bénéficiaire n'est pas lisible sans index des transactions.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AchatVu {
+    pub txid: String,
+    pub sompi: u64,
+    pub daa: u64,
+}
+
+fn cle(p: &Piece) -> String {
+    format!("{}:{}", p.outpoint.transaction_id, p.outpoint.index)
+}
+
+/// Compare les pièces lues aux pièces vues la dernière fois et enregistre les achats.
+/// Une pièce nouvelle qui n'est pas un apport du propriétaire est une continuation ; la dépense est
+/// ce qui a disparu moins ce qui est réapparu. Renvoie vrai si l'état a changé.
+pub fn suivre(e: &mut EtatCoeur, pieces: &[Piece], now: u64) -> bool {
+    let actuelles: Vec<(String, u64)> = pieces.iter().filter(|p| p.creation.is_some()).map(|p| (cle(p), p.valeur)).collect();
+    if actuelles == e.vues {
+        return false;
+    }
+    if !e.vues.is_empty() {
+        let apports: std::collections::HashSet<&str> = e.apports.iter().map(|a| a.txid.as_str()).collect();
+        let disparues: u64 = e.vues.iter().filter(|v| !actuelles.contains(v)).map(|v| v.1).sum();
+        let nouvelles: Vec<&(String, u64)> = actuelles.iter().filter(|a| !e.vues.contains(a)).collect();
+        let continuations: Vec<&&(String, u64)> = nouvelles.iter().filter(|n| !apports.contains(n.0.split(':').next().unwrap_or(""))).collect();
+        let revenu: u64 = continuations.iter().map(|n| n.1).sum();
+        if let (Some(dernier), true) = (continuations.last(), disparues > revenu) {
+            e.achats.push(AchatVu { txid: dernier.0.split(':').next().unwrap_or("").to_string(), sompi: disparues - revenu, daa: now });
+            let n = e.achats.len();
+            if n > 50 {
+                e.achats.drain(..n - 50);
+            }
+        }
+    }
+    e.vues = actuelles;
+    true
+}
+
+/// Enregistre l'état suivi (achats reconnus) ; erreur ignorée : ce n'est qu'un affichage.
+pub fn memoriser(e: &EtatCoeur) {
+    let _ = enregistrer(e);
 }
 
 pub fn charger() -> Option<EtatCoeur> {
@@ -145,6 +195,8 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         cree_daa: daa,
         // Une entrée par pièce : la courbe promise est la somme des courbes des pièces.
         apports: decouper(r.depot, r.pieces).into_iter().map(|sompi| Apport { txid: txid.clone(), sompi, daa }).collect(),
+        vues: vec![],
+        achats: vec![],
     };
     enregistrer(&e)?;
     println!("Coffre créé (cœur v0.6) : {} TKAS en {} pièce(s) à l'adresse {}", r.depot as f64 / 1e8, r.pieces, adresse(&art)?);
@@ -415,6 +467,25 @@ mod tests {
         assert!(masse::masses(&tx, &entries).unwrap().standard());
     }
 
+    #[test]
+    fn achats_reconnus_sans_lignee() {
+        let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
+        let depot = TransactionId::from_bytes([1; 32]).to_string();
+        let mut e = EtatCoeur { version: VERSION.into(), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+            apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
+        let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
+        assert!(suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10));
+        assert!(e.achats.is_empty(), "première lecture : aucun achat");
+        assert!(!suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 11), "rien n'a changé");
+        // L'agent dépense 300 (frais compris) depuis la pièce 1:1 ; continuation 2:1 de 700.
+        assert!(suivre(&mut e, &[p(1, 0, 1_000), p(2, 1, 700)], 20));
+        assert_eq!(e.achats, vec![AchatVu { txid: TransactionId::from_bytes([2; 32]).to_string(), sompi: 300, daa: 20 }]);
+        // Le propriétaire recharge (txid déclaré comme apport) : pas un achat.
+        e.apports.push(Apport { txid: TransactionId::from_bytes([3; 32]).to_string(), sompi: 500, daa: 30 });
+        suivre(&mut e, &[p(1, 0, 1_000), p(2, 1, 700), p(3, 0, 500)], 30);
+        assert_eq!(e.achats.len(), 1);
+    }
+
     /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
     #[test]
     fn plusieurs_pieces_rafale_et_budget_tenus() {
@@ -427,7 +498,7 @@ mod tests {
         assert_eq!(parts.iter().sum::<u64>(), r.depot);
         let pieces: Vec<Piece> = parts.iter().map(|v| Piece { outpoint: op, valeur: *v, creation: Some(0) }).collect();
         let etat = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
-            apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect() };
+            apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect(), vues: vec![], achats: vec![] };
         let v = Vue { coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
         // Au bout d'une période de recharge, k achats au plafond sont possibles d'affilée.
         assert_eq!(v.immediate(), r.pieces as u64 * r.capacite as u64);
@@ -440,7 +511,7 @@ mod tests {
         let c = coeur(50_000_000, 288_000);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
         let etat = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
-            apports: vec![Apport { txid: String::new(), sompi: 2_000_000_000, daa: 0 }] };
+            apports: vec![Apport { txid: String::new(), sompi: 2_000_000_000, daa: 0 }], vues: vec![], achats: vec![] };
         let v = Vue { coeur: c, adresse: String::new(), pieces: vec![Piece { outpoint: op, valeur: 2_000_000_000, creation: Some(0) }], now: 0, etat: Some(etat) };
         assert_eq!(v.immediate(), 0, "un mandat neuf démarre à zéro");
         assert_eq!(v.courbe(0), 0);

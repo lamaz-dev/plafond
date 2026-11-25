@@ -165,14 +165,69 @@ fn ecrire_prive(chemin: &Path, contenu: &[u8]) -> Res<()> {
     Ok(())
 }
 
+/// Registre des mandats installés sur cet ordinateur (une ligne par mandat : propriétaire, clé
+/// publique, dossier). Rien de secret.
+fn registre_machine() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("PLAFOND_REGISTRE_AGENTS") {
+        return p.into();
+    }
+    let maison = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
+    Path::new(&maison).join(".plafond").join("mandats-installes.json")
+}
+
+/// Un programme d'agent = un mandat. Deux mandats du même propriétaire sur la même machine
+/// permettraient de transférer de l'un à l'autre et de dépasser la fenêtre de 24 h (R52 ; la courbe
+/// promise, elle, tiendrait). Garde-fou contre l'erreur de configuration : refus, sauf si le premier
+/// dossier n'existe plus (agent désinstallé).
+fn verifier_un_mandat_par_machine(registre: &Path, proprietaire: &str, publique: &str, dossier: &Path) -> Res<()> {
+    let lu: Vec<Value> = std::fs::read_to_string(registre).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    for m in &lu {
+        let autre = Path::new(m["dossier"].as_str().unwrap_or(""));
+        if m["proprietaire"] == proprietaire && m["publique"] != publique && autre.join("agent.key").exists() && autre != dossier {
+            return Err(format!(
+                "un autre mandat du même propriétaire est déjà installé sur cet ordinateur ({}). Un agent = un mandat : pour lui donner plus de budget, agrandissez son mandat dans la console",
+                autre.display()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn inscrire_machine(registre: &Path, proprietaire: &str, publique: &str, dossier: &Path) -> Res<()> {
+    let mut lu: Vec<Value> = std::fs::read_to_string(registre).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    lu.retain(|m| Path::new(m["dossier"].as_str().unwrap_or("")).join("agent.key").exists());
+    lu.push(serde_json::json!({ "proprietaire": proprietaire, "publique": publique, "dossier": dossier.canonicalize().unwrap_or(dossier.to_path_buf()) }));
+    if let Some(dir) = registre.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(registre, serde_json::to_string_pretty(&lu)?)?;
+    Ok(())
+}
+
 /// Installation côté agent : écrit la clé (0600, jamais d'écrasement), l'état du coffre et les secrets.
 pub fn installer(s: &Scelle, code: &str, dossier: &str) -> Res<String> {
+    installer_avec(s, code, dossier, true)
+}
+
+/// Agent de démonstration : temporaire et révoqué à la fin de la démo, il ne compte pas comme mandat
+/// installé (sinon la démo suivante serait refusée).
+pub fn installer_demo(s: &Scelle, code: &str, dossier: &str) -> Res<String> {
+    installer_avec(s, code, dossier, false)
+}
+
+fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -> Res<String> {
     let kit = ouvrir(s, code)?;
     let d = Path::new(dossier);
-    std::fs::create_dir_all(d)?;
     if d.join("agent.key").exists() {
         return Err(format!("un agent est déjà installé dans {dossier} : choisissez un autre dossier").into());
     }
+    let registre = registre_machine();
+    let d_abs = d.canonicalize().unwrap_or(d.to_path_buf());
+    if registre_actif {
+        verifier_un_mandat_par_machine(&registre, &kit.proprietaire, &kit.publique, &d_abs)?;
+    }
+    std::fs::create_dir_all(d)?;
     ecrire_prive(&d.join("agent.key"), kit.cle_agent.as_bytes())?;
     if let Some(o) = &kit.origine {
         std::fs::write(d.join("etat-coffre-origine.json"), serde_json::to_string_pretty(o)?)?;
@@ -183,6 +238,9 @@ pub fn installer(s: &Scelle, code: &str, dossier: &str) -> Res<String> {
     std::fs::write(d.join("agent.secrets.json"), serde_json::to_string_pretty(&kit.secrets)?)?;
     let meta = serde_json::json!({ "agent_id": kit.agent_id, "nom": kit.nom, "publique": kit.publique, "proprietaire": kit.proprietaire, "regles": kit.regles, "reseau": kit.reseau, "installe_le": crate::double_auth::maintenant() });
     std::fs::write(d.join("agent.json"), serde_json::to_string_pretty(&meta)?)?;
+    if registre_actif {
+        inscrire_machine(&registre, &kit.proprietaire, &kit.publique, d)?;
+    }
     Ok(kit.nom.clone())
 }
 
@@ -209,6 +267,24 @@ pub fn verifier(dossier: &str) -> Res<Vec<(String, bool)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn un_mandat_par_machine() {
+        let t = std::env::temp_dir().join(format!("plafond-registre-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let registre = t.join("mandats.json");
+        let (a, b) = (t.join("agent-a"), t.join("agent-b"));
+        std::fs::create_dir_all(&a).unwrap();
+        assert!(verifier_un_mandat_par_machine(&registre, "proprio", "pkA", &a).is_ok(), "premier mandat");
+        std::fs::write(a.join("agent.key"), "x").unwrap();
+        inscrire_machine(&registre, "proprio", "pkA", &a).unwrap();
+        let e = verifier_un_mandat_par_machine(&registre, "proprio", "pkB", &b).unwrap_err().to_string();
+        assert!(e.contains("agrandissez son mandat"), "{e}");
+        assert!(verifier_un_mandat_par_machine(&registre, "autre-proprio", "pkC", &b).is_ok(), "autre propriétaire : permis");
+        std::fs::remove_file(a.join("agent.key")).unwrap();
+        assert!(verifier_un_mandat_par_machine(&registre, "proprio", "pkB", &b).is_ok(), "premier agent désinstallé : permis");
+        let _ = std::fs::remove_dir_all(&t);
+    }
 
     #[test]
     fn kit_scelle_installe_et_verifie() {
@@ -240,8 +316,8 @@ mod tests {
         // code saisi en minuscules, sans tirets : accepté
         let saisi = code.replace('-', " ").to_lowercase();
         let agent_dossier = d.join("serveur-agent").to_string_lossy().into_owned();
-        assert_eq!(installer(&s, &saisi, &agent_dossier).unwrap(), "Recherche");
-        assert!(installer(&s, &code, &agent_dossier).is_err(), "jamais d'écrasement");
+        assert_eq!(installer_demo(&s, &saisi, &agent_dossier).unwrap(), "Recherche");
+        assert!(installer_demo(&s, &code, &agent_dossier).is_err(), "jamais d'écrasement");
         assert_eq!(verifier(&agent_dossier).unwrap(), vec![("OpenAI".to_string(), true)]);
         #[cfg(unix)]
         {
