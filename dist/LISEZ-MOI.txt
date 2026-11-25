@@ -13,7 +13,13 @@ macOS   : ./plafond    ou    ./demo
 
 La console s'ouvre dans votre navigateur (http://127.0.0.1:8404). Laissez la fenêtre du terminal ouverte.
 Votre compte reste dans le dossier « compte », à côté de ce fichier : ni e-mail, ni serveur.
+Deux comptes, deux adresses : c'est normal.
+  - Plafond.bat ouvre VOTRE compte (dossier « compte »). Son adresse s'affiche en haut de la console.
+  - Demo.bat utilise un compte de démonstration séparé (dossier « demo-jetable »), avec sa propre adresse,
+    qu'il affiche lui-même s'il manque des fonds.
 Des KAS de test gratuits : https://faucet-tn10.kaspanet.io/
+  Collez l'adresse du compte à approvisionner (celle affichée par la console ou par la démo), puis validez.
+  Les fonds sont détectés automatiquement. Ils n'ont aucune valeur : rien à payer.
 Vérifier ce fichier : comparez son empreinte SHA-256 avec SHA256SUMS.txt publié avec la version.
 Sobriété : Plafond tourne en priorité basse et ne dépasse jamais 512 Mo de mémoire (réglable : PLAFOND_MEMOIRE_MO=256) ; journaux limités à 1 Mo, vieux rapports de démo effacés automatiquement.
 
@@ -28,7 +34,12 @@ macOS:   ./plafond    or    ./demo
 
 The console opens in your browser (http://127.0.0.1:8404). Keep the terminal window open.
 Your account stays in the "compte" folder next to this file: no email, no server.
+Two accounts, two addresses: that is expected.
+  - Plafond.bat opens YOUR account ("compte" folder). Its address is shown at the top of the console.
+  - Demo.bat uses a separate demo account ("demo-jetable" folder) with its own address, shown when funds are missing.
 Free test KAS: https://faucet-tn10.kaspanet.io/
+  Paste the address of the account to fund (from the console or the demo), then submit.
+  Funds are detected automatically. They have no value: nothing to pay.
 Verify the download: compare its SHA-256 with SHA256SUMS.txt published with the release.
 Light footprint: Plafond runs at low priority and never uses more than 512 MB of memory (adjustable: PLAFOND_MEMOIRE_MO=256); logs capped at 1 MB, old demo reports removed automatically.
 The program's terminal messages are in French; the console page is in English, French and Japanese.
