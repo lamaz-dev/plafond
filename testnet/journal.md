@@ -852,3 +852,50 @@ Solde du propriétaire : 994.75 TKAS (6 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-25 13:47 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.6) : 5 TKAS en 4 pièce(s) à l'adresse kaspatest:ppunu6a5274nn79m3rrg0ysvqmvf69zd3p9dxnuwla5lgxll44h5cfzmcqdp2
+Transaction : https://tn10.kaspa.stream/transactions/23953cad4759f4bfe36cba4189989b6361d5572a32eebbbcf4b8d6646d4b31e1
+
+$ vault-cli ardoise-ouvrir 20000000
+Ardoise chez le vendeur kaspatest:qquknj8t2nw0nctxgg3kfcqfzwpq9uj5vjsd44rgvpl3neqakdnmwy8muhgdl : dépôt 0.2 TKAS, délai 864000 blocs (~1440 min)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Ardoise ouverte depuis le coffre : https://tn10.kaspa.stream/transactions/6c39f155b9e53bac79c60ae08949c64f85a9a2a5afc492aaf3e1646d9523d429
+
+$ vault-cli ardoise-bon 3000000
+Bon signé hors chaîne : total dû 0.03 TKAS sur 0.2 (aucune transaction)
+
+$ vault-cli ardoise-bon 3000000
+Bon signé hors chaîne : total dû 0.06 TKAS sur 0.2 (aucune transaction)
+
+$ vault-cli ardoise-bon 4000000
+Bon signé hors chaîne : total dû 0.1 TKAS sur 0.2 (aucune transaction)
+
+$ vault-cli ardoise-clore
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Ardoise close par le vendeur : 0.1 TKAS encaissés, le reste revient au propriétaire : https://tn10.kaspa.stream/transactions/a9a7e30b6c9cf175d16b1cec430798d68fb9744fe99e806bc3a534bdd9cb967c
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632802705
+Solde du propriétaire : 989.82 TKAS (6 UTXO)
+Coffre (cœur v0.6) kaspatest:ppunu6a5274nn79m3rrg0ysvqmvf69zd3p9dxnuwla5lgxll44h5cfzmcqdp2 : 4.785 TKAS en 4 pièce(s)
+  disponible maintenant : 0.64662497 TKAS ; pire cas sur 24 h : 4.785 TKAS
+  perte nette depuis la création : 0.215 TKAS (courbe promise : 0.86255552 TKAS)
+
+$ vault-cli recuperer
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+4 pièce(s) rapatriée(s) : 4.665 TKAS, https://tn10.kaspa.stream/transactions/ab9e4bcdc9e2c84201c393278cdc141503301110caff14e220a92dd1e43b2b3a
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 632802967
+Solde du propriétaire : 994.485 TKAS (7 UTXO)
+Coffre : pas encore déployé
+
+```
