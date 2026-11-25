@@ -769,7 +769,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     }
                     let compte = lire_compte(cle_ch);
                     json_rep(200, json!({
-                        "agents": vus, "solde_proprietaire_sompi": solde,
+                        "agents": vus, "solde_proprietaire_sompi": solde, "adresse_proprietaire": address(&owner).to_string(),
                         "risque": crate::risque::rapport(&couloirs, &[], instant, crate::JOUR_DAA), "cours": c, "tarif_reference_sompi": tarif_reference(),
                         "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))

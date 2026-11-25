@@ -89,7 +89,8 @@ pub fn cles_jetables() -> Res<(Keypair, Keypair)> {
 async fn attendre_fonds(c: &KaspaRpcClient, owner: &Keypair, besoin: u64) -> Res<u64> {
     let adr = address(owner).to_string();
     let manque = besoin.saturating_sub(solde(c, owner).await?);
-    println!("\nIl faut des jetons de test (gratuits) sur cette adresse, au moins {} unités de plus :\n\n  {adr}\n", unites(manque as i64));
+    println!("\nLa démo a son propre compte de test, distinct de celui de Plafond.bat.");
+    println!("Il lui faut des jetons de test (gratuits) sur cette adresse, au moins {} unités de plus :\n\n  {adr}\n", unites(manque as i64));
     if let Ok(q) = qrcode::QrCode::new(adr.as_bytes()) {
         println!("{}", q.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build());
     }

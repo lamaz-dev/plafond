@@ -673,7 +673,7 @@ fn partage_actif() -> bool {
 pub async fn connect() -> Res<KaspaRpcClient> {
     if !partage_actif() {
         let client = client_testnet().await?;
-        println!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
+        annoncer_connexion(&client.url().unwrap_or_default(), false);
         return Ok(client);
     }
     let mut p = PARTAGE.lock().await;
@@ -684,7 +684,7 @@ pub async fn connect() -> Res<KaspaRpcClient> {
         let _ = c.disconnect().await;
     }
     let client = client_testnet().await?;
-    println!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
+    annoncer_connexion(&client.url().unwrap_or_default(), false);
     *p = Some(client.clone());
     Ok(client)
 }
@@ -701,7 +701,7 @@ pub async fn liberer(c: &KaspaRpcClient) -> Res<()> {
 /// Connexion sans message sur la sortie standard (les commandes du relais y écrivent du JSON).
 pub async fn connect_silencieux() -> Res<KaspaRpcClient> {
     let client = client_testnet().await?;
-    eprintln!("Connecté au testnet-10 : {}", client.url().unwrap_or_default());
+    annoncer_connexion(&client.url().unwrap_or_default(), true);
     Ok(client)
 }
 
@@ -1504,4 +1504,13 @@ async fn main() -> Res<()> {
         }
     }
     Ok(())
+}
+
+/// Annonce la connexion au réseau une seule fois par adresse de nœud : les interrogations répétées restent silencieuses.
+fn annoncer_connexion(url: &str, erreur: bool) {
+    static DEJA: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let mut d = DEJA.lock().unwrap_or_else(|e| e.into_inner());
+    if d.as_deref() == Some(url) { return; }
+    *d = Some(url.to_string());
+    if erreur { eprintln!("Connecté au testnet-10 : {url}") } else { println!("Connecté au testnet-10 : {url}") }
 }
