@@ -36,3 +36,17 @@ laissait passer que ce que la courbe permet.
 
 **Réseau.** Les nœuds publics du testnet ont encore souvent eu besoin d'un deuxième essai de
 connexion. Ce n'est pas lié au coffre.
+
+## 25 novembre : ardoise depuis le cœur v0.6, avec 4 pièces
+
+| Étape | Résultat | Preuve |
+|---|---|---|
+| Coffre créé en 4 pièces (5 TKAS) | ✅ | [23953cad…](https://tn10.kaspa.stream/transactions/23953cad4759f4bfe36cba4189989b6361d5572a32eebbbcf4b8d6646d4b31e1) |
+| Ardoise de 0,2 TKAS ouverte depuis le coffre, dès que le budget l'a couverte | ✅ | [6c39f155…](https://tn10.kaspa.stream/transactions/6c39f155b9e53bac79c60ae08949c64f85a9a2a5afc492aaf3e1646d9523d429) |
+| Trois appels payés par bons cumulés, hors chaîne (0,03 puis 0,06 puis 0,1) | ✅ aucune transaction | — |
+| Le vendeur encaisse le dernier bon (0,1 TKAS) en une transaction ; le reste revient au propriétaire | ✅ | [a9a7e30b…](https://tn10.kaspa.stream/transactions/a9a7e30b6c9cf175d16b1cec430798d68fb9744fe99e806bc3a534bdd9cb967c) |
+| Perte nette 0,215 TKAS, sous la courbe promise (0,863) | ✅ | `etat` |
+| Gel : les 4 pièces rapatriées en une transaction (4,665 TKAS) | ✅ | [ab9e4bcd…](https://tn10.kaspa.stream/transactions/ab9e4bcdc9e2c84201c393278cdc141503301110caff14e220a92dd1e43b2b3a) |
+
+Trois appels payés n'ont coûté qu'une transaction au vendeur, et l'argent de l'ardoise ne
+pouvait aller qu'à lui : c'est la liste blanche, garantie par le réseau.
