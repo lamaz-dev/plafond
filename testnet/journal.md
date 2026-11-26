@@ -1261,3 +1261,27 @@ Solde du propriétaire : 988.88074 TKAS (11 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-26 17:10 UTC
+
+```
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Porte-monnaie du relais : kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4 (9399999 sompi)
+Diagnostic /health : HTTP 200
+  {"ok":true,"enabled":true,"gateway":"kaspa-x402-testnet","releaseVersion":"1.0.1","hostedExactSettlementEnabled":true,"exactProfile":"standard-native","chainBroadcastMode":"pnn","chainEvidenceSource":"pnn","chainTrustMode":"trusted-single-source","chainEvidenceAuthorities":1}
+Diagnostic /canary : HTTP 200
+  {"ok":true,"enabled":true,"exactHeads":{"total":0,"available":0,"claimed":0,"unavailable":0,"retired":0},"canary":{"checkedAt":"2026-11-26T17:00:54.943Z","trigger":"scheduled","ok":false,"checks":[{"name":"kaspa-chain","status":"ok","detail":"PNN chain health returned testnet-10 evidence","evidence":{"ok":true,"networkId":"testnet-10","endpoint":"wss://vector-10.kaspa.green","virtualDaaScore":"633766851"}},{"name":"schema-url","status":"ok","detail":"payment-required schema resolved","evidence":
+Diagnostic /exact : HTTP 402 (offre 402 : {"accepts":[{"amount":"20000000","asset":"KAS","extra":{"binding":"kaspa-exact-v2","finality":"accepted","payToScriptPublicKey":"000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac","paymentFlow":"upfront","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2)
+GET https://demo.kaspa-x402.org/exact
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Error: "refusé localement : aucune pièce du coffre ne couvre ce montant (coffre vide ou gelé)"
+Échec : vault-cli recharger-porte-monnaie : Error: "refusé localement : aucune pièce du coffre ne couvre ce montant (coffre vide ou gelé)"
+VERDICT : ÉCHEC
+(code de sortie 1)
+
+```
