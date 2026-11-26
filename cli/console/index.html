@@ -599,7 +599,7 @@ const T={
   geler:"Geler maintenant",annuler:"Annuler",fermer:"Fermer",
   conf_gel:"Confirmer le gel",conf_gel_txt:"Tapez GELER pour arrêter toutes les dépenses et rapatrier les fonds.",conf_gel_mdp:"Saisissez votre mot de passe maître, puis tapez GELER.",
   conf_creer_txt:"Tapez CREER pour créer le coffre avec ces règles.",conf_sauvegarde:"Sauvegarder la clé chiffrée",conf_sauvegarde_txt:"Saisissez votre mot de passe maître pour télécharger le fichier de clé chiffré.",
-  en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Lien de session invalide : rouvrez le lien affiché dans le terminal.",
+  en_cours:"Opération en cours, quelques secondes…",fait:"Fait.",preuve:"Preuve publique",jeton:"Session fermée ou lien invalide. Dans le terminal où Plafond tourne, appuyez sur Entrée : un nouveau lien s'affiche.",lien_servi:"Ce lien a déjà servi ou a expiré : il ne s'ouvre qu'une fois, dans les deux minutes. Dans le terminal où Plafond tourne, appuyez sur Entrée pour obtenir un nouveau lien. Si vous ne l'aviez pas encore ouvert, le nouveau lien fermera toute autre session.",lien_injoignable:"Console injoignable : vérifiez que Plafond tourne toujours dans le terminal, puis appuyez sur Entrée pour obtenir un nouveau lien.",
   cours_note:"Montants en devises indicatifs ({src}). Sur le réseau de test, ils n'ont pas de valeur réelle.",cours_absent:"Cours indisponible : seuls les nombres de requêtes sont affichés.",sans_cours:"Cours indisponible : réessayez dans un instant.",
   regles:"Règles : budget garanti {b} par période de {p}, plafond par achat {m}.",heure:"heure",heures:"heures",minutes:"minutes",
   req1:"requête",reqN:"requêtes",reqc:"req.",tarif:"Tarif de référence : {t} par requête standard, frais inclus.",modifier:"modifier",
@@ -638,7 +638,7 @@ const T={
   geler:"Freeze now",annuler:"Cancel",fermer:"Close",
   conf_gel:"Confirm the freeze",conf_gel_txt:"Type GELER to stop all spending and bring the funds back.",conf_gel_mdp:"Enter your master password, then type GELER.",
   conf_creer_txt:"Type CREER to create the vault with these rules.",conf_sauvegarde:"Back up the encrypted key",conf_sauvegarde_txt:"Enter your master password to download the encrypted key file.",
-  en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Invalid session link: reopen the link shown in the terminal.",
+  en_cours:"In progress, a few seconds…",fait:"Done.",preuve:"Public proof",jeton:"Session closed or invalid link. In the terminal where Plafond is running, press Enter: a new link appears.",lien_servi:"This link has already been used or has expired: it opens only once, within two minutes. In the terminal where Plafond is running, press Enter to get a new link. If you had not opened it yet, the new link will close any other session.",lien_injoignable:"Console unreachable: check that Plafond is still running in the terminal, then press Enter to get a new link.",
   cours_note:"Currency amounts are indicative ({src}). On the test network they have no real value.",cours_absent:"Rate unavailable: only request counts are shown.",sans_cours:"Rate unavailable: try again in a moment.",
   regles:"Rules: guaranteed budget {b} per period of {p}, cap per purchase {m}.",heure:"hour",heures:"hours",minutes:"minutes",
   req1:"request",reqN:"requests",reqc:"req.",tarif:"Reference price: {t} per standard request, fees included.",modifier:"edit",
@@ -677,7 +677,7 @@ const T={
   geler:"今すぐ凍結",annuler:"キャンセル",fermer:"閉じる",
   conf_gel:"凍結の確認",conf_gel_txt:"GELER と入力すると、すべての支出を停止し資金を戻します。",conf_gel_mdp:"マスターパスワードを入力し、GELER と入力してください。",
   conf_creer_txt:"CREER と入力すると、このルールで金庫を作成します。",conf_sauvegarde:"暗号化された鍵をバックアップ",conf_sauvegarde_txt:"暗号化された鍵ファイルをダウンロードするには、マスターパスワードを入力してください。",
-  en_cours:"処理中です。数秒お待ちください…",fait:"完了しました。",preuve:"公開証明",jeton:"セッションリンクが無効です。ターミナルに表示されたリンクを開き直してください。",
+  en_cours:"処理中です。数秒お待ちください…",fait:"完了しました。",preuve:"公開証明",jeton:"セッションが終了したか、リンクが無効です。Plafond を実行中のターミナルで Enter キーを押すと、新しいリンクが表示されます。",lien_servi:"このリンクは使用済みか、期限切れです（リンクは2分以内に一度だけ開けます）。Plafond を実行中のターミナルで Enter キーを押して、新しいリンクを取得してください。まだ開いていなかった場合、新しいリンクで他のセッションはすべて終了します。",lien_injoignable:"コンソールに接続できません。ターミナルで Plafond が実行中であることを確認し、Enter キーを押して新しいリンクを取得してください。",
   cours_note:"通貨建ての金額は参考値です（{src}）。テストネットワーク上では実際の価値はありません。",cours_absent:"レートを取得できません：リクエスト数のみ表示しています。",sans_cours:"レートを取得できません。しばらくしてから再度お試しください。",
   regles:"ルール：期間 {p} ごとの保証予算 {b}、1回あたりの上限 {m}。",heure:"時間",heures:"時間",minutes:"分",
   req1:"リクエスト",reqN:"リクエスト",reqc:"件",tarif:"参考価格：標準リクエスト1件あたり {t}（手数料込み）。",modifier:"変更",
@@ -691,12 +691,13 @@ const T={
   chiffre_ok:"鍵はこのコンピューター上で暗号化されています（{a}、{m} MiB、{p} 回）。",chiffre_test:"テストモード：テスト用フレーズから導出した鍵で、暗号化ファイルはありません。実際の資金には絶対に使用しないでください。",
   reseau:"ネットワーク",contrat:"コントラクト",lignee:"系譜",sortie:"現在の出力",empreinte:"コントラクトの指紋"}
 };
-const etat={jeton:null,donnees:null,securite:null,langue:"fr",devise:"usd",deviseSaisie:null,page:"tresorerie",vue:null,agent:null,agentFonds:null,histo:null,suivi:null,soldeAvant:null,manque:null};
+const etat={jeton:null,ticket:null,donnees:null,securite:null,langue:"fr",devise:"usd",deviseSaisie:null,page:"tresorerie",vue:null,agent:null,agentFonds:null,histo:null,suivi:null,soldeAvant:null,manque:null};
 const DEVISES=["usd","eur","jpy","gbp","usdt","usdc","btc","eth","sol"];
 const $=id=>document.getElementById(id);
 const t=k=>(T[etat.langue]||T.fr)[k]??(T.fr[k]??k);
-// Le jeton arrive dans le fragment de l'URL (jamais envoyé au serveur) ; on l'efface de la barre d'adresse.
-(()=>{const m=location.hash.match(/jeton=([0-9a-f]{64})/);if(m){etat.jeton=m[1];history.replaceState(null,"",location.pathname)}})();
+// Le lien d'ouverture porte un ticket à usage unique dans le fragment de l'URL (jamais envoyé au serveur
+// dans l'URL) ; on l'efface de la barre d'adresse, puis on l'échange contre le jeton de session (R73).
+(()=>{const m=location.hash.match(/ticket=([0-9a-f]{64})/);if(m){etat.ticket=m[1];history.replaceState(null,"",location.pathname)}})();
 try{etat.langue=localStorage.getItem("langue")||(navigator.language||"fr").slice(0,2);etat.devise=localStorage.getItem("devise")||"usd"}catch(e){}
 if(!T[etat.langue])etat.langue="en";
 if(!DEVISES.includes(etat.devise))etat.devise="usd";
@@ -1378,7 +1379,16 @@ $("p-restaurer").onsubmit=ev=>soumettrePorte(ev,"/api/compte/restaurer",{phrase:
 $("p-ouvrir").onsubmit=ev=>soumettrePorte(ev,"/api/compte/ouvrir",{mot_de_passe:$("p-mdp").value,code:$("p-code").value},"p-b-ouvrir","p_ouverture");
 
 traduire();
-if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t("jeton")}else{porte()}
+(async()=>{
+  let motif="jeton";
+  if(etat.ticket){
+    const ticket=etat.ticket;etat.ticket=null;
+    try{const r=await fetch("/api/session",{method:"POST",headers:{"X-Ticket":ticket}});
+      if(r.ok){etat.jeton=(await r.json()).jeton||null}else if(r.status===410){motif="lien_servi"}
+    }catch(e){motif="lien_injoignable"}
+  }
+  if(!etat.jeton){$("erreur").hidden=false;$("erreur").textContent=t(motif)}else{porte()}
+})();
 </script>
 </body>
 </html>

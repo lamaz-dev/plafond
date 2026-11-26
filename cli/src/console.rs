@@ -4,8 +4,9 @@
 //! tient la clé du propriétaire (fichier chiffré, déverrouillé dans le terminal au lancement ; le
 //! mot de passe ne passe jamais par le navigateur). Protections :
 //!  - écoute uniquement sur 127.0.0.1 ;
-//!  - jeton de session aléatoire, transmis dans le fragment de l'URL (jamais envoyé au serveur
-//!    ni journalisé), exigé sur chaque appel d'API (comparaison en temps constant) ;
+//!  - jeton de session aléatoire, exigé sur chaque appel d'API (comparaison en temps constant) ; il
+//!    n'est jamais dans un lien : le lien d'ouverture porte un ticket à usage unique et de courte
+//!    durée, que la page échange contre le jeton (R73) ;
 //!  - en-tête Host vérifié (contre le « DNS rebinding ») et Origin vérifiée pour les actions ;
 //!  - actions irréversibles soumises à une confirmation explicite ;
 //!  - requêtes traitées une par une.
@@ -362,25 +363,155 @@ fn ouvrir_navigateur(lien: &str) {
     }
 }
 
-/// Lien affiché dans le terminal et remis au navigateur. Il porte le jeton de session dans son
-/// fragment (jamais envoyé au serveur). Limite connue (R73) : remis au navigateur en argument de
-/// commande, il est visible des autres utilisateurs de l'ordinateur le temps du lancement.
-fn lien_de_session(port: u16, jeton: &str) -> String {
-    format!("http://127.0.0.1:{port}/#jeton={jeton}")
+/// Durée de vie d'un ticket d'ouverture : le temps d'ouvrir le lien, pas plus.
+const TICKET_DUREE: Duration = Duration::from_secs(120);
+
+/// Session de la console (R73). Le jeton de session n'apparaît jamais dans un lien : le lien affiché
+/// dans le terminal et remis au navigateur ne porte qu'un ticket à usage unique, valable deux
+/// minutes, que la page échange contre le jeton. Les arguments d'une commande étant lisibles par les
+/// autres utilisateurs de l'ordinateur, un ticket lu trop tard ne vaut plus rien. Et si quelqu'un
+/// l'échange avant le propriétaire, celui-ci le voit (« ce lien a déjà servi ») et reprend la main :
+/// chaque échange ouvre une session neuve et ferme la précédente.
+pub struct Session {
+    jeton: std::sync::Mutex<String>,
+    /// Tickets en attente (valeur, échéance).
+    tickets: std::sync::Mutex<Vec<(String, Instant)>>,
+    /// Tickets déjà échangés ou expirés (pour un message clair ; ils ne valent plus rien).
+    servis: std::sync::Mutex<Vec<String>>,
+    /// Faux dans les tests à jeton fixe : l'échange rend alors le jeton sans le renouveler.
+    tournant: bool,
 }
 
-pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
+/// Pourquoi un ticket est refusé.
+#[derive(Debug, PartialEq)]
+pub enum TicketRefuse {
+    DejaServi,
+    Inconnu,
+}
+
+fn alea_hex() -> Res<String> {
     let mut b = [0u8; 32];
     getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
-    let jeton = hex::encode(b);
-    let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
-    let lien = lien_de_session(PORT, &jeton);
-    println!("Console du propriétaire : ouvrez {lien}");
-    println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
+    Ok(hex::encode(b))
+}
+
+impl Session {
+    pub fn nouvelle() -> Res<Self> {
+        Ok(Session { jeton: std::sync::Mutex::new(alea_hex()?), tickets: Default::default(), servis: Default::default(), tournant: true })
+    }
+
+    /// Session à jeton fixe, pour les tests des autres protections.
+    #[cfg(test)]
+    pub fn fixe(jeton: &str) -> Self {
+        Session { jeton: std::sync::Mutex::new(jeton.into()), tickets: Default::default(), servis: Default::default(), tournant: false }
+    }
+
+    fn ranger_expires(&self, maintenant: Instant) {
+        let mut tickets = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
+        let mut servis = self.servis.lock().unwrap_or_else(|e| e.into_inner());
+        let (vivants, morts): (Vec<_>, Vec<_>) = tickets.drain(..).partition(|(_, fin)| maintenant < *fin);
+        *tickets = vivants;
+        servis.extend(morts.into_iter().map(|(t, _)| t));
+        let trop = servis.len().saturating_sub(64);
+        servis.drain(..trop);
+    }
+
+    /// Nouveau ticket à usage unique (8 en attente au plus : les plus anciens sont annulés).
+    pub fn ticket(&self) -> Res<String> {
+        self.ticket_a(Instant::now())
+    }
+
+    fn ticket_a(&self, maintenant: Instant) -> Res<String> {
+        self.ranger_expires(maintenant);
+        let t = alea_hex()?;
+        let mut tickets = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
+        if tickets.len() >= 8 {
+            tickets.remove(0);
+        }
+        tickets.push((t.clone(), maintenant + TICKET_DUREE));
+        Ok(t)
+    }
+
+    /// Échange un ticket contre le jeton de session : une seule fois. La session précédente est fermée.
+    pub fn echanger(&self, ticket: &str) -> Result<String, TicketRefuse> {
+        self.echanger_a(ticket, Instant::now())
+    }
+
+    fn echanger_a(&self, ticket: &str, maintenant: Instant) -> Result<String, TicketRefuse> {
+        self.ranger_expires(maintenant);
+        let trouve = {
+            let mut tickets = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
+            let i = tickets.iter().position(|(t, _)| egal(t.as_bytes(), ticket.as_bytes()));
+            i.map(|i| tickets.remove(i).0)
+        };
+        let mut servis = self.servis.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(t) = trouve else {
+            return Err(if servis.iter().any(|s| egal(s.as_bytes(), ticket.as_bytes())) { TicketRefuse::DejaServi } else { TicketRefuse::Inconnu });
+        };
+        servis.push(t);
+        let mut jeton = self.jeton.lock().unwrap_or_else(|e| e.into_inner());
+        if self.tournant {
+            *jeton = alea_hex().map_err(|_| TicketRefuse::Inconnu)?;
+        }
+        Ok(jeton.clone())
+    }
+
+    fn jeton_ok(&self, presente: Option<String>) -> bool {
+        let jeton = self.jeton.lock().unwrap_or_else(|e| e.into_inner());
+        presente.is_some_and(|j| egal(j.as_bytes(), jeton.as_bytes()))
+    }
+
+    /// Réponse à `POST /api/session` (en-tête `X-Ticket`).
+    fn repondre_echange(&self, ticket: Option<String>) -> Rep {
+        match self.echanger(ticket.as_deref().unwrap_or("")) {
+            Ok(jeton) => {
+                journal(json!({ "session": "ouverte par un lien à usage unique" }));
+                json_rep(200, json!({ "jeton": jeton }))
+            }
+            Err(TicketRefuse::DejaServi) => {
+                journal(json!({ "session": "lien déjà utilisé présenté de nouveau" }));
+                json_rep(410, json!({ "erreur": "ce lien a déjà servi ou a expiré (il ne s'ouvre qu'une fois, dans les deux minutes) : appuyez sur Entrée dans le terminal pour en obtenir un nouveau", "motif": "deja_servi" }))
+            }
+            Err(TicketRefuse::Inconnu) => json_rep(401, json!({ "erreur": "lien invalide : appuyez sur Entrée dans le terminal pour en obtenir un nouveau", "motif": "inconnu" })),
+        }
+    }
+}
+
+/// Lien affiché dans le terminal et remis au navigateur : il porte un ticket à usage unique dans
+/// son fragment (jamais envoyé au serveur dans l'URL), jamais le jeton de session (R73).
+fn lien_de_session(port: u16, session: &Session) -> Res<String> {
+    Ok(format!("http://127.0.0.1:{port}/#ticket={}", session.ticket()?))
+}
+
+/// Affiche le lien d'ouverture, l'ouvre si demandé, puis écoute le clavier : chaque appui sur Entrée
+/// affiche un nouveau lien (le précédent ne s'ouvre qu'une fois).
+fn annoncer_lien(titre: &str, session: &std::sync::Arc<Session>) -> Res<()> {
+    let lien = lien_de_session(PORT, session)?;
+    println!("{titre} : ouvrez {lien}");
+    println!("(lien personnel : il ne s'ouvre qu'une fois, dans les deux minutes. Pour un nouveau lien, appuyez sur Entrée ici. Ctrl+C pour arrêter)");
     if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
         ouvrir_navigateur(&lien);
     }
-    servir(&serveur, &jeton, handle, owner, agent, std::env::var("PROPRIETAIRE_CLE").ok());
+    let s = session.clone();
+    std::thread::spawn(move || {
+        let mut ligne = String::new();
+        // fin de l'entrée (lancement sans terminal) : on arrête d'écouter, la console continue
+        while std::io::stdin().read_line(&mut ligne).is_ok_and(|n| n > 0) {
+            ligne.clear();
+            match lien_de_session(PORT, &s) {
+                Ok(l) => println!("Nouveau lien (une seule ouverture, deux minutes ; il ferme la session précédente) : {l}"),
+                Err(e) => eprintln!("nouveau lien impossible : {e}"),
+            }
+        }
+    });
+    Ok(())
+}
+
+pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
+    let session = std::sync::Arc::new(Session::nouvelle()?);
+    let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
+    annoncer_lien("Console du propriétaire", &session)?;
+    servir(&serveur, &session, handle, owner, agent, std::env::var("PROPRIETAIRE_CLE").ok());
     Ok(())
 }
 
@@ -426,25 +557,18 @@ fn cle_agent_compte(chemin: &str) -> Res<Keypair> {
 pub fn lancer_compte(handle: Handle, dossier: String) -> Res<()> {
     fs::create_dir_all(&dossier)?;
     *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::path::Path::new(&dossier).join("etat-coffre.json").to_string_lossy().into_owned());
-    let mut b = [0u8; 32];
-    getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
-    let jeton = hex::encode(b);
+    let session = std::sync::Arc::new(Session::nouvelle()?);
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
-    let lien = lien_de_session(PORT, &jeton);
-    println!("Plafond : ouvrez {lien}");
-    println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
-    if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
-        ouvrir_navigateur(&lien);
-    }
+    annoncer_lien("Plafond", &session)?;
     let fichiers = fichiers_compte(&dossier);
-    let (owner, agent) = porte(&serveur, &jeton, &fichiers)?;
+    let (owner, agent) = porte(&serveur, &session, &fichiers)?;
     println!("Compte ouvert.");
-    servir(&serveur, &jeton, handle, owner, agent, Some(fichiers.cle));
+    servir(&serveur, &session, handle, owner, agent, Some(fichiers.cle));
     Ok(())
 }
 
 /// Phase verrouillée : seules la page, l'état du compte, la création et la connexion répondent.
-pub fn porte(serveur: &tiny_http::Server, jeton: &str, fichiers: &FichiersCompte) -> Res<(Keypair, Keypair)> {
+pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &FichiersCompte) -> Res<(Keypair, Keypair)> {
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
@@ -459,8 +583,10 @@ pub fn porte(serveur: &tiny_http::Server, jeton: &str, fichiers: &FichiersCompte
             json_rep(421, json!({ "erreur": "hôte non autorisé" }))
         } else if methode == "GET" && chemin == "/" {
             reponse(200, "text/html; charset=utf-8", PAGE.as_bytes().to_vec())
-        } else if !entete("X-Jeton").is_some_and(|j| egal(j.as_bytes(), jeton.as_bytes())) {
-            json_rep(401, json!({ "erreur": "jeton de session invalide : rouvrez le lien affiché dans le terminal" }))
+        } else if methode == "POST" && chemin == "/api/session" {
+            if entete("Origin").is_none_or(|o| origines.contains(&o)) { session.repondre_echange(entete("X-Ticket")) } else { json_rep(403, json!({ "erreur": "origine refusée" })) }
+        } else if !session.jeton_ok(entete("X-Jeton")) {
+            json_rep(401, json!({ "erreur": "session fermée ou invalide : appuyez sur Entrée dans le terminal pour obtenir un nouveau lien" }))
         } else if methode == "POST" && !entete("Origin").is_none_or(|o| origines.contains(&o)) {
             json_rep(403, json!({ "erreur": "origine refusée" }))
         } else {
@@ -712,7 +838,7 @@ fn resultat(r: Res<String>) -> Rep {
 }
 
 /// Boucle de la console (séparée pour être testée sur un port libre).
-pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: Keypair, agent_principal: Keypair, chemin_cle: Option<String>) {
+pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, owner: Keypair, agent_principal: Keypair, chemin_cle: Option<String>) {
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
@@ -731,14 +857,16 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
         let url = req.url().to_string();
         let chemin = url.split('?').next().unwrap_or("").to_string();
         let methode = req.method().as_str().to_string();
-        let jeton_ok = entete("X-Jeton").is_some_and(|j| egal(j.as_bytes(), jeton.as_bytes()));
+        let jeton_ok = session.jeton_ok(entete("X-Jeton"));
         let origine_ok = entete("Origin").is_none_or(|o| origines.contains(&o));
         let rep = if !hote_ok {
             json_rep(421, json!({ "erreur": "hôte non autorisé" }))
         } else if methode == "GET" && chemin == "/" {
             reponse(200, "text/html; charset=utf-8", PAGE.as_bytes().to_vec())
+        } else if methode == "POST" && chemin == "/api/session" {
+            if origine_ok { session.repondre_echange(entete("X-Ticket")) } else { json_rep(403, json!({ "erreur": "origine refusée" })) }
         } else if !jeton_ok {
-            json_rep(401, json!({ "erreur": "jeton de session invalide : rouvrez le lien affiché dans le terminal" }))
+            json_rep(401, json!({ "erreur": "session fermée ou invalide : appuyez sur Entrée dans le terminal pour obtenir un nouveau lien" }))
         } else if methode == "POST" && !origine_ok {
             json_rep(403, json!({ "erreur": "origine refusée" }))
         } else {
@@ -1165,14 +1293,14 @@ mod tests {
         let port = serveur.server_addr().to_ip().unwrap().port();
         let (s2, h) = (serveur.clone(), rt.handle().clone());
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let fil = std::thread::spawn(move || servir(&s2, "jeton-de-test", h, k(1), k(2), None));
+        let fil = std::thread::spawn(move || servir(&s2, &Session::fixe("jeton-de-test"), h, k(1), k(2), None));
         let base = format!("http://127.0.0.1:{port}");
         let statut = |r: Result<ureq::Response, ureq::Error>| match r {
             Ok(r) => r.status(),
             Err(ureq::Error::Status(c, _)) => c,
             Err(e) => panic!("{e}"),
         };
-        // la page s'affiche sans jeton (le jeton reste dans le fragment de l'URL)
+        // la page s'affiche sans jeton (elle l'obtient ensuite en échangeant le ticket du lien)
         assert_eq!(statut(ureq::get(&format!("{base}/")).call()), 200);
         // API sans jeton ou avec un mauvais jeton : refusée
         assert_eq!(statut(ureq::get(&format!("{base}/api/tableau")).call()), 401);
@@ -1208,7 +1336,7 @@ mod tests {
             let serveur = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
             let base = format!("http://127.0.0.1:{}", serveur.server_addr().to_ip().unwrap().port());
             let (s2, f2) = (serveur.clone(), fichiers_compte(&dossier.to_string_lossy()));
-            let fil = std::thread::spawn(move || porte(&s2, "jeton-de-test", &f2).map_err(|e| e.to_string()));
+            let fil = std::thread::spawn(move || porte(&s2, &Session::fixe("jeton-de-test"), &f2).map_err(|e| e.to_string()));
             let get = |c: &str| ureq::get(&format!("{base}{c}")).set("X-Jeton", "jeton-de-test").call();
             let post = |c: &str, corps: Value| ureq::post(&format!("{base}{c}")).set("X-Jeton", "jeton-de-test").send_string(&corps.to_string());
             let etat: Value = serde_json::from_str(&get("/api/compte/etat").unwrap().into_string().unwrap()).unwrap();
@@ -1236,7 +1364,7 @@ mod tests {
         let serveur = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let base = format!("http://127.0.0.1:{}", serveur.server_addr().to_ip().unwrap().port());
         let (s2, f2) = (serveur.clone(), fichiers_compte(&dossier.to_string_lossy()));
-        let fil = std::thread::spawn(move || porte(&s2, "jeton-de-test", &f2).map_err(|e| e.to_string()));
+        let fil = std::thread::spawn(move || porte(&s2, &Session::fixe("jeton-de-test"), &f2).map_err(|e| e.to_string()));
         let post = |corps: Value| ureq::post(&format!("{base}/api/compte/restaurer")).set("X-Jeton", "jeton-de-test").send_string(&corps.to_string());
         let nouveau = "un tout nouveau mot de passe";
         assert_eq!(statut(post(json!({ "phrase": "abandon ".repeat(24), "mot_de_passe": nouveau, "confirmation": nouveau }))), 403, "phrase invalide");
@@ -1312,7 +1440,7 @@ mod tests {
         let (s2, ch2) = (serveur.clone(), ch.clone());
         let fil = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            servir(&s2, "jeton-de-test", rt.handle().clone(), owner, Keypair::from_seckey_slice(secp256k1::SECP256K1, &[2; 32]).unwrap(), Some(ch2));
+            servir(&s2, &Session::fixe("jeton-de-test"), rt.handle().clone(), owner, Keypair::from_seckey_slice(secp256k1::SECP256K1, &[2; 32]).unwrap(), Some(ch2));
         });
         (format!("http://127.0.0.1:{port}"), serveur, fil, phrase, secret, ch)
     }
@@ -1470,7 +1598,7 @@ mod tests {
         let port = serveur.server_addr().to_ip().unwrap().port();
         let (s2, h) = (serveur.clone(), rt.handle().clone());
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let fil = std::thread::spawn(move || servir(&s2, "jeton-de-test", h, k(1), k(2), None));
+        let fil = std::thread::spawn(move || servir(&s2, &Session::fixe("jeton-de-test"), h, k(1), k(2), None));
         let base = format!("http://127.0.0.1:{port}");
         let statut = |r: Result<ureq::Response, ureq::Error>| match r {
             Ok(r) => r.status(),
@@ -1517,17 +1645,87 @@ mod tests {
         fil.join().unwrap();
     }
 
-    /// R73 (non corrigé, décision produit) : le lien remis au navigateur à l'ouverture automatique
-    /// porte le jeton de session ; or les arguments d'une commande sont lisibles par les autres
-    /// utilisateurs du même ordinateur (`ps`, /proc). Sur un poste partagé, un autre utilisateur peut
-    /// donc piloter la console (geler, alimenter, créer un mandat, remplacer un secret ; plus de vol de
-    /// clé depuis R65 et R72, qui exigent le mot de passe). Correctif envisagé : remettre au navigateur
-    /// un ticket à usage unique, échangé par la page contre le jeton de session.
+    /// R73 : le lien remis au navigateur (argument de commande, lisible par les autres utilisateurs
+    /// de l'ordinateur : `ps`, /proc) ne porte plus le jeton de session, mais un ticket à usage unique.
     #[test]
-    #[ignore = "R73 : jeton de session visible dans la ligne de commande du navigateur (non corrigé)"]
     fn r73_lien_remis_au_navigateur_sans_jeton_de_session() {
-        let jeton = "ab".repeat(32);
-        assert!(!lien_de_session(PORT, &jeton).contains(&jeton), "le lien passé en argument de commande contient le jeton de session");
+        let session = Session::nouvelle().unwrap();
+        let jeton = session.jeton.lock().unwrap().clone();
+        let lien = lien_de_session(PORT, &session).unwrap();
+        assert!(!lien.contains(&jeton), "le lien passé en argument de commande contient le jeton de session");
+        let ticket = lien.split("#ticket=").nth(1).expect("le lien porte un ticket");
+        assert_eq!(ticket.len(), 64, "ticket de 256 bits");
+        // le ticket s'échange une fois contre un jeton neuf ; le jeton d'avant l'échange ne vaut plus rien
+        let nouveau = session.echanger(ticket).unwrap();
+        assert!(nouveau != jeton && !lien.contains(&nouveau));
+        assert!(session.jeton_ok(Some(nouveau.clone())) && !session.jeton_ok(Some(jeton)) && !session.jeton_ok(Some(ticket.into())) && !session.jeton_ok(None));
+        assert_eq!(session.echanger(ticket), Err(TicketRefuse::DejaServi), "un ticket ne sert qu'une fois");
+        assert_eq!(session.echanger(&"0".repeat(64)), Err(TicketRefuse::Inconnu));
+        assert_eq!(session.echanger(""), Err(TicketRefuse::Inconnu));
+        assert!(session.jeton_ok(Some(nouveau.clone())), "un échange refusé ne ferme pas la session en cours");
+        // courte durée : passé deux minutes, le ticket est mort, et le dit
+        let t0 = Instant::now();
+        let vieux = session.ticket_a(t0).unwrap();
+        assert_eq!(session.echanger_a(&vieux, t0 + TICKET_DUREE), Err(TicketRefuse::DejaServi));
+        let frais = session.ticket_a(t0).unwrap();
+        assert!(session.echanger_a(&frais, t0 + TICKET_DUREE - Duration::from_secs(1)).is_ok());
+        // un nouveau lien ferme la session précédente (reprise en main si le lien a été intercepté)
+        let suivant = session.echanger(&session.ticket().unwrap()).unwrap();
+        assert!(session.jeton_ok(Some(suivant)) && !session.jeton_ok(Some(nouveau)));
+        // pas d'accumulation : 8 tickets en attente au plus
+        let lot: Vec<String> = (0..10).map(|_| session.ticket().unwrap()).collect();
+        assert_eq!(session.echanger(&lot[0]), Err(TicketRefuse::Inconnu));
+        assert!(session.echanger(&lot[9]).is_ok());
+    }
+
+    /// R73, de bout en bout par HTTP : la page échange le ticket (en-tête, jamais l'URL), une seule fois,
+    /// depuis la console seulement ; le ticket n'ouvre rien d'autre ; un second lien ferme la première session.
+    #[test]
+    fn r73_ticket_a_usage_unique_par_http() {
+        use std::sync::Arc;
+        let dossier = std::env::temp_dir().join(format!("plafond-r73-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dossier);
+        let fichiers = fichiers_compte(&dossier.to_string_lossy());
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let session = Arc::new(Session::nouvelle().unwrap());
+        let (s2, se2) = (serveur.clone(), session.clone());
+        let fil = std::thread::spawn(move || porte(&s2, &se2, &fichiers).map_err(|e| e.to_string()));
+        let base = format!("http://127.0.0.1:{port}");
+        let lire = |r: Result<ureq::Response, ureq::Error>| match r {
+            Ok(r) => (r.status(), serde_json::from_str::<Value>(&r.into_string().unwrap_or_default()).unwrap_or(Value::Null)),
+            Err(ureq::Error::Status(c, r)) => (c, serde_json::from_str::<Value>(&r.into_string().unwrap_or_default()).unwrap_or(Value::Null)),
+            Err(e) => panic!("{e}"),
+        };
+        let echange = |ticket: &str| ureq::post(&format!("{base}/api/session")).set("X-Ticket", ticket);
+        let etat = |jeton: &str| lire(ureq::get(&format!("{base}/api/compte/etat")).set("X-Jeton", jeton).call()).0;
+        let ticket = session.ticket().unwrap();
+        // le ticket n'est pas un jeton, et il ne passe ni par l'URL ni depuis une autre page ou un autre hôte
+        assert_eq!(etat(&ticket), 401);
+        assert_eq!(lire(ureq::post(&format!("{base}/api/session?ticket={ticket}&X-Ticket={ticket}")).call()).0, 401);
+        assert_eq!(lire(ureq::get(&format!("{base}/api/session")).set("X-Ticket", &ticket).call()).0, 401);
+        assert_eq!(lire(echange(&ticket).set("Origin", "http://attaquant.example").call()).0, 403);
+        assert_eq!(lire(echange(&ticket).set("Host", "attaquant.example").call()).0, 421);
+        // premier échange : le jeton de session ; il ouvre l'API
+        let (c, r) = lire(echange(&ticket).call());
+        assert_eq!(c, 200);
+        let jeton = r["jeton"].as_str().unwrap().to_string();
+        assert_eq!(etat(&jeton), 200);
+        // second échange du même lien : refusé, avec un message qui dit quoi faire
+        let (c, r) = lire(echange(&ticket).call());
+        assert_eq!((c, r["motif"].as_str()), (410, Some("deja_servi")));
+        assert!(r["erreur"].as_str().unwrap().contains("Entrée") && r["jeton"].is_null());
+        assert_eq!(etat(&jeton), 200);
+        let (c, r) = lire(echange(&"f".repeat(64)).call());
+        assert_eq!((c, r["motif"].as_str()), (401, Some("inconnu")));
+        // nouveau lien : nouvelle session, l'ancienne est fermée
+        let (c, r) = lire(echange(&session.ticket().unwrap()).call());
+        assert_eq!(c, 200);
+        assert_eq!(etat(r["jeton"].as_str().unwrap()), 200);
+        assert_eq!(etat(&jeton), 401);
+        serveur.unblock();
+        assert!(fil.join().unwrap().is_err());
+        let _ = fs::remove_dir_all(&dossier);
     }
 
     /// R66 : la confirmation de sauvegarde (mot de passe seul) ne doit pas servir d'oracle pour
