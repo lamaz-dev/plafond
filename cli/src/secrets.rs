@@ -60,15 +60,7 @@ fn lire(fichier: &str) -> BTreeMap<String, Secret> {
 fn ecrire(fichier: &str, s: &BTreeMap<String, Secret>) -> Res<()> {
     let tmp = format!("{fichier}.nouveau");
     let _ = std::fs::remove_file(&tmp);
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
-        f.write_all(serde_json::to_string_pretty(s)?.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    std::fs::write(&tmp, serde_json::to_string_pretty(s)?)?;
+    crate::prive::ecrire(std::path::Path::new(&tmp), serde_json::to_string_pretty(s)?.as_bytes())?;
     std::fs::rename(tmp, fichier)?;
     Ok(())
 }
@@ -239,11 +231,7 @@ mod tests {
         assert!(enregistrer(&cle, &agent.public_key(), "vide", "aws", Zeroizing::new("   ".into())).is_err());
         supprimer(&cle, "OpenAI").unwrap();
         assert!(lister(&cle).is_empty());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(chemin(&cle)).unwrap().permissions().mode() & 0o777, 0o600);
-        }
+        assert!(crate::prive::est_prive(std::path::Path::new(&chemin(&cle))).unwrap(), "{}", crate::prive::droits(std::path::Path::new(&chemin(&cle))));
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

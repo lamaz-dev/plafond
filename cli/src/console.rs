@@ -543,11 +543,7 @@ fn cle_agent_compte(chemin: &str) -> Res<Keypair> {
     if let Some(d) = std::path::Path::new(chemin).parent() {
         fs::create_dir_all(d)?;
     }
-    let mut f = fs::OpenOptions::new();
-    f.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut f, 0o600);
-    std::io::Write::write_all(&mut f.open(chemin)?, hex::encode(k.secret_bytes()).as_bytes())?;
+    crate::prive::ecrire(std::path::Path::new(chemin), zeroize::Zeroizing::new(hex::encode(k.secret_bytes())).as_bytes())?;
     Ok(k)
 }
 
@@ -1373,10 +1369,9 @@ mod tests {
         assert_eq!((owner.x_only_public_key(), agent.x_only_public_key()), cles[0], "même propriétaire et même agent");
         assert!(cle::ouvrir_tout(&cle::lire(&fichiers.cle).unwrap(), nouveau).is_ok(), "nouveau mot de passe actif");
         assert!(fs::read_dir(&dossier).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains(".ancien-")), "ancien fichier conservé");
-        #[cfg(unix)]
         for f in [&fichiers.cle, &fichiers.agent] {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(f).unwrap().permissions().mode() & 0o777, 0o600, "{f}");
+            let f = std::path::Path::new(f);
+            assert!(crate::prive::est_prive(f).unwrap(), "{} : {}", f.display(), crate::prive::droits(f));
         }
         let _ = fs::remove_dir_all(&dossier);
     }

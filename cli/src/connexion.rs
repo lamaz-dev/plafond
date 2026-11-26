@@ -152,17 +152,11 @@ pub fn effacer_fichier(chemin: &str) -> Res<()> {
     Ok(())
 }
 
-fn ecrire_prive(chemin: &Path, contenu: &[u8]) -> Res<()> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(chemin)?;
-        f.write_all(contenu)?;
-    }
-    #[cfg(not(unix))]
-    std::fs::write(chemin, contenu)?;
-    Ok(())
+/// Écrit un fichier de secrets de l'agent (chiffrés pour lui) : neuf, sans suivre un lien laissé à sa
+/// place (R69), et lisible par le seul utilisateur.
+fn ecrire_neuf_prive(chemin: &Path, contenu: &[u8]) -> Res<()> {
+    let _ = std::fs::remove_file(chemin);
+    crate::prive::ecrire(chemin, contenu)
 }
 
 /// Écrit un fichier non secret de l'agent sans jamais suivre un lien symbolique laissé à sa place
@@ -256,14 +250,14 @@ fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -
         verifier_un_mandat_par_machine(&registre, &kit.proprietaire, &kit.publique, &d_abs)?;
     }
     std::fs::create_dir_all(d)?;
-    ecrire_prive(&d.join("agent.key"), kit.cle_agent.as_bytes())?;
+    crate::prive::ecrire(&d.join("agent.key"), kit.cle_agent.as_bytes())?;
     if let Some(o) = &kit.origine {
         ecrire_neuf(&d.join("etat-coffre-origine.json"), serde_json::to_string_pretty(o)?.as_bytes())?;
     }
     if let Some(e) = &kit.etat {
         ecrire_neuf(&d.join("etat-coffre.json"), serde_json::to_string_pretty(e)?.as_bytes())?;
     }
-    ecrire_neuf(&d.join("agent.secrets.json"), serde_json::to_string_pretty(&kit.secrets)?.as_bytes())?;
+    ecrire_neuf_prive(&d.join("agent.secrets.json"), serde_json::to_string_pretty(&kit.secrets)?.as_bytes())?;
     let meta = serde_json::json!({ "agent_id": kit.agent_id, "nom": kit.nom, "publique": kit.publique, "proprietaire": kit.proprietaire, "regles": kit.regles, "reseau": kit.reseau, "installe_le": crate::double_auth::maintenant(), "secrets_du": kit.cree_le });
     ecrire_neuf(&d.join("agent.json"), serde_json::to_string_pretty(&meta)?.as_bytes())?;
     if registre_actif {
@@ -285,7 +279,7 @@ pub fn maj_secrets(fichier: &str, dossier: &str) -> Res<usize> {
         meta["secrets_du"].as_u64().unwrap_or(0),
     )?;
     let tmp = d.join("agent.secrets.json.nouveau");
-    ecrire_neuf(&tmp, serde_json::to_string_pretty(&secrets)?.as_bytes())?;
+    ecrire_neuf_prive(&tmp, serde_json::to_string_pretty(&secrets)?.as_bytes())?;
     std::fs::rename(tmp, d.join("agent.secrets.json"))?;
     meta["secrets_du"] = date.into();
     let tmp = d.join("agent.json.nouveau");
@@ -430,6 +424,9 @@ mod tests {
 
     /// Attaques sur l'installation : lien symbolique à la place de la clé, fichiers lisibles par
     /// d'autres, écrasement, effacement réel de la copie de la console (même par un lien physique).
+    // Unix seulement : le test fabrique des liens symboliques et physiques, ce qui demande un droit
+    // particulier sous Windows (mode développeur ou administrateur). Les droits des fichiers installés
+    // sont contrôlés sur tous les systèmes par `kit_scelle_installe_et_verifie` et par `prive`.
     #[cfg(unix)]
     #[test]
     fn installation_cle_privee_jamais_exposee() {
@@ -474,6 +471,8 @@ mod tests {
 
     /// R69 : dans un dossier préparé par quelqu'un d'autre, un lien symbolique à la place d'un
     /// fichier de l'agent (agent.json, état, secrets) ne doit pas faire écrire l'installation ailleurs.
+    // Unix seulement : créer un lien symbolique demande un droit particulier sous Windows (mode
+    // développeur ou administrateur), absent d'un poste ordinaire.
     #[cfg(unix)]
     #[test]
     fn r69_installation_ne_suit_pas_les_liens_symboliques() {
@@ -610,10 +609,9 @@ mod tests {
         assert_eq!(installer_demo(&s, &saisi, &agent_dossier).unwrap(), "Recherche");
         assert!(installer_demo(&s, &code, &agent_dossier).is_err(), "jamais d'écrasement");
         assert_eq!(verifier(&agent_dossier).unwrap(), vec![("OpenAI".to_string(), true)]);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(Path::new(&agent_dossier).join("agent.key")).unwrap().permissions().mode() & 0o777, 0o600);
+        for f in ["agent.key", "agent.secrets.json"] {
+            let f = Path::new(&agent_dossier).join(f);
+            assert!(crate::prive::est_prive(&f).unwrap(), "{} : {}", f.display(), crate::prive::droits(&f));
         }
         // côté console : effacement de la copie de la clé
         effacer_fichier(&console_cle).unwrap();

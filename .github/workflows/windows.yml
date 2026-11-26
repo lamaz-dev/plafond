@@ -1,0 +1,38 @@
+# Tests de l'outil sous Windows : aucun secret, aucun accès en écriture.
+# Même suite que sous Linux (« Tests et empreintes »), pour prouver à chaque envoi que l'outil se
+# comporte de la même façon sous Windows : fichiers sensibles réservés à l'utilisateur courant
+# (liste d'accès, cli/src/prive.rs), chemins, fins de ligne. Les rares tests qui fabriquent des liens
+# symboliques restent propres à Unix (justification dans le code).
+name: Tests Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  outil-windows:
+    name: Outil sous Windows (suite de tests Rust)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: windows-${{ hashFiles('cli/Cargo.lock', 'cli/rust-toolchain.toml') }}
+      - name: Tests de l'outil, dont fichiers sensibles et fuzzing d'état (dépendances figées)
+        working-directory: cli
+        run: cargo test --release --locked

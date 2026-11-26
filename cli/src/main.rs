@@ -49,6 +49,7 @@ mod demo;
 mod double_auth;
 mod secrets;
 mod console;
+mod prive;
 mod retrouver;
 mod ardoise;
 mod coeur;

@@ -196,7 +196,9 @@ pub fn remplacer(chemin: &str, f: &Fichier) -> Res<()> {
     let tmp = format!("{chemin}.nouveau");
     let _ = std::fs::remove_file(&tmp);
     ecrire(&tmp, f)?;
-    std::fs::copy(chemin, format!("{chemin}.precedent"))?;
+    let precedent = format!("{chemin}.precedent");
+    std::fs::copy(chemin, &precedent)?;
+    crate::prive::proteger(std::path::Path::new(&precedent))?;
     std::fs::rename(&tmp, chemin)?;
     Ok(())
 }
@@ -216,17 +218,7 @@ pub fn ecrire(chemin: &str, f: &Fichier) -> Res<()> {
     if std::path::Path::new(chemin).exists() {
         return Err(format!("{chemin} existe déjà : refus d'écraser une clé").into());
     }
-    let json = serde_json::to_string_pretty(f)?;
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut o = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(chemin)?;
-        o.write_all(json.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    std::fs::write(chemin, json)?;
-    Ok(())
+    crate::prive::ecrire(std::path::Path::new(chemin), serde_json::to_string_pretty(f)?.as_bytes())
 }
 
 pub fn lire(chemin: &str) -> Res<Fichier> {
@@ -320,6 +312,7 @@ mod tests {
         let f = rapide(&nouvelle().unwrap(), "un mot de passe long");
         ecrire(chemin, &f).unwrap();
         assert!(ecrire(chemin, &f).is_err());
+        assert!(crate::prive::est_prive(std::path::Path::new(chemin)).unwrap(), "{}", crate::prive::droits(std::path::Path::new(chemin)));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

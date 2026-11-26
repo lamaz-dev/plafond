@@ -137,16 +137,7 @@ pub fn renommer(etat_defaut: &str, id: &str, nom: &str) -> Res<()> {
 }
 
 fn ecrire_secret(chemin: &Path, contenu: &str) -> Res<()> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut o = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(chemin)?;
-        o.write_all(contenu.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    std::fs::write(chemin, contenu)?;
-    Ok(())
+    crate::prive::ecrire(chemin, contenu.as_bytes())
 }
 
 /// Emplacement de référence des fichiers de l'agent (clé, secrets) ; le principal n'a pas de
@@ -272,11 +263,7 @@ mod tests {
         let p = Keypair::from_seckey_slice(secp256k1::SECP256K1, &[1; 32]).unwrap();
         assert_ne!(cle(&a, &p).unwrap().secret_bytes(), cle(&b, &p).unwrap().secret_bytes());
         assert_eq!(cle(&v[0], &p).unwrap().secret_bytes(), p.secret_bytes());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&a.cle).unwrap().permissions().mode() & 0o777, 0o600);
-        }
+        assert!(crate::prive::est_prive(Path::new(&a.cle)).unwrap(), "{}", crate::prive::droits(Path::new(&a.cle)));
         assert!(!std::fs::read_to_string(chemin_registre(&defaut)).unwrap().contains(&hex::encode(cle(&a, &p).unwrap().secret_bytes())), "aucun secret dans le registre");
         assert!(nouveau(&defaut, "", None).is_err());
         assert!(nouveau(&defaut, &"x".repeat(41), None).is_err());

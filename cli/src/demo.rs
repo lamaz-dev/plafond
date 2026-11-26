@@ -76,11 +76,7 @@ pub fn cles_jetables() -> Res<(Keypair, Keypair)> {
         "proprietaire": hex::encode(o.secret_bytes()),
         "agent": hex::encode(a.secret_bytes()),
     });
-    let mut f = std::fs::OpenOptions::new();
-    f.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut f, 0o600);
-    std::io::Write::write_all(&mut f.open(&chemin)?, serde_json::to_string_pretty(&contenu)?.as_bytes())?;
+    crate::prive::ecrire(std::path::Path::new(&chemin), serde_json::to_string_pretty(&contenu)?.as_bytes())?;
     println!("Clés de démo créées pour le réseau de test : {chemin} (aucune phrase à fournir)");
     Ok((o, a))
 }

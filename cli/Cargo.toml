@@ -35,5 +35,9 @@ kaspa-bip32 = "2.1.0"
 hmac = "0.12"
 sha1 = "0.10"
 
+# Windows : liste d'accès restreinte à l'utilisateur courant pour les fichiers sensibles (src/prive.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
 [dev-dependencies]
 proptest = "1"
