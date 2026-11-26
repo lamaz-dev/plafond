@@ -661,6 +661,10 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
         return Err("gel envoyé mais pas encore confirmé de façon stable : relancer pour vérifier".into());
     }
     if ids.is_empty() {
+        // Rien à rapatrier et coffre stable : déjà gelé (par exemple par un gel précédent qui a
+        // gagné une course). L'état local n'a plus rien à suivre ; le garder ferait afficher
+        // l'argent rapatrié comme une perte.
+        let _ = fs::remove_file(state_path());
         return Err("coffre déjà vide".into());
     }
     let _ = fs::remove_file(state_path());
