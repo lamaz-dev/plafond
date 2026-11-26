@@ -1072,3 +1072,71 @@ Coffre (cœur v0.7) kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5m
   perte nette depuis la création : 6 TKAS (courbe promise : 0.293125 TKAS)
 
 ```
+
+## 2026-11-26 14:30 UTC
+
+```
+$ vault-cli deployer
+Error: "un coffre est déjà déployé"
+(code de sortie 1)
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli course-recharge
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Error: "aucune pièce du coffre ne couvre le paiement d'essai"
+(code de sortie 1)
+
+$ vault-cli course-recharge
+Connecté au testnet-10 : wss://quark-10.kaspa.red/kaspa/testnet-10/wrpc/borsh
+Error: "aucune pièce du coffre ne couvre le paiement d'essai"
+(code de sortie 1)
+
+$ vault-cli course-recharge
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Error: "aucune pièce du coffre ne couvre le paiement d'essai"
+(code de sortie 1)
+
+$ vault-cli course-gel
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Error: "aucune pièce du coffre ne couvre le paiement d'essai"
+(code de sortie 1)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633677211
+Solde du propriétaire : 989.18358 TKAS (8 UTXO)
+Coffre (cœur v0.7) kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90 : 0 TKAS en 0 pièce(s)
+  disponible maintenant : 0 TKAS ; pire cas sur 24 h : 0 TKAS
+  perte nette depuis la création : 6 TKAS (courbe promise : 0.476875 TKAS)
+
+$ vault-cli deployer
+Error: "un coffre est déjà déployé"
+(code de sortie 1)
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli course-gel
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Error: "aucune pièce du coffre ne couvre le paiement d'essai"
+(code de sortie 1)
+
+$ vault-cli course-gel
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Error: "aucune pièce du coffre ne couvre le paiement d'essai"
+(code de sortie 1)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633677635
+Solde du propriétaire : 989.18358 TKAS (8 UTXO)
+Coffre (cœur v0.7) kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90 : 0 TKAS en 0 pièce(s)
+  disponible maintenant : 0 TKAS ; pire cas sur 24 h : 0 TKAS
+  perte nette depuis la création : 6 TKAS (courbe promise : 0.50618055 TKAS)
+
+```
