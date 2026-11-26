@@ -1,6 +1,6 @@
 # Cœur v0.6 : le bytecode compilé, opcode par opcode
 
-Compilateur SilverScript figé à `443d519e`, paramètres de référence :
+Compilateur SilverScript figé à `7eb04634` (v1.0.2 ; bytecode identique octet pour octet à `443d519e`, vérifié le 26 nov. 2026), paramètres de référence :
 - propriétaire et agent : clés de test 1 et 2 ;
 - capacité 200 000 000 sompi (2 TKAS) ;
 - période 864 000 (un jour).

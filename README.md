@@ -84,7 +84,7 @@ Contract tests run against the pinned SilverScript compiler:
 
 ```bash
 git clone https://github.com/kaspanet/silverscript /tmp/silverscript
-git -C /tmp/silverscript checkout 443d519e6688fa03d24c69432763b13e6abe4486
+git -C /tmp/silverscript checkout 7eb04634bfbae5350c1808efc7e34c4efa7f93af
 cp tests/*.rs contracts/*.sil /tmp/silverscript/silverscript-lang/tests/
 cd /tmp/silverscript
 cargo test --release -p silverscript-lang --test coeur_tests --test agent_budget_tests --test delivery_escrow_tests --test ardoise_tests

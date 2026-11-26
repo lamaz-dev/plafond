@@ -81,7 +81,7 @@ fn source_choisie() -> &'static str {
     }
 }
 /// Révision exacte du compilateur SilverScript (doit correspondre à Cargo.toml).
-const SILVERSCRIPT_REV: &str = "443d519e6688fa03d24c69432763b13e6abe4486";
+const SILVERSCRIPT_REV: &str = "7eb04634bfbae5350c1808efc7e34c4efa7f93af";
 
 // Réglages du coffre de test (en sompi : 1 KAS = 100 000 000 sompi).
 const CAPACITY: i64 = 200_000_000; // 2 TKAS de budget

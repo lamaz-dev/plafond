@@ -73,7 +73,7 @@ Trésorerie du propriétaire        clé du propriétaire, hors modèle de menac
 
 ## 4. SilverScript : ce qui compte pour nous
 
-- Compilateur **figé** au commit `443d519e6688fa03d24c69432763b13e6abe4486` (1er nov. 2026). Les tests
+- Compilateur **figé** au commit `7eb04634bfbae5350c1808efc7e34c4efa7f93af` (SilverScript v1.0.2, 23 nov. 2026 ; bytecode identique à 443d519e). Les tests
   des contrats tournent dessus (`tests/*.rs`, voir `.github/workflows/ci.yml`).
 - `entry` = point d'entrée ; `require(...)` ; `checkSig(sig, pubkey)` (signature de la transaction),
   `checkMsgSig(datasig, digest, pubkey)` (signature d'un message) ; `blake2b(...)`.

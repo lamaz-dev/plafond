@@ -6,8 +6,8 @@ publish = false
 license = "ISC"
 
 [dependencies]
-silverscript-lang = { git = "https://github.com/kaspanet/silverscript", rev = "443d519e6688fa03d24c69432763b13e6abe4486" }
-silverscript-abi = { git = "https://github.com/kaspanet/silverscript", rev = "443d519e6688fa03d24c69432763b13e6abe4486" }
+silverscript-lang = { git = "https://github.com/kaspanet/silverscript", rev = "7eb04634bfbae5350c1808efc7e34c4efa7f93af" }
+silverscript-abi = { git = "https://github.com/kaspanet/silverscript", rev = "7eb04634bfbae5350c1808efc7e34c4efa7f93af" }
 kaspa-consensus-core = "2.1.0"
 kaspa-txscript = "2.1.0"
 kaspa-addresses = "2.1.0"

@@ -1,5 +1,5 @@
 # Empreintes reproductibles (blake2b-256). Régénérer : vault-cli empreintes > contracts/EMPREINTES.txt
-compilateur silverscript : 443d519e6688fa03d24c69432763b13e6abe4486
+compilateur silverscript : 7eb04634bfbae5350c1808efc7e34c4efa7f93af
 source agent_budget.sil : 849ca5814d6fd359c806e522fa06479ac2ee43298f1a66e97a7e9b30ec0f8223
 source delivery_escrow.sil : 5efed001d10a4591525b09c1a0753abe913a680f98ea98600ee2c447a464a1c9
 source ardoise.sil : 28c2fd0cf518971ce5863da17abaa4e999a2ac68ea137d2039a6a9adbc544126
