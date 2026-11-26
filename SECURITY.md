@@ -75,20 +75,34 @@ Comment l'outil conserve ce qu'il doit garder (comportement de l'outil, pas une 
 
 - Owner key: encrypted with the owner's password (Argon2id + XChaCha20-Poly1305), never stored in clear.
   Clé du propriétaire : chiffrée par son mot de passe, jamais en clair.
-- Agent keys kept by the console (an agent not yet connected, and the main agent): encrypted with the
-  same password, same derivation and same file format. A key left in clear by an earlier version is
-  encrypted the next time the account is opened, then the clear file is erased. Once an agent is
-  connected, the console erases its copy and keeps only the public key.
-  Clés d'agent gardées par la console (agent pas encore connecté, agent principal) : chiffrées par le
-  même mot de passe, même dérivation, même format. Une clé laissée en clair par une version précédente
-  est chiffrée à l'ouverture suivante du compte, puis le fichier en clair est effacé. Une fois l'agent
-  connecté, la console efface sa copie et ne garde que la clé publique.
-- Forgotten password: restoring the account from the 24 words sets a new password. Agent keys
-  encrypted under the old one can no longer be read: vaults stay visible, fundable and freezable
-  (public key only), but an agent that was not yet connected must be stopped and created again.
-  Mot de passe oublié : restaurer le compte depuis les 24 mots fixe un nouveau mot de passe. Les clés
-  d'agent chiffrées sous l'ancien ne sont plus lisibles : les coffres restent visibles, alimentables et
-  gelables (clé publique seule), mais un agent pas encore connecté doit être arrêté puis recréé.
+- Agent keys kept by the console (an agent not yet connected, and the main agent): encrypted with a
+  key derived from the owner's private key (HMAC-SHA256 with the label `plafond/cle-agent/v2`, then
+  XChaCha20-Poly1305; the file is bound to both the agent's and the owner's public keys, so it does
+  not open under another owner). They are therefore worth exactly what the owner key is worth, and
+  the owner key is itself only stored encrypted with the password. A key left in clear, or encrypted
+  with the password by an earlier version (format v1), is re-encrypted the next time the account is
+  opened: the new file is written, read back and checked before the old one is erased. Once an agent
+  is connected, the console erases its copy and keeps only the public key.
+  Clés d'agent gardées par la console (agent pas encore connecté, agent principal) : chiffrées par une
+  clé dérivée de la clé privée du propriétaire (HMAC-SHA256, étiquette `plafond/cle-agent/v2`, puis
+  XChaCha20-Poly1305 ; le fichier est lié aux clés publiques de l'agent et du propriétaire : il ne
+  s'ouvre pas sous un autre propriétaire). Elles valent donc exactement ce que vaut la clé du
+  propriétaire, elle-même stockée uniquement chiffrée par le mot de passe. Une clé laissée en clair,
+  ou chiffrée par le mot de passe par une version précédente (format v1), est rechiffrée à l'ouverture
+  suivante du compte : le nouveau fichier est écrit, relu et vérifié avant l'effacement de l'ancien.
+  Une fois l'agent connecté, la console efface sa copie et ne garde que la clé publique.
+- Forgotten password: restoring the account from the 24 words sets a new password and recreates the
+  same owner key, so the agent keys kept by the console stay readable: agents not yet connected can
+  still be connected. Consequence: whoever holds the 24 words (or the owner key) can also read these
+  agent keys. Only exception: an agent key still in the old v1 format, encrypted under the forgotten
+  password, can no longer be read: its vault stays visible, fundable and freezable (public key only),
+  but that agent must be stopped and created again.
+  Mot de passe oublié : restaurer le compte depuis les 24 mots fixe un nouveau mot de passe et recrée
+  la même clé de propriétaire : les clés d'agent gardées par la console restent lisibles, et un agent
+  pas encore connecté peut toujours l'être. Conséquence : qui détient les 24 mots (ou la clé du
+  propriétaire) peut aussi lire ces clés d'agent. Seule exception : une clé d'agent encore à l'ancien
+  format v1, chiffrée sous le mot de passe oublié, n'est plus lisible : son coffre reste visible,
+  alimentable et gelable (clé publique seule), mais cet agent doit être arrêté puis recréé.
 - Test and demo keys (no password): stored in clear, testnet only.
   Clés de test et de démonstration (sans mot de passe) : en clair, réseau de test uniquement.
 - Console link: the link printed in the terminal carries a one-time ticket valid for two minutes, not

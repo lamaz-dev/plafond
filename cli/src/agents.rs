@@ -2,8 +2,9 @@
 //! une instance par agent), avec son propre fichier d'état. Le premier agent (« principal »)
 //! reprend le coffre historique et la clé d'agent fournie par l'environnement ; les suivants
 //! reçoivent une clé tirée au hasard, écrite à part pour être remise à l'agent : fichier lisible par
-//! le seul utilisateur, et chiffré par le mot de passe du propriétaire dès que le compte en a un
-//! (`cle::Enveloppe`). Le registre ne contient aucun secret.
+//! le seul utilisateur, et chiffré par une clé dérivée de la clé privée du propriétaire dès que le
+//! compte en a une protégée par mot de passe (`cle::Enveloppe`, format v2) : restaurer le compte depuis
+//! la phrase de 24 mots garde donc ces clés lisibles. Le registre ne contient aucun secret.
 
 use crate::Res;
 use secp256k1::Keypair;
@@ -41,8 +42,9 @@ pub struct Agent {
 }
 
 /// Agent principal du compte, vu de la console. Elle n'a besoin que de sa clé publique (surveiller,
-/// alimenter, geler sont des opérations du propriétaire) : après un changement de mot de passe par la
-/// phrase de récupération, la clé privée gardée sur le disque n'est plus lisible, la clé publique si.
+/// alimenter, geler sont des opérations du propriétaire) : si la clé privée gardée sur le disque n'est
+/// pas lisible (ancien format chiffré sous un mot de passe oublié, ou autre propriétaire), la clé
+/// publique l'est toujours.
 #[derive(Clone, Copy)]
 pub struct Principal {
     pub cle: Keypair,
@@ -56,7 +58,7 @@ impl From<Keypair> for Principal {
 }
 
 impl Principal {
-    /// Clé publique seule : la clé privée n'est pas lisible avec le mot de passe actuel.
+    /// Clé publique seule : la clé privée n'est pas lisible dans cette session.
     pub fn publique_seule(publique: secp256k1::PublicKey) -> Self {
         Principal { cle: cle_muette(), publique }
     }
@@ -176,16 +178,23 @@ pub fn renommer(etat_defaut: &str, id: &str, nom: &str) -> Res<()> {
 pub enum CleStockee {
     /// Ancien format, ou compte sans mot de passe (clés de test) : hexadécimal en clair.
     Claire(Keypair),
-    /// Chiffrée par le mot de passe du propriétaire (`cle::Enveloppe`).
+    /// Chiffrée : format v2 (clé du propriétaire, `cle::Enveloppe`) ou ancien format v1 (mot de passe).
     Chiffree(crate::cle::Fichier),
 }
 
+/// Fichier chiffré VÉRIFIÉ, prêt à prendre la place du fichier de clé (voir `migrer_fichier`).
 fn chemin_chiffre(chemin: &str) -> String {
     format!("{chemin}.chiffre")
 }
 
-/// Termine un chiffrement interrompu : le fichier chiffré était complet (écrit et synchronisé avant
-/// tout effacement du clair), il prend la place du fichier de clé. Un fichier chiffré incomplet est jeté.
+/// Fichier chiffré tout juste écrit, pas encore relu : jamais utilisé pour remplacer une clé.
+fn chemin_essai(chemin: &str) -> String {
+    format!("{chemin}.essai")
+}
+
+/// Termine une migration interrompue : le fichier chiffré était complet et vérifié (écrit,
+/// synchronisé et relu avant tout effacement de l'original), il prend la place du fichier de clé.
+/// Un fichier chiffré incomplet est jeté.
 fn reprendre(chemin: &str) {
     let tmp = chemin_chiffre(chemin);
     if !Path::new(&tmp).exists() {
@@ -225,38 +234,72 @@ pub fn ecrire_cle(chemin: &Path, k: &Keypair, enveloppe: Option<&crate::cle::Env
     }
 }
 
-/// Migration d'un fichier de clé en clair : la clé est chiffrée dans un fichier voisin, relue pour
-/// vérification, puis le fichier en clair est effacé (réécrit puis supprimé) et remplacé. Rend vrai
-/// si une clé en clair a été chiffrée, faux s'il n'y avait rien à faire.
-pub fn chiffrer_fichier(chemin: &str, enveloppe: &crate::cle::Enveloppe) -> Res<bool> {
-    let Some(CleStockee::Claire(k)) = lire_cle_stockee(chemin)? else { return Ok(false) };
-    let tmp = chemin_chiffre(chemin);
-    let _ = std::fs::remove_file(&tmp);
-    ecrire_cle(Path::new(&tmp), &k, Some(enveloppe))?;
-    let relu: crate::cle::Fichier = serde_json::from_str(&std::fs::read_to_string(&tmp)?)?;
-    if enveloppe.dechiffrer(&relu)?.secret_bytes() != k.secret_bytes() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err("chiffrement de la clé d'agent non vérifié : fichier en clair conservé".into());
+/// Migration d'un fichier de clé vers le format v2 (chiffré par la clé du propriétaire) :
+///  - clé en clair : toujours migrée ;
+///  - ancien format v1 (mot de passe) : migré si le mot de passe est fourni et l'ouvre ;
+///  - déjà en v2, ou absent : rien à faire.
+/// La clé est chiffrée dans un fichier voisin, relue et déchiffrée pour vérification ; alors seulement
+/// l'original est effacé (réécrit puis supprimé) et remplacé. Une interruption ne perd jamais la clé :
+/// avant la vérification l'original est intact, après elle `reprendre` termine le remplacement.
+/// `v1` garde la dernière dérivation Argon2id (les fichiers d'une même session partagent leur sel).
+/// Rend vrai si le fichier a été migré, faux s'il n'y avait rien à faire.
+pub fn migrer_fichier(chemin: &str, enveloppe: &crate::cle::Enveloppe, mot_de_passe: Option<&str>, v1: &mut Option<crate::cle::EnveloppeMdp>) -> Res<bool> {
+    let k = match lire_cle_stockee(chemin)? {
+        Some(CleStockee::Claire(k)) => k,
+        Some(CleStockee::Chiffree(f)) if crate::cle::est_cle_agent_v1(&f) => {
+            let Some(mdp) = mot_de_passe else { return Ok(false) };
+            let ancienne = match v1.take().filter(|e| e.convient(&f)) {
+                Some(e) => e,
+                None => crate::cle::EnveloppeMdp::du_fichier(&f, mdp)?,
+            };
+            let k = ancienne.dechiffrer(&f);
+            *v1 = Some(ancienne);
+            k?
+        }
+        _ => return Ok(false),
+    };
+    let (essai, verifie) = (chemin_essai(chemin), chemin_chiffre(chemin));
+    let _ = std::fs::remove_file(&essai);
+    let _ = std::fs::remove_file(&verifie);
+    ecrire_cle(Path::new(&essai), &k, Some(enveloppe))?;
+    let relu = std::fs::read_to_string(&essai).ok().and_then(|t| serde_json::from_str::<crate::cle::Fichier>(&t).ok()).and_then(|f| enveloppe.dechiffrer(&f).ok());
+    if !relu.is_some_and(|r| r.secret_bytes() == k.secret_bytes()) {
+        let _ = std::fs::remove_file(&essai);
+        return Err("chiffrement de la clé d'agent non vérifié : fichier d'origine conservé".into());
     }
+    std::fs::rename(&essai, &verifie)?;
     crate::connexion::effacer_fichier(chemin)?;
-    std::fs::rename(&tmp, chemin)?;
+    std::fs::rename(&verifie, chemin)?;
     Ok(true)
 }
 
-/// Chiffre toutes les clés d'agent encore en clair du registre (agents créés avant le chiffrement, ou
-/// avant que le mot de passe ait été saisi). Rend le nombre de clés chiffrées ; une clé qui résiste
-/// (fichier abîmé) n'empêche pas les autres.
-pub fn chiffrer_cles_en_clair(etat_defaut: &str, enveloppe: &crate::cle::Enveloppe) -> usize {
-    charger(etat_defaut).iter().filter(|a| a.cle != "env" && !est_connecte(a)).filter(|a| chiffrer_fichier(&a.cle, enveloppe).unwrap_or(false)).count()
+/// Migre vers le format v2 toutes les clés d'agent du registre encore en clair (agents créés avant le
+/// chiffrement) et, si le mot de passe est fourni, celles de l'ancien format v1. Rend le nombre de
+/// clés migrées et le nombre de fichiers v1 restants (mot de passe absent, ou chiffrés sous un ancien
+/// mot de passe) ; une clé qui résiste n'empêche pas les autres.
+pub fn migrer_cles(etat_defaut: &str, enveloppe: &crate::cle::Enveloppe, mot_de_passe: Option<&str>) -> (usize, usize) {
+    let (mut migrees, mut restantes, mut v1) = (0, 0, None);
+    for a in charger(etat_defaut).iter().filter(|a| a.cle != "env" && !est_connecte(a)) {
+        if migrer_fichier(&a.cle, enveloppe, mot_de_passe, &mut v1).unwrap_or(false) {
+            migrees += 1;
+        } else if matches!(lire_cle_stockee(&a.cle), Ok(Some(CleStockee::Chiffree(f))) if crate::cle::est_cle_agent_v1(&f)) {
+            restantes += 1;
+        }
+    }
+    (migrees, restantes)
 }
 
 /// Clé privée d'un agent pas encore connecté, pour préparer son kit de connexion. Une clé chiffrée
-/// demande l'enveloppe de la session ou le mot de passe du propriétaire.
+/// demande l'enveloppe de la session (format v2) ou le mot de passe du propriétaire (ancien format v1).
 pub fn cle_privee(a: &Agent, mot_de_passe: Option<&str>, enveloppe: Option<&crate::cle::Enveloppe>) -> Res<Keypair> {
     match lire_cle_stockee(&a.cle)?.ok_or("clé de l'agent introuvable sur cet ordinateur")? {
         CleStockee::Claire(k) => Ok(k),
         CleStockee::Chiffree(f) => crate::cle::ouvrir_cle_agent(&f, mot_de_passe, enveloppe).map_err(|_| {
-            "la clé de cet agent a été chiffrée avec un autre mot de passe (compte restauré depuis la phrase ?) : elle ne peut plus être remise. Arrêtez ce mandat (les fonds reviennent en trésorerie) et créez-en un nouveau".into()
+            if crate::cle::est_cle_agent_v1(&f) {
+                "la clé de cet agent est à l'ancien format, chiffrée avec un autre mot de passe que l'actuel (compte restauré depuis la phrase avant la mise à jour ?) : elle ne peut plus être remise. Arrêtez ce mandat (les fonds reviennent en trésorerie) et créez-en un nouveau".into()
+            } else {
+                "la clé de cet agent ne s'ouvre pas avec la clé de ce compte (fichier d'un autre compte, ou modifié) : elle ne peut pas être remise. Arrêtez ce mandat (les fonds reviennent en trésorerie) et créez-en un nouveau".into()
+            }
         }),
     }
 }
@@ -314,7 +357,7 @@ pub fn marquer_connecte(etat_defaut: &str, id: &str) -> Res<()> {
 /// Clé de l'agent pour les opérations du propriétaire : celle du principal, sinon son fichier s'il
 /// est en clair. Une clé chiffrée n'est pas ouverte ici : comme pour un agent connecté, ces opérations
 /// n'utilisent que la clé publique (transmise au contrat par `avec_coffre`), et la clé muette suffit.
-/// Seule la préparation du kit de connexion ouvre la clé (`cle_privee`, mot de passe exigé).
+/// Seule la préparation du kit de connexion ouvre la clé (`cle_privee`, mot de passe exigé par la console).
 pub fn cle(a: &Agent, principal: &Principal) -> Res<Keypair> {
     if a.cle == "env" {
         return Ok(principal.cle);
@@ -409,6 +452,129 @@ mod tests {
         assert_eq!(avant, apres);
         renommer(&defaut, &a.id, "Achats").unwrap();
         assert_eq!(charger(&defaut)[1].nom, "Achats");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn dossier_test(nom: &str) -> (PathBuf, String) {
+        let d = std::env::temp_dir().join(format!("agents-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let defaut = d.join("etat-coffre.json").to_string_lossy().into_owned();
+        (d, defaut)
+    }
+
+    fn sur_disque(a: &Agent) -> crate::cle::Fichier {
+        match lire_cle_stockee(&a.cle).unwrap().unwrap() {
+            CleStockee::Chiffree(f) => f,
+            CleStockee::Claire(_) => panic!("clé de {} en clair", a.nom),
+        }
+    }
+
+    /// Migration vers le format v2 : une clé en clair et une clé v1 (mot de passe) gardent la même
+    /// clé privée, l'original disparaît, rien d'intermédiaire ne reste, le fichier reste privé.
+    #[test]
+    fn migration_clair_et_v1_vers_v2_conserve_la_cle() {
+        let (d, defaut) = dossier_test("migration");
+        let mdp = "un mot de passe long";
+        let proprio = crate::cle::nouvelle().unwrap();
+        let env = crate::cle::Enveloppe::du_proprietaire(&proprio);
+        let ancienne = crate::cle::EnveloppeMdp::avec_cout(mdp, 19 * 1024, 2, 1).unwrap();
+        // trois mandats d'une version précédente : en clair, v1 (deux fichiers de la même session)
+        let clair = nouveau(&defaut, "En clair", None, None).unwrap();
+        let (v1a, v1b) = (nouveau(&defaut, "Ancien A", None, None).unwrap(), nouveau(&defaut, "Ancien B", None, None).unwrap());
+        let p = Principal::from(proprio);
+        let attendues: Vec<[u8; 32]> = [&clair, &v1a, &v1b].iter().map(|a| cle(a, &p).unwrap().secret_bytes()).collect();
+        for a in [&v1a, &v1b] {
+            let k = cle(a, &p).unwrap();
+            std::fs::remove_file(&a.cle).unwrap();
+            crate::prive::ecrire(Path::new(&a.cle), serde_json::to_string_pretty(&ancienne.chiffrer(&k).unwrap()).unwrap().as_bytes()).unwrap();
+        }
+        // un mandat déjà en v2 : intact
+        let neuf = nouveau(&defaut, "Neuf", None, Some(&env)).unwrap();
+        let avant = std::fs::read_to_string(&neuf.cle).unwrap();
+        // sans mot de passe : le clair est migré, les v1 attendent
+        assert_eq!(migrer_cles(&defaut, &env, None), (1, 2));
+        assert_eq!(cle_privee(&v1a, Some(mdp), Some(&env)).unwrap().secret_bytes(), attendues[1], "v1 toujours lisible avec le mot de passe");
+        assert!(cle_privee(&v1a, None, Some(&env)).is_err());
+        // mauvais mot de passe : rien ne bouge, rien n'est perdu
+        assert_eq!(migrer_cles(&defaut, &env, Some("un autre mot de passe")), (0, 2));
+        assert!(crate::cle::est_cle_agent_v1(&sur_disque(&v1a)));
+        // bon mot de passe : tout est en v2, mêmes clés, ouvertes par la seule clé du propriétaire
+        assert_eq!(migrer_cles(&defaut, &env, Some(mdp)), (2, 0));
+        assert_eq!(migrer_cles(&defaut, &env, Some(mdp)), (0, 0), "migration idempotente");
+        for (a, attendue) in [&clair, &v1a, &v1b].iter().zip(&attendues) {
+            let f = sur_disque(a);
+            assert!(f.version == 2 && f.kdf == crate::cle::KDF_PROPRIETAIRE, "{} pas en v2", a.nom);
+            assert_eq!(&cle_privee(a, None, Some(&env)).unwrap().secret_bytes(), attendue, "clé de {} changée par la migration", a.nom);
+            assert!(!std::fs::read_to_string(&a.cle).unwrap().contains(&hex::encode(attendue)));
+            assert!(!Path::new(&chemin_chiffre(&a.cle)).exists() && !Path::new(&chemin_essai(&a.cle)).exists(), "fichier intermédiaire laissé");
+            assert!(crate::prive::est_prive(Path::new(&a.cle)).unwrap());
+        }
+        assert_eq!(std::fs::read_to_string(&neuf.cle).unwrap(), avant, "fichier v2 réécrit sans raison");
+        // un autre propriétaire n'ouvre rien : message clair
+        let autre = crate::cle::Enveloppe::du_proprietaire(&crate::cle::nouvelle().unwrap());
+        assert!(cle_privee(&clair, Some(mdp), Some(&autre)).unwrap_err().to_string().contains("autre compte"));
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Migration interrompue : à aucun moment la clé n'est perdue. Avant la vérification, l'original
+    /// fait foi (un fichier d'essai, même abîmé, est ignoré) ; après, le fichier vérifié le remplace.
+    #[test]
+    fn migration_interrompue_ne_perd_pas_la_cle() {
+        let (d, defaut) = dossier_test("interrompue");
+        let mdp = "un mot de passe long";
+        let env = crate::cle::Enveloppe::du_proprietaire(&crate::cle::nouvelle().unwrap());
+        let ancienne = crate::cle::EnveloppeMdp::avec_cout(mdp, 19 * 1024, 2, 1).unwrap();
+        let a = nouveau(&defaut, "Ancien", None, None).unwrap();
+        let k = cle_privee(&a, None, None).unwrap();
+        let v1 = serde_json::to_string_pretty(&ancienne.chiffrer(&k).unwrap()).unwrap();
+        std::fs::remove_file(&a.cle).unwrap();
+        crate::prive::ecrire(Path::new(&a.cle), v1.as_bytes()).unwrap();
+        // 1. arrêt pendant l'écriture du fichier d'essai (tronqué) : l'original v1 reste, puis migre
+        std::fs::write(chemin_essai(&a.cle), "{ \"version\": 2, \"kdf\": \"cle-propr").unwrap();
+        assert_eq!(cle_privee(&a, Some(mdp), Some(&env)).unwrap().secret_bytes(), k.secret_bytes());
+        assert_eq!(std::fs::read_to_string(&a.cle).unwrap(), v1, "original touché par un essai non vérifié");
+        assert!(migrer_fichier(&a.cle, &env, Some(mdp), &mut None).unwrap());
+        assert_eq!(cle_privee(&a, None, Some(&env)).unwrap().secret_bytes(), k.secret_bytes());
+        // 2. arrêt après la vérification, avant l'effacement de l'original : la lecture suivante termine
+        std::fs::rename(&a.cle, chemin_chiffre(&a.cle)).unwrap();
+        crate::prive::ecrire(Path::new(&a.cle), v1.as_bytes()).unwrap();
+        assert_eq!(sur_disque(&a).version, 2);
+        assert!(!Path::new(&chemin_chiffre(&a.cle)).exists());
+        // 3. arrêt après l'effacement de l'original, avant le renommage : idem
+        std::fs::rename(&a.cle, chemin_chiffre(&a.cle)).unwrap();
+        assert_eq!(cle_privee(&a, None, Some(&env)).unwrap().secret_bytes(), k.secret_bytes());
+        assert!(Path::new(&a.cle).exists() && !Path::new(&chemin_chiffre(&a.cle)).exists());
+        // 4. fichier « vérifié » abîmé (ne devrait pas arriver) : jeté, l'original reste
+        std::fs::write(chemin_chiffre(&a.cle), "{ tronqué").unwrap();
+        assert_eq!(cle_privee(&a, None, Some(&env)).unwrap().secret_bytes(), k.secret_bytes());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Mot de passe oublié : compte restauré depuis les 24 mots avec un nouveau mot de passe. Les
+    /// clés d'agent v2 s'ouvrent (même clé de propriétaire) ; une clé v1 de l'ancien mot de passe
+    /// reste illisible, avec un message clair, et son fichier n'est ni migré ni abîmé.
+    #[test]
+    fn restauration_nouveau_mot_de_passe_les_cles_v2_restent_lisibles() {
+        let (d, defaut) = dossier_test("restauration");
+        let (ancien_mdp, nouveau_mdp) = ("l'ancien mot de passe", "le nouveau mot de passe");
+        let coffret = crate::cle::nouveau_coffret().unwrap();
+        let env = crate::cle::Enveloppe::du_proprietaire(&crate::cle::cle_du_coffret(&coffret).unwrap());
+        let a = nouveau(&defaut, "Recherche", None, Some(&env)).unwrap();
+        let attendue = cle_privee(&a, None, Some(&env)).unwrap().secret_bytes();
+        let b = nouveau(&defaut, "Ancien", None, None).unwrap();
+        let v1 = serde_json::to_string_pretty(&crate::cle::EnveloppeMdp::avec_cout(ancien_mdp, 19 * 1024, 2, 1).unwrap().chiffrer(&cle_privee(&b, None, None).unwrap()).unwrap()).unwrap();
+        std::fs::remove_file(&b.cle).unwrap();
+        crate::prive::ecrire(Path::new(&b.cle), v1.as_bytes()).unwrap();
+        drop(env);
+        // restauration : seuls les 24 mots et le nouveau mot de passe sont connus
+        let phrase = crate::cle::phrase(&coffret).unwrap();
+        let restaure = crate::cle::Enveloppe::du_proprietaire(&crate::cle::cle_du_coffret(&crate::cle::depuis_phrase(&phrase).unwrap()).unwrap());
+        assert_eq!(migrer_cles(&defaut, &restaure, Some(nouveau_mdp)), (0, 1));
+        assert_eq!(cle_privee(&a, Some(nouveau_mdp), Some(&restaure)).unwrap().secret_bytes(), attendue, "clé v2 illisible après restauration");
+        let e = cle_privee(&b, Some(nouveau_mdp), Some(&restaure)).unwrap_err().to_string();
+        assert!(e.contains("ancien format") && e.contains("Arrêtez ce mandat"), "{e}");
+        assert_eq!(std::fs::read_to_string(&b.cle).unwrap(), v1, "fichier v1 illisible : laissé tel quel");
         std::fs::remove_dir_all(&d).unwrap();
     }
 }
