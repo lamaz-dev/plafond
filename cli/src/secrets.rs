@@ -130,6 +130,65 @@ pub fn supprimer(chemin_cle_agent: &str, nom: &str) -> Res<()> {
     ecrire(&fichier, &tous)
 }
 
+pub const FORMAT_EXPORT: &str = "kaspa-agent-vault/secrets-agent/v1";
+
+/// Fichier de secrets à transmettre à un agent déjà connecté (R71). Les secrets y sont chiffrés
+/// pour l'agent (confidentialité), et l'ensemble est signé par le propriétaire (authenticité) :
+/// l'agent n'installe que ce que son propriétaire a signé, pour lui, et jamais une version plus
+/// ancienne que celle qu'il a déjà.
+#[derive(Serialize, Deserialize)]
+pub struct Export {
+    pub format: String,
+    /// JSON de la charge (`agent`, `cree_le`, `secrets`), signé tel quel.
+    pub charge: String,
+    /// Signature Schnorr du propriétaire (hexadécimal).
+    pub signature: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Charge {
+    agent: String,
+    cree_le: u64,
+    secrets: BTreeMap<String, Secret>,
+}
+
+fn condense_export(charge: &str) -> secp256k1::Message {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(FORMAT_EXPORT.as_bytes());
+    h.update([0u8]);
+    h.update(charge.as_bytes());
+    secp256k1::Message::from_digest(h.finalize().into())
+}
+
+/// Côté console : exporte les secrets (déjà chiffrés) de l'agent, signés par le propriétaire.
+pub fn exporter(proprietaire: &Keypair, agent_pub: &PublicKey, chemin_cle_agent: &str, maintenant: u64) -> Res<Export> {
+    let charge = serde_json::to_string(&Charge { agent: hex::encode(agent_pub.serialize()), cree_le: maintenant, secrets: lire(&chemin(chemin_cle_agent)) })?;
+    let signature = hex::encode(proprietaire.sign_schnorr(condense_export(&charge)).as_ref());
+    Ok(Export { format: FORMAT_EXPORT.into(), charge, signature })
+}
+
+/// Côté agent : contrôle la signature du propriétaire, le destinataire et la fraîcheur (`depuis` =
+/// date du dernier jeu de secrets installé). Renvoie les secrets (toujours chiffrés) et leur date.
+pub fn verifier_export(texte: &str, proprietaire_xonly: &str, agent_pub: &str, depuis: u64) -> Res<(serde_json::Value, usize, u64)> {
+    let refus = "fichier de secrets refusé : il n'est pas signé par le propriétaire de cet agent (exportez-le de nouveau depuis la console)";
+    let e: Export = serde_json::from_str(texte).map_err(|_| refus)?;
+    if e.format != FORMAT_EXPORT {
+        return Err(refus.into());
+    }
+    let cle = secp256k1::XOnlyPublicKey::from_slice(&hex::decode(proprietaire_xonly).map_err(|_| refus)?).map_err(|_| refus)?;
+    let signature = secp256k1::schnorr::Signature::from_slice(&hex::decode(&e.signature).map_err(|_| refus)?).map_err(|_| refus)?;
+    secp256k1::SECP256K1.verify_schnorr(&signature, &condense_export(&e.charge), &cle).map_err(|_| refus)?;
+    let c: Charge = serde_json::from_str(&e.charge).map_err(|_| refus)?;
+    if c.agent != agent_pub {
+        return Err("fichier de secrets refusé : il est destiné à un autre agent".into());
+    }
+    if c.cree_le < depuis {
+        return Err("fichier de secrets refusé : il est plus ancien que les secrets déjà installés".into());
+    }
+    Ok((serde_json::to_value(&c.secrets)?, c.secrets.len(), c.cree_le))
+}
+
 pub fn lister(chemin_cle_agent: &str) -> Vec<Apercu> {
     lire(&chemin(chemin_cle_agent)).into_iter().map(|(nom, s)| Apercu { nom, fournisseur: s.fournisseur, modifie_le: s.modifie_le }).collect()
 }

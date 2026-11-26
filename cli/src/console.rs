@@ -914,14 +914,13 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                     _ => json_rep(409, json!({ "erreur": "aucune connexion en cours pour cet agent" })),
                 },
                 // Secrets chiffrés à transmettre à un agent déjà connecté (seul l'agent sait les lire).
-                ("GET", "/api/secrets-chiffres") => match &cible {
-                    Some(a) => {
-                        let f = agents::base_fichiers(a, &defaut);
-                        let f = f.strip_suffix(".key").map(|b| format!("{b}.secrets.json")).unwrap_or(f);
-                        let contenu: Value = fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
-                        json_rep(200, json!({ "secrets": contenu, "fichier": format!("secrets-{}.json", a.id) }))
-                    }
-                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                // Signés par le propriétaire (R71) : l'agent refuse tout fichier fabriqué ou modifié en route.
+                ("GET", "/api/secrets-chiffres") => match (&cible, cible.as_ref().map(|a| agents::publique(a, &agent_principal))) {
+                    (Some(a), Some(Ok(k))) => match secrets::exporter(&owner, &k, &agents::base_fichiers(a, &defaut), double_auth::maintenant()) {
+                        Ok(e) => json_rep(200, json!({ "secrets": e, "fichier": format!("secrets-{}.json", a.id) })),
+                        Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                    },
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },
                 ("POST", "/api/renommer") => match agents::renommer(&defaut, &id, v["nom"].as_str().unwrap_or("")) {
                     Ok(()) => json_rep(200, json!({ "ok": true })),

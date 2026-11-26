@@ -264,7 +264,7 @@ fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -
         ecrire_neuf(&d.join("etat-coffre.json"), serde_json::to_string_pretty(e)?.as_bytes())?;
     }
     ecrire_neuf(&d.join("agent.secrets.json"), serde_json::to_string_pretty(&kit.secrets)?.as_bytes())?;
-    let meta = serde_json::json!({ "agent_id": kit.agent_id, "nom": kit.nom, "publique": kit.publique, "proprietaire": kit.proprietaire, "regles": kit.regles, "reseau": kit.reseau, "installe_le": crate::double_auth::maintenant() });
+    let meta = serde_json::json!({ "agent_id": kit.agent_id, "nom": kit.nom, "publique": kit.publique, "proprietaire": kit.proprietaire, "regles": kit.regles, "reseau": kit.reseau, "installe_le": crate::double_auth::maintenant(), "secrets_du": kit.cree_le });
     ecrire_neuf(&d.join("agent.json"), serde_json::to_string_pretty(&meta)?.as_bytes())?;
     if registre_actif {
         inscrire_machine(&registre, &kit.proprietaire, &kit.publique, d)?;
@@ -272,14 +272,25 @@ fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -
     Ok(kit.nom.clone())
 }
 
-/// Mise à jour des secrets côté agent (fichier de secrets chiffrés exporté par la console : il peut
-/// voyager librement, seul l'agent sait le lire).
+/// Mise à jour des secrets côté agent. Le fichier exporté par la console peut voyager librement :
+/// seul l'agent sait lire les secrets, et l'agent n'accepte que ce que SON propriétaire a signé pour
+/// lui, jamais une version plus ancienne que celle déjà installée (R71).
 pub fn maj_secrets(fichier: &str, dossier: &str) -> Res<usize> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(fichier)?)?;
-    let n = v.as_object().map(|o| o.len()).ok_or("fichier de secrets invalide")?;
-    let tmp = Path::new(dossier).join("agent.secrets.json.nouveau");
-    ecrire_neuf(&tmp, serde_json::to_string_pretty(&v)?.as_bytes())?;
-    std::fs::rename(tmp, Path::new(dossier).join("agent.secrets.json"))?;
+    let d = Path::new(dossier);
+    let mut meta: Value = serde_json::from_str(&std::fs::read_to_string(d.join("agent.json"))?)?;
+    let (secrets, n, date) = crate::secrets::verifier_export(
+        &std::fs::read_to_string(fichier)?,
+        meta["proprietaire"].as_str().unwrap_or(""),
+        meta["publique"].as_str().unwrap_or(""),
+        meta["secrets_du"].as_u64().unwrap_or(0),
+    )?;
+    let tmp = d.join("agent.secrets.json.nouveau");
+    ecrire_neuf(&tmp, serde_json::to_string_pretty(&secrets)?.as_bytes())?;
+    std::fs::rename(tmp, d.join("agent.secrets.json"))?;
+    meta["secrets_du"] = date.into();
+    let tmp = d.join("agent.json.nouveau");
+    ecrire_neuf(&tmp, serde_json::to_string_pretty(&meta)?.as_bytes())?;
+    std::fs::rename(tmp, d.join("agent.json"))?;
     Ok(n)
 }
 
@@ -319,9 +330,13 @@ mod tests {
         let agent = secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[octet; 32]).unwrap();
         let kit = Kit {
             agent_id: id.into(), nom: "Recherche".into(), cle_agent: hex::encode(agent.secret_bytes()), publique: hex::encode(agent.public_key().serialize()),
-            proprietaire: "aa".into(), regles: None, origine: None, etat: Some(serde_json::json!({ "x": 1 })), secrets: serde_json::json!({}), reseau: "testnet-10".into(), cree_le: 0,
+            proprietaire: hex::encode(proprietaire_de_test().x_only_public_key().0.serialize()), regles: None, origine: None, etat: Some(serde_json::json!({ "x": 1 })), secrets: serde_json::json!({}), reseau: "testnet-10".into(), cree_le: 1_000,
         };
         (kit, agent)
+    }
+
+    fn proprietaire_de_test() -> secp256k1::Keypair {
+        secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[0x77; 32]).unwrap()
     }
 
     fn dossier_de_test(nom: &str) -> std::path::PathBuf {
@@ -482,9 +497,61 @@ mod tests {
         // même règle pour la mise à jour des secrets
         std::fs::remove_file(dossier.join("agent.secrets.json")).unwrap();
         std::os::unix::fs::symlink(d.join("cible-3"), dossier.join("agent.secrets.json.nouveau")).unwrap();
-        std::fs::write(d.join("export.json"), "{}").unwrap();
+        let cle_console = d.join("console-ag.key").to_string_lossy().into_owned();
+        let agent_pub = secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[15; 32]).unwrap().public_key();
+        std::fs::write(d.join("export.json"), serde_json::to_string(&crate::secrets::exporter(&proprietaire_de_test(), &agent_pub, &cle_console, 2_000).unwrap()).unwrap()).unwrap();
         maj_secrets(&d.join("export.json").to_string_lossy(), &dossier.to_string_lossy()).unwrap();
         assert_eq!(std::fs::read_to_string(d.join("cible-3")).unwrap(), "fichier de la victime");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// R71 : le fichier de secrets « peut voyager librement » : il est donc à la merci de qui le
+    /// transporte. Quiconque connaît la clé publique de l'agent (elle est publique) peut fabriquer des
+    /// secrets que l'agent sait déchiffrer : sans signature du propriétaire, l'agent les installerait
+    /// (clé d'API de l'attaquant à la place de la bonne, ou retour à une ancienne clé révoquée).
+    #[test]
+    fn r71_secrets_forges_par_un_tiers_refuses() {
+        let code = "ABCDE-FGHJK-MNPQR-STUVW";
+        let d = dossier_de_test("r71");
+        let (kit, agent) = kit_de_test(16, "ag-ffffffffffff");
+        let dossier = d.join("agent").to_string_lossy().into_owned();
+        installer_demo(&sceller(&kit, code).unwrap(), code, &dossier).unwrap();
+        // l'attaquant ne connaît que la clé publique de l'agent
+        let forge = crate::secrets::chiffrer(&agent.public_key(), "OpenAI", "openai", Zeroizing::new("sk-cle-de-l-attaquant".into()), 1).unwrap();
+        let fichier = d.join("secrets-forges.json");
+        std::fs::write(&fichier, serde_json::json!({ "OpenAI": forge }).to_string()).unwrap();
+        assert!(maj_secrets(&fichier.to_string_lossy(), &dossier).is_err(), "secrets non signés par le propriétaire : refus");
+        assert!(verifier(&dossier).unwrap().is_empty(), "rien n'a été installé");
+        // le vrai export de la console, signé par le propriétaire : accepté
+        let cle_console = d.join("console-ag.key").to_string_lossy().into_owned();
+        crate::secrets::enregistrer(&cle_console, &agent.public_key(), "OpenAI", "openai", Zeroizing::new("sk-test-la-bonne".into())).unwrap();
+        let ecrire = |nom: &str, e: &crate::secrets::Export| {
+            let f = d.join(nom);
+            std::fs::write(&f, serde_json::to_string(e).unwrap()).unwrap();
+            f.to_string_lossy().into_owned()
+        };
+        let bon = crate::secrets::exporter(&proprietaire_de_test(), &agent.public_key(), &cle_console, 2_000).unwrap();
+        // … mais pas s'il est signé par un autre que le propriétaire, modifié en route, ou destiné à un autre agent
+        let intrus = secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[0x78; 32]).unwrap();
+        assert!(maj_secrets(&ecrire("intrus.json", &crate::secrets::exporter(&intrus, &agent.public_key(), &cle_console, 2_000).unwrap()), &dossier).is_err(), "signé par un autre");
+        let mut modifie = crate::secrets::exporter(&proprietaire_de_test(), &agent.public_key(), &cle_console, 2_000).unwrap();
+        modifie.charge = modifie.charge.replace("2000", "9000");
+        assert!(maj_secrets(&ecrire("modifie.json", &modifie), &dossier).is_err(), "modifié en route");
+        let (_, autre_agent) = kit_de_test(17, "ag-000000000000");
+        assert!(maj_secrets(&ecrire("autre.json", &crate::secrets::exporter(&proprietaire_de_test(), &autre_agent.public_key(), &cle_console, 2_000).unwrap()), &dossier).unwrap_err().to_string().contains("autre agent"));
+        assert!(verifier(&dossier).unwrap().is_empty(), "toujours rien d'installé");
+        assert_eq!(maj_secrets(&ecrire("bon.json", &bon), &dossier).unwrap(), 1);
+        assert_eq!(verifier(&dossier).unwrap(), vec![("OpenAI".to_string(), true)]);
+        assert_eq!(crate::secrets::lire_pour_agent(&format!("{dossier}/agent.key"), &agent, "OpenAI").unwrap().as_str(), "sk-test-la-bonne");
+        // retour en arrière : un ancien export (clé révoquée depuis) n'est plus accepté
+        crate::secrets::enregistrer(&cle_console, &agent.public_key(), "OpenAI", "openai", Zeroizing::new("sk-test-la-nouvelle".into())).unwrap();
+        let recent = crate::secrets::exporter(&proprietaire_de_test(), &agent.public_key(), &cle_console, 3_000).unwrap();
+        assert_eq!(maj_secrets(&ecrire("recent.json", &recent), &dossier).unwrap(), 1);
+        assert!(maj_secrets(&ecrire("bon.json", &bon), &dossier).unwrap_err().to_string().contains("plus ancien"));
+        assert_eq!(crate::secrets::lire_pour_agent(&format!("{dossier}/agent.key"), &agent, "OpenAI").unwrap().as_str(), "sk-test-la-nouvelle");
+        // un export antérieur à l'installation du kit est refusé lui aussi
+        let vieux = crate::secrets::exporter(&proprietaire_de_test(), &agent.public_key(), &cle_console, 999).unwrap();
+        assert!(maj_secrets(&ecrire("vieux.json", &vieux), &dossier).is_err());
         std::fs::remove_dir_all(&d).unwrap();
     }
 
