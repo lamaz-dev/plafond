@@ -459,21 +459,37 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
         }
     });
     println!("[AGENT] paiement signé depuis le coffre, envoi au vendeur");
-    match http.get(url).set("PAYMENT-SIGNATURE", &B64.encode(payload.to_string())).call() {
+    Ok(conclure(http.get(url).set("PAYMENT-SIGNATURE", &B64.encode(payload.to_string())).call(), amount, &txid))
+}
+
+/// Issue d'un achat une fois le paiement signé REMIS au vendeur (R64). À partir de là, le vendeur
+/// détient une transaction valable : quoi qu'il réponde (ou ne réponde pas), le paiement a pu
+/// partir. L'issue n'est donc jamais une erreur passagère que l'appelant pourrait rejouer : c'est
+/// soit un achat (contenu reçu), soit un refus, enregistré comme tel par le routeur sous la clé
+/// d'idempotence. Sinon une même clé pourrait payer deux fois (réponse perdue, reçu illisible).
+fn conclure(reponse: Result<ureq::Response, ureq::Error>, amount: i64, txid: &str) -> Achat {
+    let incertain = |raison: &str| {
+        println!("[AGENT] ⚠ issue incertaine après remise du paiement : {raison}");
+        Achat::refus(amount, format!("issue incertaine après remise du paiement au vendeur ({raison}) : la transaction {txid} a pu être diffusée, vérifier avant de racheter"))
+    };
+    match reponse {
         Ok(r) => {
-            let settlement: Value = serde_json::from_slice(&B64.decode(r.header("PAYMENT-RESPONSE").unwrap_or(""))?)?;
-            let content = lire_borne(r)?;
+            let statut = r.status();
+            // Reçu du vendeur : indicatif. S'il est absent ou illisible, on garde la transaction signée.
+            let recu = r.header("PAYMENT-RESPONSE").and_then(|h| B64.decode(h).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+            let Ok(content) = lire_borne(r) else { return incertain("réponse du vendeur illisible ou trop volumineuse") };
             println!("[AGENT] ✅ contenu reçu : « {content} »");
-            let tx = settlement["transaction"].as_str().unwrap_or("?").to_string();
+            let tx = recu.as_ref().and_then(|s| s["transaction"].as_str()).unwrap_or(txid).to_string();
             println!("[AGENT] reçu de paiement : transaction {tx}");
-            Ok(Achat { statut: 200, contenu: content, montant: amount, txid: Some(tx), refus: None })
+            Achat { statut, contenu: content, montant: amount, txid: Some(tx), refus: None }
         }
         Err(ureq::Error::Status(402, r)) => {
             let raison = lire_borne(r).unwrap_or_default();
             println!("[AGENT] ❌ refusé par le vendeur : {raison}");
-            Ok(Achat::refus(amount, format!("refusé par le vendeur : {raison}")))
+            Achat::refus(amount, format!("refusé par le vendeur : {raison}"))
         }
-        Err(e) => Err(format!("requête : {e}").into()),
+        Err(ureq::Error::Status(code, _)) => incertain(&format!("le vendeur a répondu {code}")),
+        Err(_) => incertain("pas de réponse du vendeur"),
     }
 }
 
@@ -566,6 +582,48 @@ mod vendeurs_malveillants {
             Err(ureq::Error::Status(c, _)) => assert_eq!(c, 302),
             Err(e) => panic!("{e}"),
         }
+    }
+    // R64 : après la remise du paiement, plus aucune issue « rejouable ».
+    const TXID: &str = "ab12";
+
+    /// Le vendeur ne répond pas, coupe la connexion ou renvoie une erreur serveur : l'achat est
+    /// rendu comme un refus (enregistré sous la clé d'idempotence), jamais comme une erreur
+    /// passagère. Le message donne la transaction signée, qui a pu partir.
+    #[test]
+    fn r64_issue_incertaine_apres_remise_du_paiement() {
+        let coupe = vendeur("", |_| {});
+        let erreur = vendeur("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n", |_| {});
+        let tronquee = vendeur("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n", |c| {
+            let _ = c.write_all(b"debut seulement");
+        });
+        for url in [coupe, erreur, tronquee] {
+            let a = conclure(client_http_delai(Duration::from_secs(5)).get(&url).call(), 123, TXID);
+            let refus = a.refus.expect("issue incertaine : refus, pas une erreur rejouable");
+            assert!(refus.contains("incertaine") && refus.contains(TXID), "{refus}");
+            assert_eq!((a.statut, a.txid, a.montant), (402, None, 123));
+        }
+    }
+
+    /// Le vendeur sert le contenu avec un reçu absent ou illisible : l'achat est compté (le
+    /// vendeur détient le paiement), avec la transaction que l'agent a signée.
+    #[test]
+    fn r64_contenu_servi_avec_un_recu_illisible() {
+        for entete in [
+            "HTTP/1.1 200 OK\r\nPAYMENT-RESPONSE: ceci-n-est-pas-du-base64!\r\nContent-Length: 7\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n",
+        ] {
+            let url = vendeur(entete, |c| {
+                let _ = c.write_all(b"contenu");
+            });
+            let a = conclure(client_http_delai(Duration::from_secs(5)).get(&url).call(), 123, TXID);
+            assert_eq!((a.statut, a.contenu.as_str(), a.txid.as_deref(), a.refus), (200, "contenu", Some(TXID), None));
+        }
+        // Refus explicite du vendeur : inchangé.
+        let url = vendeur("HTTP/1.1 402 Payment Required\r\nContent-Length: 3\r\n\r\n", |c| {
+            let _ = c.write_all(b"non");
+        });
+        let a = conclure(client_http_delai(Duration::from_secs(5)).get(&url).call(), 123, TXID);
+        assert_eq!(a.refus.as_deref(), Some("refusé par le vendeur : non"));
     }
 }
 

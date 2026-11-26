@@ -497,6 +497,37 @@ mod tests {
         }
     }
 
+    /// R64 : un achat dont l'issue est incertaine (paiement remis, réponse perdue) est rendu comme un
+    /// refus 402 ; il est gardé sous la clé d'idempotence, donc la même clé ne paie pas deux fois.
+    /// Une erreur 502 (rien n'a été remis au vendeur) n'est pas gardée : elle peut être rejouée.
+    #[test]
+    fn idempotence_garde_les_refus_pas_les_erreurs() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        use std::sync::Arc;
+        for (statut, appels_attendus) in [(402u16, 1usize), (502, 3)] {
+            let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+            let port = serveur.server_addr().to_ip().unwrap().port();
+            let appels = Arc::new(AtomicUsize::new(0));
+            let (s2, a2) = (serveur.clone(), appels.clone());
+            let boucle = std::thread::spawn(move || {
+                let mut idem = Idempotence::new();
+                servir(&s2, "Bearer cle-de-test-suffisamment-longue-0123456789", &mut idem, |_, _, _| {
+                    a2.fetch_add(1, SeqCst);
+                    (statut, json!({ "refus": "issue incertaine après remise du paiement" }))
+                });
+            });
+            for _ in 0..3 {
+                let _ = ureq::post(&format!("http://127.0.0.1:{port}/v1/fetch"))
+                    .set("Authorization", "Bearer cle-de-test-suffisamment-longue-0123456789")
+                    .set("Idempotency-Key", "meme-achat")
+                    .send_string("{}");
+            }
+            serveur.unblock();
+            boucle.join().unwrap();
+            assert_eq!(appels.load(SeqCst), appels_attendus, "statut {statut}");
+        }
+    }
+
     /// Sans la bonne clé d'API : refus, et le corps n'est même pas lu.
     #[test]
     fn mauvaise_cle_refusee_avant_tout_traitement() {
