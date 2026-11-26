@@ -1200,7 +1200,8 @@ async fn main() -> Res<()> {
             console::OUVRIR_NAVIGATEUR.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let h = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || console::lancer_compte(h, dossier).map_err(|e| e.to_string())).await??;
+        let essai = console::mode_essai(&dossier);
+        tokio::task::spawn_blocking(move || if essai { console::lancer_essai(h, dossier) } else { console::lancer_compte(h, dossier) }.map_err(|e| e.to_string())).await??;
         return Ok(());
     }
     if cmd == "cle-creer" || cmd == "cle-info" {

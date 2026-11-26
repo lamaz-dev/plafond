@@ -358,6 +358,107 @@ pub static OUVRIR_NAVIGATEUR: std::sync::atomic::AtomicBool = std::sync::atomic:
 /// trésorerie. Sa clé est sur le même ordinateur : elle sert à essayer, pas à se protéger.
 pub static RETOUR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Mode essai (interface d'essai, réseau de test) : compte créé sans mot de passe, dossier du compte.
+/// Le fichier `essai.json` garde la source de la clé en clair : des TKAS sans valeur, rien d'autre.
+pub static ESSAI: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn chemin_essai(dossier: &str) -> std::path::PathBuf {
+    std::path::Path::new(dossier).join("essai.json")
+}
+
+fn est_essai() -> bool {
+    ESSAI.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
+/// Coffret du mode essai : relu, ou créé et écrit en clair (lisible par le seul utilisateur).
+fn coffret_essai(dossier: &str) -> Res<cle::Coffret> {
+    let chemin = chemin_essai(dossier);
+    if let Ok(t) = fs::read_to_string(&chemin) {
+        let v: Value = serde_json::from_str(&t)?;
+        let e = hex::decode(v["entropie"].as_str().ok_or("essai.json illisible")?)?;
+        return Ok(cle::Coffret { entropie: zeroize::Zeroizing::new(e), totp: None });
+    }
+    let c = cle::nouveau_coffret()?;
+    let contenu = json!({
+        "avertissement": "Mode essai (réseau de test) : clé NON protégée par un mot de passe. Fonds sans valeur uniquement. Pour la protéger : Paramètres > Sécurité > Protéger ce compte.",
+        "entropie": hex::encode(&*c.entropie),
+    });
+    crate::prive::ecrire(&chemin, serde_json::to_string_pretty(&contenu)?.as_bytes())?;
+    journal(json!({ "compte": "créé en mode essai (sans mot de passe)" }));
+    Ok(c)
+}
+
+/// Faut-il ouvrir le mode essai ? Oui s'il existe déjà, ou s'il n'y a encore aucun compte (premier
+/// lancement), sauf si `PLAFOND_PROTEGE` demande le parcours avec mot de passe.
+pub fn mode_essai(dossier: &str) -> bool {
+    if chemin_essai(dossier).exists() {
+        return true;
+    }
+    !std::path::Path::new(&fichiers_compte(dossier).cle).exists() && std::env::var("PLAFOND_PROTEGE").is_err()
+}
+
+/// Interface d'essai : la console s'ouvre tout de suite, sans écran de mot de passe. Clé du
+/// propriétaire depuis `essai.json`, clés d'agent chiffrées par elle (comme un compte protégé),
+/// portefeuille de retour de test. « Protéger ce compte » passe ensuite au parcours complet.
+pub fn lancer_essai(handle: Handle, dossier: String) -> Res<()> {
+    fs::create_dir_all(&dossier)?;
+    let fichiers = fichiers_compte(&dossier);
+    *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(fichiers.etat.clone());
+    let owner = cle::cle_du_coffret(&coffret_essai(&dossier)?)?;
+    let enveloppe = cle::Enveloppe::du_proprietaire(&owner);
+    let chemin = fichiers.agent.as_str();
+    let agent: agents::Principal = match agents::lire_cle_stockee(chemin)? {
+        Some(agents::CleStockee::Chiffree(f)) => enveloppe.dechiffrer(&f)?.into(),
+        Some(agents::CleStockee::Claire(k)) => {
+            agents::ecrire_cle(std::path::Path::new(chemin), &k, Some(&enveloppe))?;
+            k.into()
+        }
+        None => {
+            let k = cle::nouvelle()?;
+            agents::ecrire_cle(std::path::Path::new(chemin), &k, Some(&enveloppe))?;
+            k.into()
+        }
+    };
+    let retour = portefeuille_retour_test(&dossier, &enveloppe)?;
+    *RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(retour.clone());
+    *ESSAI.lock().unwrap_or_else(|e| e.into_inner()) = Some(dossier.clone());
+    println!("Mode essai (réseau de test) : pas de mot de passe. Trésorerie : {}", address(&owner));
+    println!("Adresse de retour de test : {retour}");
+    let session = std::sync::Arc::new(Session::nouvelle()?);
+    let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
+    annoncer_lien("Plafond", &session)?;
+    servir(&serveur, &session, handle, owner, agent, None, Some(enveloppe));
+    Ok(())
+}
+
+/// « Protéger ce compte » : la même phrase (donc les mêmes adresses et les mêmes clés d'agent) est
+/// chiffrée par un mot de passe dans `proprietaire.json`, puis `essai.json` est effacé. Au prochain
+/// lancement, la console demande le mot de passe et propose de sauvegarder les 24 mots.
+fn proteger_essai(mot_de_passe: &str) -> Res<()> {
+    let dossier = ESSAI.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("ce compte n'est pas en mode essai")?;
+    let fichiers = fichiers_compte(&dossier);
+    if std::path::Path::new(&fichiers.cle).exists() {
+        return Err("un compte protégé existe déjà dans ce dossier".into());
+    }
+    let c = coffret_essai(&dossier)?;
+    let f = cle::chiffrer_coffret(&c, mot_de_passe)?;
+    cle::ecrire(&fichiers.cle, &f)?;
+    // relu et vérifié avant d'effacer la version en clair
+    if cle::cle_du_coffret(&c)?.secret_bytes() != cle::dechiffrer(&cle::lire(&fichiers.cle)?, mot_de_passe)?.secret_bytes() {
+        let _ = fs::remove_file(&fichiers.cle);
+        return Err("vérification du fichier protégé impossible : mode essai conservé".into());
+    }
+    ecrire_compte(&fichiers.cle, &Compte::default())?;
+    let chemin = chemin_essai(&dossier);
+    if let Ok(n) = fs::metadata(&chemin).map(|m| m.len() as usize) {
+        let _ = fs::write(&chemin, vec![0u8; n]);
+    }
+    fs::remove_file(&chemin)?;
+    *ESSAI.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    journal(json!({ "compte": "protégé par un mot de passe (fin du mode essai)" }));
+    Ok(())
+}
+
 /// Portefeuille de retour de test du compte (`retour-test.key`, chiffré comme les clés d'agent) :
 /// créé au premier lancement, relu ensuite. Seule son adresse sert à la console.
 fn portefeuille_retour_test(dossier: &str, enveloppe: &cle::Enveloppe) -> Res<String> {
@@ -1041,7 +1142,7 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     json_rep(200, json!({
                         "agents": vus, "solde_proprietaire_sompi": solde, "adresse_proprietaire": address(&owner).to_string(), "adresse_retour_test": RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()).clone(),
                         "risque": crate::risque::rapport(&couloirs, &[], instant, crate::JOUR_DAA), "cours": c, "tarif_reference_sompi": tarif_reference(),
-                        "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
+                        "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "essai": est_essai(), "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))
                 }
                 ("GET", "/api/evenements") => json_rep(200, json!({ "evenements": agents::evenements(&defaut, 30) })),
@@ -1278,7 +1379,23 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         Some(Err(e)) => json!({ "mode": "erreur", "detail": e.to_string() }),
                         None => json!({ "mode": "cles_de_test" }),
                     };
-                    json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "chiffrement": chiffrement, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth, "chemin_derivation": cle::CHEMIN_DERIVATION, "reseau": "testnet-10" }))
+                    json_rep(200, json!({ "adresse": adresse, "qr": qr(&adresse), "chiffrement": chiffrement, "essai": est_essai(), "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth, "chemin_derivation": cle::CHEMIN_DERIVATION, "reseau": "testnet-10" }))
+                }
+                ("POST", "/api/compte/proteger") => {
+                    let mdp = zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string());
+                    let conf = zeroize::Zeroizing::new(v["confirmation"].as_str().unwrap_or("").to_string());
+                    if !est_essai() {
+                        json_rep(409, json!({ "erreur": "ce compte est déjà protégé" }))
+                    } else if mdp.chars().count() < 12 {
+                        json_rep(400, json!({ "erreur": "mot de passe trop court (12 caractères minimum)" }))
+                    } else if *mdp != *conf {
+                        json_rep(400, json!({ "erreur": "les deux mots de passe diffèrent" }))
+                    } else {
+                        match proteger_essai(&mdp) {
+                            Ok(()) => json_rep(200, json!({ "protege": true })),
+                            Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                        }
+                    }
                 }
                 // Phrase de récupération : mot de passe + code si la double authentification est active.
                 ("POST", "/api/recuperation") => match garde.ouvrir(cle_ch, &owner, &v, true) {
@@ -1408,6 +1525,27 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_essai_puis_protege_garde_la_meme_cle() {
+        let _v = VERROU_ETAT.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("plafond-essai-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let dossier = d.to_string_lossy().into_owned();
+        assert!(mode_essai(&dossier), "premier lancement : mode essai");
+        let owner = cle::cle_du_coffret(&coffret_essai(&dossier).unwrap()).unwrap();
+        assert_eq!(cle::cle_du_coffret(&coffret_essai(&dossier).unwrap()).unwrap().secret_bytes(), owner.secret_bytes(), "relu, pas recréé");
+        *ESSAI.lock().unwrap() = Some(dossier.clone());
+        let mdp = "un mot de passe assez long";
+        proteger_essai(mdp).unwrap();
+        assert!(!chemin_essai(&dossier).exists(), "la version en clair est effacée");
+        assert!(!mode_essai(&dossier), "ensuite : parcours avec mot de passe");
+        assert!(!est_essai());
+        let rouvert = cle::dechiffrer(&cle::lire(&fichiers_compte(&dossier).cle).unwrap(), mdp).unwrap();
+        assert_eq!(rouvert.secret_bytes(), owner.secret_bytes(), "mêmes adresses, mêmes clés d'agent");
+        let _ = fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn portefeuille_de_retour_de_test_cree_une_fois_et_chiffre() {

@@ -65,7 +65,8 @@ le bandeau.
 
 1. Lancez `Plafond.bat` (ou `./plafond.sh`) : la console s'ouvre dans votre navigateur. Laissez la fenêtre du
    terminal ouverte, c'est elle qui fait tourner la console.
-2. Créez votre compte. En haut de la page s'affichent tout de suite vos **deux adresses** :
+2. Pas de mot de passe : au premier lancement, la console s'ouvre en **mode essai** (clés de test non protégées,
+   réseau de test uniquement). En haut de la page s'affichent tout de suite vos **deux adresses** :
    - l'**adresse principale** (votre trésorerie) ;
    - une **adresse de retour de test** : un second portefeuille créé avec le compte (`compte/retour-test.key`,
      chiffré). Elle est proposée pour chaque nouveau mandat ; le gel y envoie l'argent.
@@ -73,6 +74,10 @@ le bandeau.
    demandez des TKAS. Le solde s'affiche dès leur arrivée.
 4. Créez un mandat (l'adresse de retour est déjà remplie), puis arrêtez-le : vérifiez sur l'explorateur que
    l'argent part vers l'adresse de retour, pas vers votre trésorerie.
+
+Pour essayer le parcours complet (mot de passe, 24 mots, double authentification) : Paramètres > Sécurité >
+« Protéger ce compte ». Les adresses, les fonds et les mandats restent les mêmes. Pour démarrer directement avec un
+mot de passe : `set PLAFOND_PROTEGE=1` (ou `PLAFOND_PROTEGE=1 ./plafond.sh`) avant le premier lancement.
 
 L'adresse de retour de test est sur le même ordinateur que votre clé : elle sert à essayer, pas à se protéger. En vrai,
 mettez l'adresse d'un Ledger, d'une multisignature ou d'un conservateur.

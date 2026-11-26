@@ -66,7 +66,8 @@ Back up your recovery phrase from the banner as soon as the account is created.
 
 1. Run `Plafond.bat` (or `./plafond.sh`): the console opens in your browser. Keep the terminal window open; it runs
    the console.
-2. Create your account. Your **two addresses** show at the top of the page right away:
+2. No password: on first launch the console opens in **trial mode** (unprotected test keys, test network only).
+   Your **two addresses** show at the top of the page right away:
    - the **main address** (your treasury);
    - a **test return address**: a second wallet created with the account (`compte/retour-test.key`, encrypted). It
      is suggested for every new mandate; freezing sends the money there.
@@ -74,6 +75,10 @@ Back up your recovery phrase from the banner as soon as the account is created.
    shows as soon as they arrive.
 4. Create a mandate (the return address is already filled in), then stop it: check on the explorer that the money
    goes to the return address, not to your treasury.
+
+To try the full flow (password, 24 words, two-factor authentication): Settings > Security > "Protect this
+account". Addresses, funds and mandates stay the same. To start with a password right away: `set PLAFOND_PROTEGE=1`
+(or `PLAFOND_PROTEGE=1 ./plafond.sh`) before the first launch.
 
 The test return address lives on the same computer as your key: it is for trying things out, not for protection. For
 real use, set the address of a Ledger, a multisig or a custodian.
