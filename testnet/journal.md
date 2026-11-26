@@ -1285,3 +1285,46 @@ VERDICT : ÉCHEC
 (code de sortie 1)
 
 ```
+
+## 2026-11-26 17:12 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.7) : 5 TKAS en 4 pièce(s) à l'adresse kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90
+Adresse de retour (gel, retrait) : kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+Transaction : https://tn10.kaspa.stream/transactions/eff8712b8a0bee496661670377f105eb10c766099fe9cc0d4d17da4a44375eb0
+
+$ vault-cli pause 240
+(pause de 240 s)
+
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Porte-monnaie du relais : kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4 (9399999 sompi)
+Diagnostic /health : HTTP 200
+  {"ok":true,"enabled":true,"gateway":"kaspa-x402-testnet","releaseVersion":"1.0.1","hostedExactSettlementEnabled":true,"exactProfile":"standard-native","chainBroadcastMode":"pnn","chainEvidenceSource":"pnn","chainTrustMode":"trusted-single-source","chainEvidenceAuthorities":1}
+Diagnostic /canary : HTTP 200
+  {"ok":true,"enabled":true,"exactHeads":{"total":0,"available":0,"claimed":0,"unavailable":0,"retired":0},"canary":{"checkedAt":"2026-11-26T17:15:45.077Z","trigger":"scheduled","ok":true,"checks":[{"name":"kaspa-chain","status":"ok","detail":"PNN chain health returned testnet-10 evidence","evidence":{"ok":true,"networkId":"testnet-10","endpoint":"wss://vector-10.kaspa.green","virtualDaaScore":"633775894"}},{"name":"schema-url","status":"ok","detail":"payment-required schema resolved","evidence":{
+Diagnostic /exact : HTTP 402 (offre 402 : {"accepts":[{"amount":"20000000","asset":"KAS","extra":{"binding":"kaspa-exact-v2","finality":"accepted","payToScriptPublicKey":"000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac","paymentFlow":"upfront","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2)
+GET https://demo.kaspa-x402.org/exact
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Error: "budget pas encore disponible : prochain paiement de ce montant possible dans 2775 s"
+Échec : vault-cli recharger-porte-monnaie : Error: "budget pas encore disponible : prochain paiement de ce montant possible dans 2775 s"
+VERDICT : ÉCHEC
+(code de sortie 1)
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+4 pièce(s) rapatriée(s) vers kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz : 4.98358 TKAS, https://tn10.kaspa.stream/transactions/0be1be41754dcb06dc2cd7e44d1b18eaa800fb421d95e790f99012a5b96454d7
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633777283
+Solde du propriétaire : 988.83432 TKAS (14 UTXO)
+Coffre : pas encore déployé
+
+```
