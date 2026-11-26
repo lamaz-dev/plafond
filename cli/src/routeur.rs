@@ -595,6 +595,40 @@ mod tests {
         assert_eq!(url_journal(&format!("https://api.exemple.org/v1?cle={secret}")), "https://api.exemple.org/v1");
     }
 
+    /// Appeler le routeur sans sa clé : aucune variante ne passe (clé absente, autre schéma, casse,
+    /// préfixe, clé dans l'URL ou dans le corps), sur aucun point d'entrée, et le refus ne dit rien.
+    #[test]
+    fn routeur_ferme_sans_la_cle_exacte() {
+        use std::sync::Arc;
+        let cle = "bonne-cle-de-test-0123456789abcdef";
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let s2 = serveur.clone();
+        let boucle = std::thread::spawn(move || {
+            let mut idem = Idempotence::new();
+            servir(&s2, "Bearer bonne-cle-de-test-0123456789abcdef", &mut idem, |_, _, _| panic!("ne doit jamais être appelé"));
+        });
+        let base = format!("http://127.0.0.1:{port}");
+        let refuse = |r: Result<ureq::Response, ureq::Error>, quoi: &str| match r {
+            Err(ureq::Error::Status(401, r)) => {
+                let corps = r.into_string().unwrap();
+                assert!(!corps.contains(cle) && !corps.contains("bonne-cle"), "{quoi} : le refus ne cite pas la clé");
+            }
+            autre => panic!("{quoi} : 401 attendu, obtenu {autre:?}"),
+        };
+        for chemin in ["/v1/coffre", "/v1/fetch", "/v1/demo/agent-compromis", "/"] {
+            refuse(ureq::get(&format!("{base}{chemin}")).call(), "sans clé");
+            refuse(ureq::post(&format!("{base}{chemin}")).send_string("{}"), "sans clé");
+        }
+        for entete in [cle.to_string(), format!("bearer {cle}"), format!("Bearer  {cle}"), format!("Bearer {}", &cle[..cle.len() - 1]), format!("Bearer {cle}x"), format!("Basic {cle}"), "Bearer ".to_string(), format!("Bearer {}", cle.to_uppercase())] {
+            refuse(ureq::post(&format!("{base}/v1/fetch")).set("Authorization", &entete).send_string("{}"), &entete);
+        }
+        refuse(ureq::post(&format!("{base}/v1/fetch?cle={cle}&Authorization=Bearer%20{cle}")).send_string(&json!({ "cle": cle, "Authorization": format!("Bearer {cle}") }).to_string()), "clé dans l'URL ou le corps");
+        refuse(ureq::post(&format!("{base}/v1/fetch")).set("X-Authorization", &format!("Bearer {cle}")).set("Idempotency-Key", "deja-vue").send_string("{}"), "autre en-tête");
+        serveur.unblock();
+        boucle.join().unwrap();
+    }
+
     #[test]
     fn politique_hors_demo() {
         let pol = Politique { origines: vec!["https://api.exemple.org".into()], max_requete: 10, demo: false };

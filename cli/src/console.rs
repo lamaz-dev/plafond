@@ -1362,6 +1362,154 @@ mod tests {
         let _ = std::fs::remove_file(ch);
     }
 
+    /// Chaîne complète côté mandataire, par la console réelle (HTTP) : créer un secret, préparer le
+    /// kit, l'installer côté agent, confirmer, transmettre de nouveaux secrets. À chaque étape : ni la
+    /// clé privée de l'agent, ni la valeur d'un secret, ni le mot de passe, ni le code de connexion
+    /// n'apparaissent dans une réponse où ils n'ont rien à faire, ni dans le journal de la console.
+    #[test]
+    fn chaine_complete_sans_fuite_de_cle_ni_de_secret() {
+        let mdp = "le bon mot de passe";
+        let d = std::env::temp_dir().join(format!("console-chaine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let defaut = d.join("etat-coffre.json").to_string_lossy().into_owned();
+        let a = agents::nouveau(&defaut, "Recherche", None).unwrap();
+        let cle_agent = std::fs::read_to_string(&a.cle).unwrap();
+        *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(defaut.clone());
+        let (base, serveur, fil, _, secret_2fa, ch) = console_avec_cle("chaine", true);
+        let code_2fa = |decalage: u64| format!("{:06}", double_auth::code(&secret_2fa, double_auth::maintenant() / 30 + decalage));
+        let lire = |chemin: &str| -> (u16, String) {
+            match ureq::get(&format!("{base}{chemin}")).set("X-Jeton", "jeton-de-test").call() {
+                Ok(r) => (r.status(), r.into_string().unwrap()),
+                Err(ureq::Error::Status(c, r)) => (c, r.into_string().unwrap()),
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let mut reponses = String::new(); // tout ce que la console a répondu, hors le kit lui-même
+        // 1. un secret : écriture seule
+        let valeur = "sk-test-VALEUR-SECRETE-0123456789";
+        let (statut, r) = poster(&base, "/api/secrets", json!({ "agent": a.id, "nom": "OpenAI", "fournisseur": "openai", "valeur": valeur }));
+        assert_eq!(statut, 200, "{r}");
+        reponses += &r.to_string();
+        let (_, liste) = lire(&format!("/api/secrets?agent={}", a.id));
+        assert!(liste.contains("OpenAI") && liste.contains("openai"));
+        reponses += &liste;
+        // 2. le kit : refusé sans identification, puis remis avec son code
+        assert_eq!(poster(&base, "/api/connecter/preparer", json!({ "agent": a.id })).0, 403);
+        assert_eq!(poster(&base, "/api/connecter/confirmer", json!({ "agent": a.id, "confirmation": "CONNECTER" })).0, 409, "rien à confirmer sans kit préparé");
+        let (statut, r) = poster(&base, "/api/connecter/preparer", json!({ "agent": a.id, "mot_de_passe": mdp, "code": code_2fa(0) }));
+        assert_eq!(statut, 200, "{r}");
+        let code_connexion = r["code"].as_str().unwrap().to_string();
+        let kit: connexion::Scelle = serde_json::from_value(r["kit"].clone()).unwrap();
+        assert!(!r["kit"].to_string().contains(cle_agent.trim()) && !r["kit"].to_string().contains(&code_connexion), "kit scellé : ni clé ni code en clair");
+        // 3. côté agent : installation avec le code ; un mauvais code ne donne rien
+        let dossier = d.join("serveur-agent").to_string_lossy().into_owned();
+        assert!(connexion::installer_demo(&kit, "AAAAA-AAAAA-AAAAA-AAAAA", &dossier).is_err());
+        connexion::installer_demo(&kit, &code_connexion, &dossier).unwrap();
+        assert_eq!(connexion::verifier(&dossier).unwrap(), vec![("OpenAI".to_string(), true)]);
+        // 4. confirmation : la console efface sa copie de la clé et ne peut plus préparer de kit
+        assert!(std::path::Path::new(&a.cle).exists(), "la console garde la clé tant que la remise n'est pas confirmée");
+        let (statut, r) = poster(&base, "/api/connecter/confirmer", json!({ "agent": a.id, "confirmation": "CONNECTER" }));
+        assert_eq!(statut, 200, "{r}");
+        reponses += &r.to_string();
+        assert!(!std::path::Path::new(&a.cle).exists(), "copie de la console effacée");
+        let (statut, r) = poster(&base, "/api/connecter/preparer", json!({ "agent": a.id, "mot_de_passe": mdp, "code": code_2fa(1) }));
+        assert_eq!(statut, 409, "agent connecté : plus de kit ({r})");
+        reponses += &r.to_string();
+        // 5. nouveaux secrets pour l'agent connecté : export signé, accepté par l'agent
+        let valeur2 = "sk-test-SECONDE-VALEUR-9876543210";
+        assert_eq!(poster(&base, "/api/secrets", json!({ "agent": a.id, "nom": "Stripe", "fournisseur": "stripe", "valeur": valeur2 })).0, 200);
+        let (statut, export) = lire(&format!("/api/secrets-chiffres?agent={}", a.id));
+        assert_eq!(statut, 200);
+        reponses += &export;
+        let export: Value = serde_json::from_str(&export).unwrap();
+        let fichier = d.join("secrets-export.json");
+        std::fs::write(&fichier, export["secrets"].to_string()).unwrap();
+        assert_eq!(connexion::maj_secrets(&fichier.to_string_lossy(), &dossier).unwrap(), 2);
+        assert_eq!(connexion::verifier(&dossier).unwrap().len(), 2);
+        // un agent ne lit pas les secrets d'un autre : même fichier, autre clé
+        let autre = Keypair::from_seckey_slice(secp256k1::SECP256K1, &[9; 32]).unwrap();
+        assert!(secrets::lire_pour_agent(&format!("{dossier}/agent.key"), &autre, "Stripe").is_err());
+        reponses += &lire("/api/evenements").1;
+        reponses += &lire("/api/securite").1;
+        serveur.unblock();
+        fil.join().unwrap();
+        *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        // aucune fuite : réponses, journal de la console, fichiers restés côté console
+        let journal_console = std::fs::read_to_string("console-journal.jsonl").unwrap_or_default();
+        let mut cote_console = String::new();
+        for f in [d.join("agents.json"), d.join("agents").join(format!("{}.secrets.json", a.id)), d.join("evenements.jsonl")] {
+            cote_console += &std::fs::read_to_string(f).unwrap_or_default();
+        }
+        for (quoi, interdit) in [("clé privée de l'agent", cle_agent.trim()), ("valeur du secret", valeur), ("valeur du second secret", valeur2), ("mot de passe", mdp), ("code de connexion", code_connexion.as_str())] {
+            assert!(!reponses.contains(interdit), "{quoi} dans une réponse de la console");
+            assert!(!journal_console.contains(interdit), "{quoi} dans le journal de la console");
+            assert!(!cote_console.contains(interdit), "{quoi} dans un fichier de la console");
+        }
+        assert!(journal_console.contains(&a.id), "les actions sont bien journalisées");
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_file(ch);
+    }
+
+    /// Page web malveillante ouverte dans le navigateur du propriétaire : elle ne connaît pas le jeton
+    /// (jamais envoyé au serveur dans une URL, jamais accepté ailleurs que dans l'en-tête X-Jeton), ne
+    /// peut pas se faire passer pour la console (Host, Origin), et la console ne lui ouvre aucun accès
+    /// entre origines (aucun en-tête CORS, pas d'affichage en cadre).
+    #[test]
+    fn page_malveillante_sans_prise_sur_la_console() {
+        use std::sync::Arc;
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let (s2, h) = (serveur.clone(), rt.handle().clone());
+        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let fil = std::thread::spawn(move || servir(&s2, "jeton-de-test", h, k(1), k(2), None));
+        let base = format!("http://127.0.0.1:{port}");
+        let statut = |r: Result<ureq::Response, ureq::Error>| match r {
+            Ok(r) => r.status(),
+            Err(ureq::Error::Status(c, _)) => c,
+            Err(e) => panic!("{e}"),
+        };
+        let geler = "{\"confirmation\":\"GELER\"}";
+        // jeton ailleurs que dans l'en-tête : paramètre d'URL, cookie, Authorization : refusé
+        assert_eq!(statut(ureq::get(&format!("{base}/api/securite?jeton=jeton-de-test&X-Jeton=jeton-de-test")).call()), 401);
+        assert_eq!(statut(ureq::get(&format!("{base}/api/securite")).set("Cookie", "jeton=jeton-de-test; X-Jeton=jeton-de-test").call()), 401);
+        assert_eq!(statut(ureq::get(&format!("{base}/api/securite")).set("Authorization", "Bearer jeton-de-test").call()), 401);
+        // jeton presque juste (préfixe, suffixe, casse) : refusé
+        for j in ["jeton-de-tes", "jeton-de-testX", "x jeton-de-test", "JETON-DE-TEST", ""] {
+            assert_eq!(statut(ureq::get(&format!("{base}/api/securite")).set("X-Jeton", j).call()), 401, "« {j} »");
+        }
+        // origines qui ne sont pas la console, même avec le bon jeton : action refusée
+        for origine in ["null", "http://attaquant.example", &format!("http://127.0.0.1:{}", port + 1), &format!("https://127.0.0.1:{port}"), &format!("http://127.0.0.1:{port}.attaquant.example"), &format!("http://localhost.attaquant.example:{port}")] {
+            assert_eq!(statut(ureq::post(&format!("{base}/api/geler")).set("X-Jeton", "jeton-de-test").set("Origin", origine).send_string(geler)), 403, "origine {origine}");
+        }
+        // noms d'hôte qui ne sont pas la console (DNS rebinding) : refusés avant tout, page comprise
+        for hote in ["attaquant.example", &format!("attaquant.example:{port}"), &format!("127.0.0.1.attaquant.example:{port}"), "127.0.0.1", &format!("[::1]:{port}"), &format!("0.0.0.0:{port}")] {
+            assert_eq!(statut(ureq::get(&format!("{base}/")).set("Host", hote).call()), 421, "hôte {hote}");
+            assert_eq!(statut(ureq::get(&format!("{base}/api/securite")).set("Host", hote).set("X-Jeton", "jeton-de-test").call()), 421, "hôte {hote}");
+        }
+        // aucune ouverture entre origines : pas d'en-tête CORS, pré-vérification sans effet, pas de cadre
+        let r = ureq::get(&format!("{base}/api/securite")).set("X-Jeton", "jeton-de-test").set("Origin", "http://attaquant.example").call().unwrap();
+        assert!(r.headers_names().iter().all(|n| !n.to_ascii_lowercase().starts_with("access-control-")), "aucun en-tête CORS");
+        assert_eq!(r.header("X-Frame-Options"), Some("DENY"));
+        assert_eq!(r.header("Cache-Control"), Some("no-store"));
+        let r = ureq::request("OPTIONS", &format!("{base}/api/geler")).set("Origin", "http://attaquant.example").set("Access-Control-Request-Method", "POST").set("Access-Control-Request-Headers", "x-jeton").call();
+        match r {
+            Ok(r) => panic!("pré-vérification acceptée : {}", r.status()),
+            Err(ureq::Error::Status(c, r)) => {
+                assert_eq!(c, 401);
+                assert!(r.header("Access-Control-Allow-Origin").is_none() && r.header("Access-Control-Allow-Headers").is_none());
+            }
+            Err(e) => panic!("{e}"),
+        }
+        // la page elle-même ne contient pas le jeton et interdit tout chargement extérieur
+        let page = ureq::get(&format!("{base}/")).call().unwrap();
+        assert!(page.header("Content-Security-Policy").is_some_and(|c| c.contains("default-src 'none'") && c.contains("frame-ancestors 'none'") && c.contains("connect-src 'self'")));
+        assert!(!page.into_string().unwrap().contains("jeton-de-test"));
+        serveur.unblock();
+        fil.join().unwrap();
+    }
+
     /// R66 : la confirmation de sauvegarde (mot de passe seul) ne doit pas servir d'oracle pour
     /// deviner la phrase mot par mot : trois positions DISTINCTES exigées, échecs comptés.
     #[test]
