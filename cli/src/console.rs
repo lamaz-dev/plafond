@@ -166,9 +166,10 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let v = crate::coffre::vue(&c, &pk, &crate::agent_pk(agent)).await;
     let solde_proprio: Res<u64> = async { Ok(c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum()) }.await;
     liberer(&c).await?;
-    let (v, solde_proprio) = (v?, solde_proprio?);
+    let (mut v, solde_proprio) = (v?, solde_proprio?);
     if crate::coffre::suivre(&mut etat, &v.pieces, v.now) {
         crate::coffre::memoriser(&etat);
+        v.etat = Some(etat.clone()); // la courbe affichée part des dates recalées (R57)
     }
     let solde = v.solde();
     let apports = v.apports();

@@ -52,13 +52,36 @@ fn cle(p: &Piece) -> String {
     format!("{}:{}", p.outpoint.transaction_id, p.outpoint.index)
 }
 
+/// R57 : la date d'un apport est notée avant l'envoi (score virtuel lu sur le nœud). Si la pièce
+/// est en réalité inscrite à un score plus petit (mineur en retard sur notre nœud, réorganisation),
+/// son âge court depuis plus tôt que la courbe affichée. On recale donc l'apport sur l'inscription
+/// lue sur le nœud, uniquement vers le passé : la courbe promise ne peut que s'élargir, jamais se
+/// resserrer à tort. Renvoie vrai si une date a changé.
+pub fn recaler_apports(e: &mut EtatCoeur, pieces: &[Piece]) -> bool {
+    let mut change = false;
+    for p in pieces {
+        let Some(inscrit) = p.creation else { continue };
+        let txid = p.outpoint.transaction_id.to_string();
+        for a in e.apports.iter_mut().filter(|a| a.txid == txid && a.daa > inscrit) {
+            a.daa = inscrit;
+            change = true;
+        }
+    }
+    if let Some(premier) = e.apports.iter().map(|a| a.daa).min().filter(|d| *d < e.cree_daa) {
+        e.cree_daa = premier;
+        change = true;
+    }
+    change
+}
+
 /// Compare les pièces lues aux pièces vues la dernière fois et enregistre les achats.
 /// Une pièce nouvelle qui n'est pas un apport du propriétaire est une continuation ; la dépense est
 /// ce qui a disparu moins ce qui est réapparu. Renvoie vrai si l'état a changé.
 pub fn suivre(e: &mut EtatCoeur, pieces: &[Piece], now: u64) -> bool {
+    let recale = recaler_apports(e, pieces);
     let actuelles: Vec<(String, u64)> = pieces.iter().filter(|p| p.creation.is_some()).map(|p| (cle(p), p.valeur)).collect();
     if actuelles == e.vues {
-        return false;
+        return recale;
     }
     if !e.vues.is_empty() {
         let apports: std::collections::HashSet<&str> = e.apports.iter().map(|a| a.txid.as_str()).collect();
@@ -316,27 +339,85 @@ pub fn tx_gel(art: &SilAbiArtifact, lot: &[Piece], owner: &Keypair, frais: u64) 
     Ok((tx, entries))
 }
 
+/// Durée (unités DAA, ≈ 10 s) pendant laquelle l'adresse du coffre doit rester vide avant que le
+/// gel soit annoncé terminé (R58). Les blocs parallèles peuvent être réordonnés pendant quelques
+/// secondes : un paiement de l'agent placé dans un bloc concurrent peut finalement passer avant le
+/// gel et laisser une continuation dans le coffre.
+pub const GEL_STABLE: u64 = 100;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum EtatGel {
+    /// Des pièces utilisables sont dans le coffre : il faut les rapatrier.
+    ARapatrier,
+    /// Rien à rapatrier pour l'instant, mais ce n'est pas encore sûr (continuation non confirmée,
+    /// ou adresse vide depuis trop peu de temps).
+    EnAttente,
+    /// L'adresse est restée vide pendant `GEL_STABLE` : le gel est terminé.
+    Stable,
+}
+
+/// Décide quand un gel est vraiment terminé, à partir des lectures successives du nœud.
+#[derive(Default, Debug)]
+pub struct SuiviGel {
+    vide_depuis: Option<u64>,
+}
+
+impl SuiviGel {
+    pub fn observer(&mut self, pieces: &[Piece], now: u64) -> EtatGel {
+        if !lots(pieces).is_empty() {
+            self.vide_depuis = None;
+            return EtatGel::ARapatrier;
+        }
+        if pieces.iter().any(|p| p.creation.is_none() && p.valeur >= coeur_plancher()) {
+            self.vide_depuis = None;
+            return EtatGel::EnAttente;
+        }
+        match self.vide_depuis {
+            // Première lecture vide, ou horloge qui recule (réorganisation) : le compte repart.
+            None => self.vide_depuis = Some(now),
+            Some(d) if now < d => self.vide_depuis = Some(now),
+            Some(d) if now - d >= GEL_STABLE => return EtatGel::Stable,
+            Some(_) => {}
+        }
+        EtatGel::EnAttente
+    }
+}
+
 /// Gel prioritaire : le propriétaire rapatrie TOUTES les pièces de l'adresse (`ownerControl`).
 /// Un paiement de l'agent en attente sur une pièce est remplacé (frais plus élevés) ; s'il passe
-/// quand même, sa continuation est une nouvelle pièce, rapatriée au tour suivant.
+/// quand même, sa continuation est une nouvelle pièce, rapatriée au tour suivant. Le gel n'est
+/// annoncé terminé qu'une fois l'adresse restée vide pendant `GEL_STABLE` (R58).
 pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
     let coeur = coeur_de(&xonly(owner), &agent_pk(agent));
     let art = coeur.artifact()?;
     let c = connect().await?;
     let proprio = address(owner);
     let mut ids = vec![];
-    for tentative in 1..=8u64 {
+    let mut suivi = SuiviGel::default();
+    let mut tentative = 0u64;
+    let mut stable = false;
+    let debut = std::time::Instant::now();
+    while tentative < 8 && debut.elapsed().as_secs() < 600 {
         let ps = pieces(&c, &art).await?;
-        let lots = lots(&ps);
-        if lots.is_empty() {
-            // Plus rien d'utilisable ; une continuation encore non confirmée peut arriver.
-            if ps.iter().any(|p| p.creation.is_none() && p.valeur >= coeur_plancher()) {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+        let now = virtual_daa(&c).await?;
+        match suivi.observer(&ps, now) {
+            EtatGel::Stable => {
+                stable = true;
+                break;
+            }
+            EtatGel::EnAttente => {
+                // Coffre vide dès la première lecture et rien d'envoyé : inutile d'attendre.
+                if ids.is_empty() && tentative == 0 && ps.iter().all(|p| p.valeur < coeur_plancher()) {
+                    stable = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
-            break;
+            EtatGel::ARapatrier => {}
         }
-        for lot in &lots {
+        tentative += 1;
+        for lot in &lots(&ps) {
             let total: u64 = lot.iter().map(|p| p.valeur).sum();
             let frais = (2 * FEE * lot.len() as u64 * tentative).min(total / 2);
             let (tx, _) = tx_gel(&art, lot, owner, frais)?;
@@ -366,6 +447,9 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
     liberer(&c).await?;
     if !reste.is_empty() {
         return Err(format!("gel incomplet : {} pièce(s) utilisables encore dans le coffre, relancer", reste.len()).into());
+    }
+    if !stable {
+        return Err("gel envoyé mais pas encore confirmé de façon stable : relancer pour vérifier".into());
     }
     if ids.is_empty() {
         return Err("coffre déjà vide".into());
@@ -484,6 +568,126 @@ mod tests {
         e.apports.push(Apport { txid: TransactionId::from_bytes([3; 32]).to_string(), sompi: 500, daa: 30 });
         suivre(&mut e, &[p(1, 0, 1_000), p(2, 1, 700), p(3, 0, 500)], 30);
         assert_eq!(e.achats.len(), 1);
+    }
+
+    /// R57 : l'outil note la date d'un apport AVANT de l'envoyer (score virtuel lu sur le nœud).
+    /// Le bloc qui inscrit la pièce peut porter un score un peu plus petit (mineur en retard de
+    /// quelques blocs sur notre nœud, ou réorganisation). L'âge de la pièce court alors depuis
+    /// plus tôt que la courbe affichée : l'agent peut dépenser quelques sompi de plus que la
+    /// « courbe promise ». La courbe doit partir de la date d'inscription réelle, lue sur le nœud.
+    #[test]
+    fn r57_courbe_recalee_sur_l_inscription_reelle() {
+        let c = coeur(200_000_000, 864_000);
+        let depot = TransactionId::from_bytes([1; 32]);
+        let (note, inscrit) = (1_000u64, 997u64); // noté par l'outil ; réellement inscrit
+        let mut e = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
+            apports: vec![Apport { txid: depot.to_string(), sompi: 1_000_000_000, daa: note }], vues: vec![], achats: vec![] };
+        let pieces = vec![Piece { outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(inscrit) }];
+        // L'agent paie 0,5 TKAS dès que le réseau le permet : à inscription + attente.
+        let spent = 50_000_000u64;
+        let x = inscrit + c.attente(spent as i64);
+        assert!(c.immediate(1_000_000_000, x - inscrit) >= spent, "le réseau accepte ce paiement à l'instant x");
+        assert!(suivre(&mut e, &pieces, inscrit + 10), "la première lecture recale l'apport");
+        assert_eq!((e.apports[0].daa, e.cree_daa), (inscrit, inscrit));
+        let v = Vue { coeur: c, adresse: String::new(), pieces, now: x, etat: Some(e.clone()) };
+        assert!(v.courbe(x) >= spent, "courbe promise {} < perte possible {spent}", v.courbe(x));
+        // Jamais dans l'autre sens : une inscription plus tardive que la note ne resserre pas la courbe.
+        let tard = vec![Piece { outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(2_000) }];
+        suivre(&mut e, &tard, 2_010);
+        assert_eq!(e.apports[0].daa, inscrit);
+    }
+
+    /// R58 : le gel ne doit être annoncé « terminé » qu'une fois stable. Les blocs parallèles du
+    /// réseau peuvent être réordonnés pendant quelques secondes : un paiement de l'agent sur la
+    /// même pièce, placé dans un bloc concurrent, peut finalement passer AVANT le gel et l'annuler.
+    /// Sa continuation reste alors dans le coffre. L'ancienne règle (terminé dès que l'adresse
+    /// paraît vide, fichier local supprimé) déclarait le coffre gelé alors qu'il ne l'était pas.
+    #[test]
+    fn r58_gel_confirme_seulement_s_il_est_stable() {
+        let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 1);
+        let grosse = Piece { outpoint: op(1), valeur: 1_000_000_000, creation: Some(500) };
+        let mut suivi = SuiviGel::default();
+        assert_eq!(suivi.observer(std::slice::from_ref(&grosse), 1_000), EtatGel::ARapatrier);
+        // Le gel est inscrit (vu du nœud) : l'adresse paraît vide. Pas encore terminé.
+        assert_eq!(suivi.observer(&[], 1_003), EtatGel::EnAttente, "l'ancienne règle disait « terminé » ici");
+        assert_eq!(suivi.observer(&[], 1_003 + GEL_STABLE - 1), EtatGel::EnAttente);
+        // Réordonnancement : le paiement de l'agent l'emporte, sa continuation apparaît.
+        let continuation = Piece { outpoint: op(2), valeur: 950_000_000, creation: Some(1_002) };
+        assert_eq!(suivi.observer(std::slice::from_ref(&continuation), 1_010), EtatGel::ARapatrier, "le gel reprend");
+        // Nouveau gel inscrit ; il faut de nouveau toute la durée de stabilité, à partir de là.
+        assert_eq!(suivi.observer(&[], 1_020), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(&[], 1_020 + GEL_STABLE - 1), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(&[], 1_020 + GEL_STABLE), EtatGel::Stable);
+
+        // Une continuation pas encore confirmée fait attendre, et remet le compteur à zéro.
+        let mut suivi = SuiviGel::default();
+        let en_vol = Piece { outpoint: op(3), valeur: 950_000_000, creation: None };
+        assert_eq!(suivi.observer(&[], 2_000), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(std::slice::from_ref(&en_vol), 2_050), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(&[], 2_000 + GEL_STABLE), EtatGel::EnAttente, "le compteur est reparti de zéro");
+        // L'horloge recule (réorganisation) : le compteur repart aussi.
+        let mut suivi = SuiviGel::default();
+        assert_eq!(suivi.observer(&[], 3_000), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(&[], 2_990), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(&[], 2_990 + GEL_STABLE - 1), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(&[], 2_990 + GEL_STABLE), EtatGel::Stable);
+        // La poussière sous le plancher (R53) n'empêche pas de conclure.
+        let poussiere = Piece { outpoint: op(4), valeur: 5_000, creation: Some(1) };
+        let mut suivi = SuiviGel::default();
+        assert_eq!(suivi.observer(std::slice::from_ref(&poussiere), 10), EtatGel::EnAttente);
+        assert_eq!(suivi.observer(std::slice::from_ref(&poussiere), 10 + GEL_STABLE), EtatGel::Stable);
+    }
+
+    /// Cible 7 : `suivre` face aux dépôts de tiers et aux continuations simultanées. L'affichage
+    /// des achats est une aide, pas une mesure de sécurité : il peut être brouillé par quelqu'un
+    /// qui dépose de l'argent dans le coffre au même moment (à ses frais, sompi pour sompi), mais
+    /// jamais dans un sens qui cache une perte nette. Comportement constaté, figé ici.
+    #[test]
+    fn suivre_face_aux_depots_de_tiers() {
+        let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
+        let depot = TransactionId::from_bytes([1; 32]).to_string();
+        let neuf = || EtatCoeur { version: VERSION.into(), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+            apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
+        let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
+        let total = |e: &EtatCoeur| e.achats.iter().map(|a| a.sompi).sum::<u64>();
+        let perte_nette = |e: &EtatCoeur, ps: &[Piece]| e.apports.iter().map(|a| a.sompi).sum::<u64>().saturating_sub(ps.iter().map(|p| p.valeur).sum());
+
+        // (a) Dépôt d'un tiers seul : pas un achat.
+        let mut e = neuf();
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000), p(9, 0, 5)], 20);
+        assert!(e.achats.is_empty());
+
+        // (b) Deux paiements entre deux lectures (une continuation par pièce) : un seul achat
+        // affiché, du bon total.
+        let mut e = neuf();
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        let apres = [p(2, 1, 700), p(3, 1, 900)];
+        suivre(&mut e, &apres, 20);
+        assert_eq!((e.achats.len(), total(&e)), (1, 400));
+        assert_eq!(total(&e), perte_nette(&e, &apres));
+
+        // (c) Paiement de 300 et, au même moment, dépôt de 5 par un tiers : l'achat affiché vaut
+        // 295 (la perte NETTE, exacte) et peut porter l'identifiant du dépôt au lieu du paiement.
+        let mut e = neuf();
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        let apres = [p(1, 0, 1_000), p(2, 1, 700), p(9, 0, 5)];
+        suivre(&mut e, &apres, 20);
+        assert_eq!((e.achats.len(), total(&e)), (1, 295));
+        assert_eq!(total(&e), perte_nette(&e, &apres));
+        assert_eq!(e.achats[0].txid, TransactionId::from_bytes([9; 32]).to_string(), "identifiant brouillé (limite connue)");
+
+        // (d) Paiement de 300 masqué par un dépôt simultané de 300 ou plus : aucun achat affiché,
+        // mais la perte nette du propriétaire est bien nulle (le tiers a payé à sa place).
+        let mut e = neuf();
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        let apres = [p(1, 0, 1_000), p(2, 1, 700), p(9, 0, 300)];
+        suivre(&mut e, &apres, 20);
+        assert!(e.achats.is_empty());
+        assert_eq!(perte_nette(&e, &apres), 0);
+
+        // (e) Dans tous les cas, ce qui compte pour la sécurité ne dépend pas de `suivre` : la
+        // perte nette affichée (apports − solde) et l'exposition viennent des pièces lues sur le nœud.
     }
 
     /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
