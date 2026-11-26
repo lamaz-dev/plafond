@@ -362,12 +362,19 @@ fn ouvrir_navigateur(lien: &str) {
     }
 }
 
+/// Lien affiché dans le terminal et remis au navigateur. Il porte le jeton de session dans son
+/// fragment (jamais envoyé au serveur). Limite connue (R73) : remis au navigateur en argument de
+/// commande, il est visible des autres utilisateurs de l'ordinateur le temps du lancement.
+fn lien_de_session(port: u16, jeton: &str) -> String {
+    format!("http://127.0.0.1:{port}/#jeton={jeton}")
+}
+
 pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
     let mut b = [0u8; 32];
     getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
     let jeton = hex::encode(b);
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
-    let lien = format!("http://127.0.0.1:{PORT}/#jeton={jeton}");
+    let lien = lien_de_session(PORT, &jeton);
     println!("Console du propriétaire : ouvrez {lien}");
     println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
     if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
@@ -423,7 +430,7 @@ pub fn lancer_compte(handle: Handle, dossier: String) -> Res<()> {
     getrandom::getrandom(&mut b).map_err(|e| format!("aléa : {e}"))?;
     let jeton = hex::encode(b);
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
-    let lien = format!("http://127.0.0.1:{PORT}/#jeton={jeton}");
+    let lien = lien_de_session(PORT, &jeton);
     println!("Plafond : ouvrez {lien}");
     println!("(lien personnel valable pour cette session ; ne le partagez pas ; Ctrl+C pour arrêter)");
     if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1508,6 +1515,19 @@ mod tests {
         assert!(!page.into_string().unwrap().contains("jeton-de-test"));
         serveur.unblock();
         fil.join().unwrap();
+    }
+
+    /// R73 (non corrigé, décision produit) : le lien remis au navigateur à l'ouverture automatique
+    /// porte le jeton de session ; or les arguments d'une commande sont lisibles par les autres
+    /// utilisateurs du même ordinateur (`ps`, /proc). Sur un poste partagé, un autre utilisateur peut
+    /// donc piloter la console (geler, alimenter, créer un mandat, remplacer un secret ; plus de vol de
+    /// clé depuis R65 et R72, qui exigent le mot de passe). Correctif envisagé : remettre au navigateur
+    /// un ticket à usage unique, échangé par la page contre le jeton de session.
+    #[test]
+    #[ignore = "R73 : jeton de session visible dans la ligne de commande du navigateur (non corrigé)"]
+    fn r73_lien_remis_au_navigateur_sans_jeton_de_session() {
+        let jeton = "ab".repeat(32);
+        assert!(!lien_de_session(PORT, &jeton).contains(&jeton), "le lien passé en argument de commande contient le jeton de session");
     }
 
     /// R66 : la confirmation de sauvegarde (mot de passe seul) ne doit pas servir d'oracle pour
