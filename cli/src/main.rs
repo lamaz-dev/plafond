@@ -1328,7 +1328,7 @@ async fn main() -> Res<()> {
             match coffre::charger() {
                 Some(_) => {
                     let v = coffre::vue(&c, &xonly(&owner), &agent_pk(&agent)).await?;
-                    println!("Coffre (cœur v0.6) {} : {} TKAS en {} pièce(s)", v.adresse, v.solde() as f64 / 1e8, v.pieces.len());
+                    println!("Coffre (cœur {}) {} : {} TKAS en {} pièce(s)", if v.coeur.retour.is_some() { "v0.7" } else { "v0.6" }, v.adresse, v.solde() as f64 / 1e8, v.pieces.len());
                     println!("  disponible maintenant : {} TKAS ; pire cas sur 24 h : {} TKAS", v.immediate() as f64 / 1e8, v.fenetre(JOUR_DAA as u64) as f64 / 1e8);
                     println!("  perte nette depuis la création : {} TKAS (courbe promise : {} TKAS)", v.apports().saturating_sub(v.solde()) as f64 / 1e8, v.courbe(v.now) as f64 / 1e8);
                 }

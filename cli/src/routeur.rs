@@ -62,7 +62,7 @@ async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
         "frais_par_paiement_sompi": FEE,
         "recharge_complete_daa": v.coeur.periode,
         "prochain_paiement_plafond_secondes": coffre::delai(&v.coeur, &v.pieces, v.now, v.coeur.capacite as u64).map(|d| d / 10),
-        "garanti_par": "covenant Plafond cœur v0.6 (verrou relatif du consensus Kaspa)",
+        "garanti_par": if v.coeur.retour.is_some() { "covenant Plafond cœur v0.7 (verrou relatif du consensus Kaspa)" } else { "covenant Plafond cœur v0.6 (verrou relatif du consensus Kaspa)" },
     }))
 }
 
