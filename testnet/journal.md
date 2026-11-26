@@ -899,3 +899,29 @@ Solde du propriétaire : 994.485 TKAS (7 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-26 05:13 UTC
+
+```
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Porte-monnaie du relais : kaspatest:qz3mjp07l8e09zrjzfwckrz0cupuu84ae70mqsu7sn6ujcnvawqwugghhl3s4 (29700000 sompi)
+Diagnostic /health : HTTP 200
+  {"ok":true,"enabled":true,"gateway":"kaspa-x402-testnet","releaseVersion":"1.0.1","hostedExactSettlementEnabled":true,"exactProfile":"standard-native","chainBroadcastMode":"pnn","chainEvidenceSource":"pnn","chainTrustMode":"trusted-single-source","chainEvidenceAuthorities":1}
+Diagnostic /canary : HTTP 200
+  {"ok":true,"enabled":true,"exactHeads":{"total":0,"available":0,"claimed":0,"unavailable":0,"retired":0},"canary":{"checkedAt":"2026-11-26T05:00:41.067Z","trigger":"scheduled","ok":false,"checks":[{"name":"kaspa-chain","status":"failed","detail":"invalid_transaction_state"},{"name":"schema-url","status":"ok","detail":"payment-required schema resolved","evidence":{"status":200}},{"name":"current-release","status":"ok","detail":"current 1.0.1 release metadata resolved","evidence":{"status":200}},{
+Diagnostic /exact : HTTP 402 (offre 402 : {"accepts":[{"amount":"20000000","asset":"KAS","extra":{"binding":"kaspa-exact-v2","finality":"accepted","payToScriptPublicKey":"000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac","paymentFlow":"upfront","profile":"standard-native","transactionEncoding":"kaspa-sdk-safe-json-v2)
+GET https://demo.kaspa-x402.org/exact
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Transaction de paiement signée 2026-11-26T05:13:53.338Z : tentative 34b06685811c5355f95f20c571dcef349d04d444792b66f2288f11e24fc8084b, transaction df9bd0b0ff7a5b257a7d7ec5c19710aecfd51e7351d50d2a2060d56034b21f16, entrées b137fd8ecbd66b00e6df107876bf6e0385e00bc0521ae681a98e5f9ebbf45f93:1
+Réponse à la tentative payée : HTTP 200 (2026-11-26T05:14:10.434Z)
+  content-type: application/json; charset=utf-8
+  payment-response: eyJhbW91bnQiOiIyMDAwMDAwMCIsImV4dGVuc2lvbnMiOnsia2FzcGEiOnsiZXhhY3RQcm9maWxlIjoic3RhbmRhcmQtbmF0aXZlIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInBheW1lbnRPdXRwdXRJbmRleCI6MCwicmVxdWVzdEhhc2giOiI2M2ZhNjUzMmJmNTEzODQ3YTFjNTg0NjMyYTdhM2IzNWVlNDQ0MTM4ZWQ5NDRmNzdkYTA4NGQ3YTk1YTIwZTBmIiwidHJhbnNhY3Rpb25FbmNvZGluZyI6
+  corps : {"ok":true,"network":"kaspa:testnet-10","profile":"exact","resource":"https://demo.kaspa-x402.org/exact","requestFingerprint":"63fa6532bf513847a1c584632a7a3b35ee444138ed944f77da084d7a95a20e0f","paymentIdentifier":"lamaz_relais_testnet_1795670030842","payment":{"scheme":"exact","transactionId":"df9bd0b0ff7a5b257a7d7ec5c19710aecfd51e7351d50d2a2060d56034b21f16","paymentOutputIndex":0,"finality":"accepted"}}
+Réponse du vendeur : HTTP 200
+Corps : {"ok":true,"network":"kaspa:testnet-10","profile":"exact","resource":"https://demo.kaspa-x402.org/exact","requestFingerprint":"63fa6532bf513847a1c584632a7a3b35ee444138ed944f77da084d7a95a20e0f","paymentIdentifier":"lamaz_relais_testnet_1795670030842","payment":{"scheme":"exact","transactionId":"df9bd0b0ff7a5b257a7d7ec5c19710aecfd51e7351d50d2a2060d56034b21f16","paymentOutputIndex":0,"finality":"acce
+Règlement : success=true, transaction df9bd0b0ff7a5b257a7d7ec5c19710aecfd51e7351d50d2a2060d56034b21f16, montant 20000000 sompi, réseau kaspa:testnet-10
+  https://tn10.kaspa.stream/transactions/df9bd0b0ff7a5b257a7d7ec5c19710aecfd51e7351d50d2a2060d56034b21f16
+VERDICT : le vendeur public Kaspa x402 a accepté et réglé le paiement du coffre.
+
+```
