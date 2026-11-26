@@ -165,6 +165,31 @@ fn ecrire_prive(chemin: &Path, contenu: &[u8]) -> Res<()> {
     Ok(())
 }
 
+/// Écrit un fichier non secret de l'agent sans jamais suivre un lien symbolique laissé à sa place
+/// (R69) : l'ancien nom est retiré, puis le fichier est créé neuf.
+fn ecrire_neuf(chemin: &Path, contenu: &[u8]) -> Res<()> {
+    use std::io::Write;
+    let _ = std::fs::remove_file(chemin);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(chemin)?;
+    f.write_all(contenu)?;
+    Ok(())
+}
+
+/// Registre lu : absent = aucun mandat ; présent mais illisible = erreur (R70), pour que la règle
+/// « un mandat par machine » ne saute pas en silence.
+fn lire_registre(registre: &Path) -> Res<Vec<Value>> {
+    if !registre.exists() {
+        return Ok(Vec::new());
+    }
+    std::fs::read_to_string(registre).ok().and_then(|t| serde_json::from_str(&t).ok()).ok_or_else(|| {
+        format!(
+            "registre des mandats illisible ({}) : vérifiez qu'aucun autre mandat du même propriétaire n'est installé sur cet ordinateur, puis supprimez ce fichier",
+            registre.display()
+        )
+        .into()
+    })
+}
+
 /// Registre des mandats installés sur cet ordinateur (une ligne par mandat : propriétaire, clé
 /// publique, dossier). Rien de secret.
 fn registre_machine() -> std::path::PathBuf {
@@ -180,7 +205,7 @@ fn registre_machine() -> std::path::PathBuf {
 /// promise, elle, tiendrait). Garde-fou contre l'erreur de configuration : refus, sauf si le premier
 /// dossier n'existe plus (agent désinstallé).
 fn verifier_un_mandat_par_machine(registre: &Path, proprietaire: &str, publique: &str, dossier: &Path) -> Res<()> {
-    let lu: Vec<Value> = std::fs::read_to_string(registre).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let lu = lire_registre(registre)?;
     for m in &lu {
         let autre = Path::new(m["dossier"].as_str().unwrap_or(""));
         if m["proprietaire"] == proprietaire && m["publique"] != publique && autre.join("agent.key").exists() && autre != dossier {
@@ -195,13 +220,16 @@ fn verifier_un_mandat_par_machine(registre: &Path, proprietaire: &str, publique:
 }
 
 fn inscrire_machine(registre: &Path, proprietaire: &str, publique: &str, dossier: &Path) -> Res<()> {
-    let mut lu: Vec<Value> = std::fs::read_to_string(registre).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let mut lu = lire_registre(registre)?;
     lu.retain(|m| Path::new(m["dossier"].as_str().unwrap_or("")).join("agent.key").exists());
     lu.push(serde_json::json!({ "proprietaire": proprietaire, "publique": publique, "dossier": dossier.canonicalize().unwrap_or(dossier.to_path_buf()) }));
     if let Some(dir) = registre.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(registre, serde_json::to_string_pretty(&lu)?)?;
+    // écriture atomique : une interruption ne laisse pas un registre tronqué
+    let tmp = registre.with_extension("json.nouveau");
+    ecrire_neuf(&tmp, serde_json::to_string_pretty(&lu)?.as_bytes())?;
+    std::fs::rename(tmp, registre)?;
     Ok(())
 }
 
@@ -230,14 +258,14 @@ fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -
     std::fs::create_dir_all(d)?;
     ecrire_prive(&d.join("agent.key"), kit.cle_agent.as_bytes())?;
     if let Some(o) = &kit.origine {
-        std::fs::write(d.join("etat-coffre-origine.json"), serde_json::to_string_pretty(o)?)?;
+        ecrire_neuf(&d.join("etat-coffre-origine.json"), serde_json::to_string_pretty(o)?.as_bytes())?;
     }
     if let Some(e) = &kit.etat {
-        std::fs::write(d.join("etat-coffre.json"), serde_json::to_string_pretty(e)?)?;
+        ecrire_neuf(&d.join("etat-coffre.json"), serde_json::to_string_pretty(e)?.as_bytes())?;
     }
-    std::fs::write(d.join("agent.secrets.json"), serde_json::to_string_pretty(&kit.secrets)?)?;
+    ecrire_neuf(&d.join("agent.secrets.json"), serde_json::to_string_pretty(&kit.secrets)?.as_bytes())?;
     let meta = serde_json::json!({ "agent_id": kit.agent_id, "nom": kit.nom, "publique": kit.publique, "proprietaire": kit.proprietaire, "regles": kit.regles, "reseau": kit.reseau, "installe_le": crate::double_auth::maintenant() });
-    std::fs::write(d.join("agent.json"), serde_json::to_string_pretty(&meta)?)?;
+    ecrire_neuf(&d.join("agent.json"), serde_json::to_string_pretty(&meta)?.as_bytes())?;
     if registre_actif {
         inscrire_machine(&registre, &kit.proprietaire, &kit.publique, d)?;
     }
@@ -250,7 +278,7 @@ pub fn maj_secrets(fichier: &str, dossier: &str) -> Res<usize> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(fichier)?)?;
     let n = v.as_object().map(|o| o.len()).ok_or("fichier de secrets invalide")?;
     let tmp = Path::new(dossier).join("agent.secrets.json.nouveau");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&v)?)?;
+    ecrire_neuf(&tmp, serde_json::to_string_pretty(&v)?.as_bytes())?;
     std::fs::rename(tmp, Path::new(dossier).join("agent.secrets.json"))?;
     Ok(n)
 }
@@ -284,6 +312,202 @@ mod tests {
         std::fs::remove_file(a.join("agent.key")).unwrap();
         assert!(verifier_un_mandat_par_machine(&registre, "proprio", "pkB", &b).is_ok(), "premier agent désinstallé : permis");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Kit de test (coût Argon2 minimal accepté) : agent de clé `[octet; 32]`.
+    fn kit_de_test(octet: u8, id: &str) -> (Kit, secp256k1::Keypair) {
+        let agent = secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[octet; 32]).unwrap();
+        let kit = Kit {
+            agent_id: id.into(), nom: "Recherche".into(), cle_agent: hex::encode(agent.secret_bytes()), publique: hex::encode(agent.public_key().serialize()),
+            proprietaire: "aa".into(), regles: None, origine: None, etat: Some(serde_json::json!({ "x": 1 })), secrets: serde_json::json!({}), reseau: "testnet-10".into(), cree_le: 0,
+        };
+        (kit, agent)
+    }
+
+    fn dossier_de_test(nom: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("connexion-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Attaque : affaiblir le code de connexion. 20 symboles tirés uniformément parmi 31 = 99 bits ;
+    /// aucun symbole ambigu, aucun biais visible sur 40 000 symboles.
+    #[test]
+    fn code_de_connexion_99_bits_sans_biais() {
+        let mut vus = std::collections::BTreeSet::new();
+        assert!(ALPHABET.iter().all(|c| vus.insert(*c)), "alphabet sans doublon");
+        assert_eq!(ALPHABET.len(), 31);
+        assert!(!ALPHABET.iter().any(|c| b"0O1IL".contains(c)));
+        assert!((20.0 * (31f64).log2()) > 99.0);
+        let mut compte = [0u32; 256];
+        let mut codes = std::collections::BTreeSet::new();
+        for _ in 0..2000 {
+            let c = nouveau_code().unwrap();
+            assert_eq!(c.split('-').map(str::len).collect::<Vec<_>>(), [5, 5, 5, 5]);
+            for o in c.bytes().filter(|o| *o != b'-') {
+                compte[o as usize] += 1;
+            }
+            assert!(codes.insert(c.to_string()), "code répété");
+        }
+        let attendu = 2000.0 * 20.0 / 31.0; // ≈ 1290 par symbole
+        for c in ALPHABET {
+            let n = compte[*c as usize] as f64;
+            assert!((n - attendu).abs() < 6.0 * attendu.sqrt(), "symbole {} biaisé : {n} pour {attendu}", *c as char);
+        }
+    }
+
+    /// Attaques sur le kit : paramètres de dérivation imposés par un kit forgé, substitution de
+    /// l'en-tête (autre agent, autre clé publique), kit d'un autre agent, messages d'erreur.
+    #[test]
+    fn kit_forge_substitue_ou_affaibli_refuse() {
+        let code = "ABCDE-FGHJK-MNPQR-STUVW";
+        let (kit, agent) = kit_de_test(11, "ag-aaaaaaaaaaaa");
+        let s = sceller(&kit, code).unwrap();
+        assert_eq!((s.m_kio, s.t, s.p), (64 * 1024, 3, 1), "paramètres de scellement");
+        // paramètres faibles ou démesurés annoncés par le kit : refusés avant toute dérivation
+        for (m, t, p) in [(8, 1, 1), (19 * 1024 - 1, 3, 1), (64 * 1024, 1, 1), (64 * 1024, 3, 0), (2 * 1024 * 1024, 3, 1), (64 * 1024, 11, 1), (64 * 1024, 3, 9)] {
+            let mut f = s.clone();
+            (f.m_kio, f.t, f.p) = (m, t, p);
+            let debut = std::time::Instant::now();
+            assert!(ouvrir(&f, code).err().unwrap().to_string().contains("paramètres refusés"), "{m}/{t}/{p}");
+            assert!(debut.elapsed() < std::time::Duration::from_millis(50), "refus sans calcul");
+        }
+        // paramètres valides mais différents de ceux du scellement : la clé dérivée change, refus
+        let mut f = s.clone();
+        f.m_kio = 19 * 1024;
+        assert!(ouvrir(&f, code).is_err());
+        for (champ, valeur) in [("kdf", "argon2i"), ("format", "kaspa-agent-vault/kit-connexion/v0")] {
+            let mut j = serde_json::to_value(&s).unwrap();
+            j[champ] = valeur.into();
+            assert!(ouvrir(&serde_json::from_value(j).unwrap(), code).is_err(), "{champ}");
+        }
+        // substitution de l'en-tête : autre agent, autre clé publique, limite agent/clé déplacée
+        let (kit_b, agent_b) = kit_de_test(12, "ag-bbbbbbbbbbbb");
+        let sb = sceller(&kit_b, code).unwrap();
+        for (id, publique) in [(sb.agent_id.clone(), s.publique.clone()), (s.agent_id.clone(), sb.publique.clone()), (format!("{}/{}", s.agent_id, &s.publique[..4]), s.publique[5..].to_string())] {
+            let mut f = s.clone();
+            (f.agent_id, f.publique) = (id, publique);
+            assert!(ouvrir(&f, code).is_err(), "en-tête substitué");
+        }
+        // chiffré de B sous l'en-tête de A (même code) : refusé
+        let mut f = s.clone();
+        (f.sel, f.nonce, f.chiffre) = (sb.sel.clone(), sb.nonce.clone(), sb.chiffre.clone());
+        assert!(ouvrir(&f, code).is_err(), "kit d'un autre agent");
+        // kit scellé par un attaquant : clé privée qui ne correspond pas à la clé publique annoncée
+        let mut menteur = kit_de_test(11, "ag-aaaaaaaaaaaa").0;
+        menteur.cle_agent = hex::encode(agent_b.secret_bytes());
+        let e = ouvrir(&sceller(&menteur, code).unwrap(), code).err().unwrap().to_string();
+        assert!(e.contains("incohérent") && !e.contains(&menteur.cle_agent), "{e}");
+        // le nom de l'en-tête n'est pas authentifié : il ne sert à rien, le nom installé vient du chiffré
+        let mut f = s.clone();
+        f.nom = "Autre nom\u{1b}[2J".into();
+        assert_eq!(ouvrir(&f, code).unwrap().nom, "Recherche");
+        // aucun message d'erreur ne cite le code, la clé ou le chiffré
+        let cle_hex = hex::encode(agent.secret_bytes());
+        for e in [ouvrir(&s, "AAAAA-AAAAA-AAAAA-AAAAZ").err().unwrap().to_string(), ouvrir(&f, "").err().unwrap().to_string()] {
+            assert!(!e.contains("AAAAZ") && !e.contains(code) && !e.contains(&cle_hex) && !e.contains(&s.chiffre), "{e}");
+        }
+        // ni le kit scellé ni son affichage ne contiennent la clé ou le code
+        let brut = serde_json::to_string(&s).unwrap();
+        assert!(!brut.contains(&cle_hex) && !brut.contains(code) && !brut.contains(&code.replace('-', "")));
+    }
+
+    /// Attaques sur l'installation : lien symbolique à la place de la clé, fichiers lisibles par
+    /// d'autres, écrasement, effacement réel de la copie de la console (même par un lien physique).
+    #[cfg(unix)]
+    #[test]
+    fn installation_cle_privee_jamais_exposee() {
+        use std::os::unix::fs::PermissionsExt;
+        let code = "ABCDE-FGHJK-MNPQR-STUVW";
+        let d = dossier_de_test("installation");
+        let (kit, agent) = kit_de_test(13, "ag-cccccccccccc");
+        let s = sceller(&kit, code).unwrap();
+        let cle_hex = hex::encode(agent.secret_bytes());
+        // lien symbolique pendant « agent.key » vers un fichier lisible par l'attaquant : refus, rien n'est écrit
+        let piege = d.join("piege");
+        std::fs::create_dir_all(&piege).unwrap();
+        std::os::unix::fs::symlink(d.join("vole.txt"), piege.join("agent.key")).unwrap();
+        assert!(installer_demo(&s, code, &piege.to_string_lossy()).is_err());
+        assert!(!d.join("vole.txt").exists(), "la clé ne suit pas un lien symbolique");
+        // installation normale : la clé en 0600, et la clé privée dans aucun autre fichier
+        let dossier = d.join("agent");
+        installer_demo(&s, code, &dossier.to_string_lossy()).unwrap();
+        for f in std::fs::read_dir(&dossier).unwrap().map(|f| f.unwrap()) {
+            let nom = f.file_name().to_string_lossy().into_owned();
+            let contenu = std::fs::read_to_string(f.path()).unwrap();
+            if nom == "agent.key" {
+                assert_eq!(f.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+            } else {
+                assert!(!contenu.contains(&cle_hex), "clé privée dans {nom}");
+                assert_eq!(f.metadata().unwrap().permissions().mode() & 0o022, 0, "{nom} modifiable par d'autres");
+            }
+        }
+        // une seconde installation n'écrase rien, même avec un autre kit
+        let (kit2, _) = kit_de_test(14, "ag-dddddddddddd");
+        assert!(installer_demo(&sceller(&kit2, code).unwrap(), code, &dossier.to_string_lossy()).is_err());
+        assert_eq!(std::fs::read_to_string(dossier.join("agent.key")).unwrap(), cle_hex);
+        // effacement côté console : le contenu est réécrit sur place (un lien physique ne garde rien)
+        let copie = d.join("console.key");
+        std::fs::write(&copie, &cle_hex).unwrap();
+        std::fs::hard_link(&copie, d.join("lien-physique")).unwrap();
+        effacer_fichier(&copie.to_string_lossy()).unwrap();
+        assert!(!copie.exists());
+        assert!(std::fs::read(d.join("lien-physique")).unwrap().iter().all(|o| *o == 0), "contenu réellement effacé");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// R69 : dans un dossier préparé par quelqu'un d'autre, un lien symbolique à la place d'un
+    /// fichier de l'agent (agent.json, état, secrets) ne doit pas faire écrire l'installation ailleurs.
+    #[cfg(unix)]
+    #[test]
+    fn r69_installation_ne_suit_pas_les_liens_symboliques() {
+        let code = "ABCDE-FGHJK-MNPQR-STUVW";
+        let d = dossier_de_test("r69");
+        let (kit, _) = kit_de_test(15, "ag-eeeeeeeeeeee");
+        let s = sceller(&kit, code).unwrap();
+        let dossier = d.join("agent");
+        std::fs::create_dir_all(&dossier).unwrap();
+        for (f, cible) in [("agent.json", "cible-1"), ("etat-coffre.json", "cible-2"), ("agent.secrets.json", "cible-3")] {
+            std::fs::write(d.join(cible), "fichier de la victime").unwrap();
+            std::os::unix::fs::symlink(d.join(cible), dossier.join(f)).unwrap();
+        }
+        installer_demo(&s, code, &dossier.to_string_lossy()).unwrap();
+        for cible in ["cible-1", "cible-2", "cible-3"] {
+            assert_eq!(std::fs::read_to_string(d.join(cible)).unwrap(), "fichier de la victime", "{cible} écrasé à travers un lien symbolique");
+        }
+        for f in ["agent.json", "etat-coffre.json", "agent.secrets.json"] {
+            assert!(!std::fs::symlink_metadata(dossier.join(f)).unwrap().file_type().is_symlink(), "{f} est un vrai fichier");
+        }
+        // même règle pour la mise à jour des secrets
+        std::fs::remove_file(dossier.join("agent.secrets.json")).unwrap();
+        std::os::unix::fs::symlink(d.join("cible-3"), dossier.join("agent.secrets.json.nouveau")).unwrap();
+        std::fs::write(d.join("export.json"), "{}").unwrap();
+        maj_secrets(&d.join("export.json").to_string_lossy(), &dossier.to_string_lossy()).unwrap();
+        assert_eq!(std::fs::read_to_string(d.join("cible-3")).unwrap(), "fichier de la victime");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// R70 : un registre des mandats illisible (fichier tronqué ou abîmé) ne doit pas désactiver en
+    /// silence la règle « un mandat par machine » (R52).
+    #[test]
+    fn r70_registre_illisible_refuse_au_lieu_de_tout_permettre() {
+        let d = dossier_de_test("r70");
+        let registre = d.join("mandats.json");
+        let a = d.join("agent-a");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("agent.key"), "x").unwrap();
+        inscrire_machine(&registre, "proprio", "pkA", &a).unwrap();
+        let bon = std::fs::read_to_string(&registre).unwrap();
+        std::fs::write(&registre, &bon[..bon.len() / 2]).unwrap(); // écriture interrompue
+        let r = verifier_un_mandat_par_machine(&registre, "proprio", "pkB", &d.join("agent-b"));
+        assert!(r.is_err(), "registre illisible : la règle ne doit pas sauter");
+        assert!(r.unwrap_err().to_string().contains("illisible"));
+        assert!(inscrire_machine(&registre, "proprio", "pkB", &d.join("agent-b")).is_err(), "et il n'est pas écrasé");
+        // registre absent : première installation, permise
+        std::fs::remove_file(&registre).unwrap();
+        assert!(verifier_un_mandat_par_machine(&registre, "proprio", "pkB", &d.join("agent-b")).is_ok());
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
