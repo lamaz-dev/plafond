@@ -1114,14 +1114,20 @@ async fn main() -> Res<()> {
         let dossier = env::var("AGENT_DOSSIER").unwrap_or_else(|_| "agent".into());
         match cmd {
             "agent-installer" => {
-                let kit: connexion::Scelle = serde_json::from_str(&fs::read_to_string(args.get(2).ok_or("fichier du kit de connexion manquant")?)?)?;
+                let fichier_kit = args.get(2).ok_or("fichier du kit de connexion manquant")?;
                 // Saisi au clavier ; AGENT_CODE_CONNEXION seulement pour une démo automatisée (testnet).
                 let code = zeroize::Zeroizing::new(match env::var("AGENT_CODE_CONNEXION") {
                     Ok(c) => c,
                     Err(_) => rpassword::prompt_password("Code de connexion : ")?,
                 });
-                let nom = connexion::installer(&kit, &code, &dossier)?;
-                println!("Agent « {nom} » installé dans {dossier}/ (clé en 0600). Vous pouvez supprimer le fichier du kit.");
+                // Installation, vérification (clé et secrets lisibles), puis effacement du fichier du kit ;
+                // au moindre échec le kit reste en place pour réessayer.
+                let r = connexion::installer_depuis_fichier(fichier_kit, &code, &dossier)?;
+                println!("Agent « {} » installé dans {dossier}/ et vérifié (clé lisible par vous seul).", r.nom);
+                match r.kit_efface {
+                    Ok(()) => println!("Le fichier du kit ({fichier_kit}) a été effacé : il ne sert plus."),
+                    Err(e) => println!("Le fichier du kit n'a pas pu être effacé ({e}) : supprimez-le vous-même ({fichier_kit})."),
+                }
             }
             "agent-payer" => {
                 // L'agent paie depuis son coffre avec sa propre clé (installée par le kit) ; la

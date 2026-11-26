@@ -5,8 +5,11 @@
 //! alimenter, surveiller et geler le coffre (opérations du propriétaire), mais ne peut plus ni payer à
 //! la place de l'agent, ni déchiffrer ses secrets.
 //!
-//! Côté agent : `vault-cli agent-installer <kit>` (code saisi au clavier, jamais affiché), puis
-//! `vault-cli agent-verifier` contrôle que la clé et chaque secret sont lisibles, sans rien afficher.
+//! Côté agent : `vault-cli agent-installer <kit>` (code saisi au clavier, jamais affiché) installe,
+//! vérifie que la clé et chaque secret sont lisibles, puis efface le fichier du kit (il reste en place
+//! si quoi que ce soit échoue). `vault-cli agent-verifier` refait ce contrôle à la demande, sans rien
+//! afficher. La clé installée n'est pas chiffrée : l'agent paie sans humain pour saisir un mot de
+//! passe ; elle est protégée par les droits du fichier, et la perte reste plafonnée par le contrat.
 
 use crate::Res;
 use chacha20poly1305::{
@@ -227,17 +230,14 @@ fn inscrire_machine(registre: &Path, proprietaire: &str, publique: &str, dossier
     Ok(())
 }
 
-/// Installation côté agent : écrit la clé (0600, jamais d'écrasement), l'état du coffre et les secrets.
-pub fn installer(s: &Scelle, code: &str, dossier: &str) -> Res<String> {
-    installer_avec(s, code, dossier, true)
-}
-
 /// Agent de démonstration : temporaire et révoqué à la fin de la démo, il ne compte pas comme mandat
 /// installé (sinon la démo suivante serait refusée).
 pub fn installer_demo(s: &Scelle, code: &str, dossier: &str) -> Res<String> {
     installer_avec(s, code, dossier, false)
 }
 
+/// Installation côté agent : écrit la clé (lisible par le seul utilisateur, jamais d'écrasement),
+/// l'état du coffre et les secrets.
 fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -> Res<String> {
     let kit = ouvrir(s, code)?;
     let d = Path::new(dossier);
@@ -264,6 +264,42 @@ fn installer_avec(s: &Scelle, code: &str, dossier: &str, registre_actif: bool) -
         inscrire_machine(&registre, &kit.proprietaire, &kit.publique, d)?;
     }
     Ok(kit.nom.clone())
+}
+
+/// Résultat d'une installation depuis un fichier de kit.
+#[derive(Debug)]
+pub struct Installe {
+    pub nom: String,
+    /// Le fichier du kit a été effacé ; sinon, pourquoi il ne l'a pas été (à supprimer à la main).
+    pub kit_efface: Result<(), String>,
+}
+
+/// Installation côté agent depuis le fichier du kit, puis vérification (clé et secrets lisibles), puis
+/// effacement du fichier du kit : une fois l'agent installé, le kit ne sert plus et il contient sa clé
+/// (scellée par le code de connexion). L'ordre compte : le kit n'est effacé qu'après une installation
+/// ET une vérification réussies ; au moindre échec il reste en place, pour pouvoir réessayer.
+pub fn installer_depuis_fichier(fichier_kit: &str, code: &str, dossier: &str) -> Res<Installe> {
+    installer_depuis_fichier_avec(fichier_kit, code, dossier, true)
+}
+
+fn installer_depuis_fichier_avec(fichier_kit: &str, code: &str, dossier: &str, registre_actif: bool) -> Res<Installe> {
+    let kit: Scelle = serde_json::from_str(&std::fs::read_to_string(fichier_kit).map_err(|e| format!("fichier du kit illisible ({fichier_kit}) : {e}"))?).map_err(|_| "ce fichier n'est pas un kit de connexion")?;
+    let nom = installer_avec(&kit, code, dossier, registre_actif)?;
+    let illisibles: Vec<String> = match verifier(dossier) {
+        Ok(l) => l.into_iter().filter(|(_, ok)| !ok).map(|(n, _)| n).collect(),
+        Err(e) => return Err(format!("agent installé dans {dossier}, mais sa clé ne se relit pas ({e}) : le kit est conservé. Supprimez le dossier {dossier} puis réessayez").into()),
+    };
+    if !illisibles.is_empty() {
+        return Err(format!(
+            "agent installé dans {dossier}, mais {} secret(s) illisible(s) pour lui ({}) : le kit est conservé. Supprimez le dossier {dossier} puis réessayez, ou préparez un nouveau kit dans la console",
+            illisibles.len(),
+            illisibles.join(", ")
+        )
+        .into());
+    }
+    // Installé et vérifié : le kit ne sert plus. Un effacement impossible (support en lecture seule…)
+    // n'annule pas l'installation : il est signalé, pour une suppression à la main.
+    Ok(Installe { nom, kit_efface: effacer_fichier(fichier_kit).map_err(|e| e.to_string()) })
 }
 
 /// Mise à jour des secrets côté agent. Le fichier exporté par la console peut voyager librement :
@@ -573,6 +609,48 @@ mod tests {
         // registre absent : première installation, permise
         std::fs::remove_file(&registre).unwrap();
         assert!(verifier_un_mandat_par_machine(&registre, "proprio", "pkB", &d.join("agent-b")).is_ok());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Le fichier du kit est effacé après une installation ET une vérification réussies, et seulement
+    /// alors : mauvais code, dossier déjà occupé ou secret illisible le laissent intact pour réessayer.
+    #[test]
+    fn kit_efface_apres_installation_reussie_seulement() {
+        let d = dossier_de_test("kit-efface");
+        let code = nouveau_code().unwrap();
+        let (mut kit, agent) = kit_de_test(0x31, "ag-kit");
+        kit.secrets = serde_json::json!({ "OpenAI": crate::secrets::chiffrer(&agent.public_key(), "OpenAI", "openai", Zeroizing::new("sk-test-123".into()), 1).unwrap() });
+        let fichier = d.join("kit-connexion-ag-kit.json").to_string_lossy().into_owned();
+        let contenu = serde_json::to_string(&sceller(&kit, &code).unwrap()).unwrap();
+        std::fs::write(&fichier, &contenu).unwrap();
+        let dossier = d.join("agent").to_string_lossy().into_owned();
+        let intact = || std::fs::read_to_string(&fichier).is_ok_and(|t| t == contenu);
+        // échecs : le kit reste, intact
+        assert!(installer_depuis_fichier_avec(&fichier, "AAAAA-AAAAA-AAAAA-AAAAA", &dossier, false).is_err());
+        assert!(intact(), "mauvais code : le kit doit rester");
+        assert!(!Path::new(&dossier).join("agent.key").exists());
+        assert!(installer_depuis_fichier_avec(&d.join("absent.json").to_string_lossy(), &code, &dossier, false).is_err());
+        std::fs::write(d.join("autre.json"), "{\"pas\":\"un kit\"}").unwrap();
+        assert!(installer_depuis_fichier_avec(&d.join("autre.json").to_string_lossy(), &code, &dossier, false).is_err());
+        assert!(d.join("autre.json").exists(), "un fichier qui n'est pas un kit n'est jamais effacé");
+        // installé mais non vérifié (un secret chiffré pour un autre agent) : le kit reste
+        let (mut mauvais, _) = kit_de_test(0x32, "ag-mauvais");
+        let autre = secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[0x33; 32]).unwrap();
+        mauvais.secrets = serde_json::json!({ "Stripe": crate::secrets::chiffrer(&autre.public_key(), "Stripe", "stripe", Zeroizing::new("sk-test-456".into()), 1).unwrap() });
+        let fichier_mauvais = d.join("kit-mauvais.json").to_string_lossy().into_owned();
+        std::fs::write(&fichier_mauvais, serde_json::to_string(&sceller(&mauvais, &code).unwrap()).unwrap()).unwrap();
+        let e = installer_depuis_fichier_avec(&fichier_mauvais, &code, &d.join("agent-mauvais").to_string_lossy(), false).unwrap_err().to_string();
+        assert!(e.contains("Stripe") && e.contains("conservé"), "{e}");
+        assert!(Path::new(&fichier_mauvais).exists(), "vérification échouée : le kit doit rester");
+        // succès : installé, vérifié, kit effacé
+        let r = installer_depuis_fichier_avec(&fichier, &code, &dossier, false).unwrap();
+        assert_eq!((r.nom.as_str(), &r.kit_efface), ("Recherche", &Ok(())));
+        assert!(!Path::new(&fichier).exists(), "kit laissé sur le disque après une installation réussie");
+        assert_eq!(verifier(&dossier).unwrap(), vec![("OpenAI".to_string(), true)]);
+        // dossier déjà occupé : un autre kit n'est pas effacé
+        std::fs::write(&fichier, &contenu).unwrap();
+        assert!(installer_depuis_fichier_avec(&fichier, &code, &dossier, false).is_err());
+        assert!(intact(), "installation refusée : le kit doit rester");
         std::fs::remove_dir_all(&d).unwrap();
     }
 
