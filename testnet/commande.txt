@@ -1,7 +1,9 @@
-# Real check of core v0.7: return address (26 Nov 2026)
-# Return address = the demo account (another key, as if it were a Ledger)
-deployer kaspatest:qzznh6lxw7ryl5h9d9efe5e8ahrq8003ej2vc5swqednec49z8gpyk89quv6f
+# Race tests on testnet (audit plan, step 3), 26 Nov 2026
+# Two transactions spend the same vault coin at the same time; the network keeps one.
+deployer                       # v0.7 vault, return address = treasury
 pause 15
-etat                           # vault on core v0.7
-recuperer                      # freeze: every coin must go to the return address, not to the owner
+course-recharge                # agent payment vs owner refill of the same coin
+pause 15
+etat
+course-gel                     # agent payment vs owner freeze of the same coin, then freeze to the end
 etat                           # vault empty
