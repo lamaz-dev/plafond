@@ -1,9 +1,7 @@
-# Essai réel de R62 (regonflement) et du gel R58 (26 nov. 2026)
-deployer                       # coffre de test : 4 pièces
+# Real check of core v0.7: return address (26 Nov 2026)
+# Return address = the demo account (another key, as if it were a Ledger)
+deployer kaspatest:qzznh6lxw7ryl5h9d9efe5e8ahrq8003ej2vc5swqednec49z8gpyk89quv6f
 pause 15
-etat                           # 4 pièces
-recharger 100000000            # 1 TKAS : une pièce existante est regonflée, pas de cinquième pièce
-pause 15
-etat                           # toujours 4 pièces, solde + 1 TKAS
-recuperer                      # gel : terminé seulement après ~10 s d'adresse vide
-etat                           # coffre vide
+etat                           # vault on core v0.7
+recuperer                      # freeze: every coin must go to the return address, not to the owner
+etat                           # vault empty
