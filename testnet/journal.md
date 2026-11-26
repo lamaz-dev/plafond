@@ -1328,3 +1328,19 @@ Solde du propriétaire : 988.83432 TKAS (14 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-26 18:10 UTC (copied from the workflow log: the run succeeded but its journal push lost a race with another commit)
+
+```
+$ vault-cli deployer
+Transaction : https://tn10.kaspa.stream/transactions/5fac038bdffe6634ea6562faf7ae8d7acdff396fad7e3bafefb16aa80f398e70
+$ vault-cli pause 2900
+$ node tests/juge-kaspa-x402/essai-testnet.mjs
+Coffre → porte-monnaie : 0.40600001 TKAS : https://tn10.kaspa.stream/transactions/158a9a0b71e9cd3e4085f919ceb571a3305ca7d3ff2e628c746089b9b2e25448
+Réponse du vendeur : HTTP 200
+Règlement : success=true, transaction 2f7ef089b39f98b423e44a45fb32d01a471c01e99d0aa2a3baab83ffb309f254, montant 20000000 sompi, réseau kaspa:testnet-10
+  https://tn10.kaspa.stream/transactions/2f7ef089b39f98b423e44a45fb32d01a471c01e99d0aa2a3baab83ffb309f254
+VERDICT : le vendeur public Kaspa x402 a accepté et réglé le paiement du coffre.
+$ vault-cli recuperer
+4 pièce(s) rapatriée(s) : 4.56257999 TKAS, https://tn10.kaspa.stream/transactions/251e725d6c9aaf4dd89b753bfcdc6ebb12614dbad4
+```
