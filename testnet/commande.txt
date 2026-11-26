@@ -1,13 +1,2 @@
-# Race tests on testnet, third batch (26 Nov 2026): clear the stale state, then repeat
-recuperer                      # vault already empty: forgets the stale local state
-deployer
-pause 15
-course-recharge
-course-recharge
-course-recharge
-course-gel
-etat                           # vault empty, no false loss
-deployer
-pause 15
-course-gel
-etat
+# Relay review (26 Nov 2026): real x402 payment through the vault with the updated provider
+essai-relais
