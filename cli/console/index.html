@@ -950,8 +950,8 @@ function connecterAgent(){
   ouvrirSecu(t("connecter"));
   const go=el("button",{class:"btn"},t("creer_kit"));
   corps(el("ol",{class:"etapes"},el("li",{},t("cx_e1")),el("li",{},t("cx_e2")),el("li",{},t("cx_e3"))),el("p",{},go),boite());
-  go.onclick=async()=>{go.disabled=true;message("s-msg","ok",t("en_cours"));
-    try{const r=await api("/api/connecter/preparer",{agent:etat.agent});
+  const kit=async(mdp,code)=>{
+      const r=await api("/api/connecter/preparer",{agent:etat.agent,mot_de_passe:mdp,code});
       const fini=el("button",{class:"btn",disabled:"disabled"},t("terminer_cx"));
       const caseCoche=el("input",{type:"checkbox",id:"cx-case"});caseCoche.onchange=()=>{fini.disabled=!caseCoche.checked};
       const dl=el("button",{class:"btn sec",onclick:()=>telecharger(r.fichier,"application/json",JSON.stringify(r.kit,null,2))},t("telecharger_kit"));
@@ -962,7 +962,14 @@ function connecterAgent(){
         try{await api("/api/connecter/confirmer",{agent:etat.agent,confirmation:"CONNECTER"});
           corps(el("div",{class:"coche"},"✓"),el("p",{style:"text-align:center"},t("cx_fini")));await chargerAgent(etat.agent);await chargerVue()}
         catch(e){message("s-msg","err",e.message);fini.disabled=false}};
-    }catch(e){message("s-msg","err",e.message);go.disabled=false}};
+  };
+  // La clé de l'agent ne sort qu'après identification (mot de passe, et code si la double authentification est active) ; rien à demander avec les clés de test.
+  go.onclick=async()=>{
+    if(!etat.securite)await chargerSecurite();
+    if(etat.securite&&etat.securite.chiffrement&&etat.securite.chiffrement.mode==="cles_de_test"){
+      go.disabled=true;message("s-msg","ok",t("en_cours"));
+      try{await kit()}catch(e){message("s-msg","err",e.message);go.disabled=false}
+    }else identification(t("auth_txt"),kit,true)};
 }
 async function transmettreSecrets(){
   try{const r=await api("/api/secrets-chiffres?agent="+encodeURIComponent(etat.agent));telecharger(r.fichier,"application/json",JSON.stringify(r.secrets,null,2));

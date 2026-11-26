@@ -886,11 +886,15 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                 // ---------- Connecter l'agent ----------
                 // 1. Préparer : kit scellé par un code à usage unique (affiché une seule fois). La console
                 //    garde la clé tant que l'utilisateur n'a pas confirmé la remise.
-                ("POST", "/api/connecter/preparer") => match &cible {
-                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
-                    Some(a) if a.cle == "env" => json_rep(409, json!({ "erreur": "agent de test : sa clé est fournie par l'environnement, il n'y a rien à remettre" })),
-                    Some(a) if agents::est_connecte(a) => json_rep(409, json!({ "erreur": "agent déjà connecté : la console n'a plus sa clé" })),
-                    Some(a) => match preparer_kit(a, &owner, &defaut) {
+                //    R72 : le kit et son code sortent la clé privée de l'agent ; comme pour l'export d'une clé,
+                //    le mot de passe du propriétaire est exigé (et le code à 6 chiffres si la double
+                //    authentification est active). Sans fichier de clé (clés de test), rien à demander.
+                ("POST", "/api/connecter/preparer") => match (cle_ch.map(|_| garde.ouvrir(cle_ch, &owner, &v, true).map(|_| ())).unwrap_or(Ok(())), &cible) {
+                    (Err(r), _) => r,
+                    (_, None) => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                    (_, Some(a)) if a.cle == "env" => json_rep(409, json!({ "erreur": "agent de test : sa clé est fournie par l'environnement, il n'y a rien à remettre" })),
+                    (_, Some(a)) if agents::est_connecte(a) => json_rep(409, json!({ "erreur": "agent déjà connecté : la console n'a plus sa clé" })),
+                    (_, Some(a)) => match preparer_kit(a, &owner, &defaut) {
                         Ok((scelle, code)) => {
                             connexion_en_attente = Some(a.id.clone());
                             journal(json!({ "connexion": "kit préparé", "agent": a.id }));
@@ -1331,6 +1335,28 @@ mod tests {
         assert!(corps["fichier"]["chiffre"].is_string());
         // la page demande bien le code pour cette action
         assert!(PAGE.contains("api(\"/api/cle-chiffree\",{mot_de_passe:mdp,code})"), "la page doit envoyer le code");
+        serveur.unblock();
+        fil.join().unwrap();
+        let _ = std::fs::remove_file(ch);
+    }
+
+    /// R72 : préparer un kit de connexion, c'est sortir la clé privée d'un agent (kit + code dans la
+    /// même réponse). Le lien de session seul ne doit pas y suffire : mot de passe du propriétaire, et
+    /// code à 6 chiffres si la double authentification est active, comme pour exporter une clé.
+    #[test]
+    fn r72_kit_de_connexion_exige_le_mot_de_passe() {
+        let mdp = "le bon mot de passe";
+        let (base, serveur, fil, _, secret, ch) = console_avec_cle("r72", true);
+        for corps in [json!({}), json!({ "mot_de_passe": "un mauvais mot de passe" }), json!({ "mot_de_passe": mdp })] {
+            let (statut, rep) = poster(&base, "/api/connecter/preparer", corps);
+            assert_eq!(statut, 403, "sans identification complète, pas de kit : {rep}");
+            assert!(rep["kit"].is_null() && rep["code"].is_null());
+        }
+        // identification complète : la garde est passée (l'agent de test n'a simplement rien à remettre)
+        let code = format!("{:06}", double_auth::code(&secret, double_auth::maintenant() / 30));
+        let (statut, rep) = poster(&base, "/api/connecter/preparer", json!({ "mot_de_passe": mdp, "code": code }));
+        assert_eq!(statut, 409, "{rep}");
+        assert!(PAGE.contains("api(\"/api/connecter/preparer\",{agent:etat.agent,mot_de_passe:mdp,code})"), "la page doit demander le mot de passe");
         serveur.unblock();
         fil.join().unwrap();
         let _ = std::fs::remove_file(ch);
