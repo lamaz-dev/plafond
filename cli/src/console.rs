@@ -511,7 +511,7 @@ pub fn lancer(handle: Handle, owner: Keypair, agent: Keypair) -> Res<()> {
     let session = std::sync::Arc::new(Session::nouvelle()?);
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
     annoncer_lien("Console du propriétaire", &session)?;
-    servir(&serveur, &session, handle, owner, agent, std::env::var("PROPRIETAIRE_CLE").ok());
+    servir(&serveur, &session, handle, owner, agent, std::env::var("PROPRIETAIRE_CLE").ok(), None);
     Ok(())
 }
 
@@ -529,22 +529,42 @@ pub fn fichiers_compte(dossier: &str) -> FichiersCompte {
     }
 }
 
-/// Clé de l'agent principal du compte : lue, ou créée (fichier neuf, lisible par le seul utilisateur).
-/// Après une restauration depuis la phrase, l'ancien fichier peut manquer : un nouvel agent est créé ;
-/// les anciens coffres restent gelables par le propriétaire.
-fn cle_agent_compte(chemin: &str) -> Res<Keypair> {
-    if let Ok(t) = fs::read_to_string(chemin) {
-        let octets = zeroize::Zeroizing::new(hex::decode(t.trim())?);
-        return Ok(Keypair::from_seckey_slice(secp256k1::SECP256K1, &octets)?);
+/// Clé de l'agent principal du compte, chiffrée sur le disque par le mot de passe du propriétaire
+/// (même dérivation et même format que sa propre clé, `cle::Enveloppe`). Rend aussi l'enveloppe de la
+/// session, qui chiffrera les clés des nouveaux agents sans redemander le mot de passe.
+///  - fichier absent (premier lancement, ou restauration sur un autre ordinateur) : clé neuve, chiffrée ;
+///  - fichier en clair (version précédente) : migration, le clair est effacé ;
+///  - fichier chiffré : ouvert avec le mot de passe. S'il a été chiffré sous un ancien mot de passe
+///    (compte restauré depuis la phrase), la clé privée n'est plus lisible mais la clé publique l'est :
+///    la console n'a besoin que d'elle (surveiller, alimenter, geler restent possibles).
+fn cle_agent_compte(chemin: &str, mot_de_passe: &str) -> Res<(agents::Principal, cle::Enveloppe)> {
+    match agents::lire_cle_stockee(chemin)? {
+        Some(agents::CleStockee::Chiffree(f)) => {
+            let enveloppe = cle::Enveloppe::du_fichier(&f, mot_de_passe)?;
+            match enveloppe.dechiffrer(&f) {
+                Ok(k) => Ok((k.into(), enveloppe)),
+                Err(_) => {
+                    journal(json!({ "agent_principal": "clé chiffrée sous un autre mot de passe : clé publique seule" }));
+                    Ok((agents::Principal::publique_seule(secp256k1::PublicKey::from_slice(&hex::decode(&f.publique)?)?), enveloppe))
+                }
+            }
+        }
+        Some(agents::CleStockee::Claire(k)) => {
+            let enveloppe = cle::Enveloppe::nouvelle(mot_de_passe)?;
+            agents::chiffrer_fichier(chemin, &enveloppe)?;
+            journal(json!({ "agent_principal": "clé chiffrée sur le disque (elle était en clair)" }));
+            Ok((k.into(), enveloppe))
+        }
+        None => {
+            let enveloppe = cle::Enveloppe::nouvelle(mot_de_passe)?;
+            let k = cle::nouvelle()?;
+            if let Some(d) = std::path::Path::new(chemin).parent() {
+                fs::create_dir_all(d)?;
+            }
+            agents::ecrire_cle(std::path::Path::new(chemin), &k, Some(&enveloppe))?;
+            Ok((k.into(), enveloppe))
+        }
     }
-    let mut b = zeroize::Zeroizing::new([0u8; 32]);
-    getrandom::getrandom(&mut *b).map_err(|e| format!("aléa : {e}"))?;
-    let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &*b)?;
-    if let Some(d) = std::path::Path::new(chemin).parent() {
-        fs::create_dir_all(d)?;
-    }
-    crate::prive::ecrire(std::path::Path::new(chemin), zeroize::Zeroizing::new(hex::encode(k.secret_bytes())).as_bytes())?;
-    Ok(k)
 }
 
 /// Console du compte : s'ouvre verrouillée. La page propose de créer le compte (aucun fichier de clé)
@@ -557,14 +577,17 @@ pub fn lancer_compte(handle: Handle, dossier: String) -> Res<()> {
     let serveur = tiny_http::Server::http(format!("127.0.0.1:{PORT}")).map_err(|e| format!("écoute 127.0.0.1:{PORT} : {e}"))?;
     annoncer_lien("Plafond", &session)?;
     let fichiers = fichiers_compte(&dossier);
-    let (owner, agent) = porte(&serveur, &session, &fichiers)?;
+    let (owner, agent, enveloppe) = porte(&serveur, &session, &fichiers)?;
     println!("Compte ouvert.");
-    servir(&serveur, &session, handle, owner, agent, Some(fichiers.cle));
+    servir(&serveur, &session, handle, owner, agent, Some(fichiers.cle), Some(enveloppe));
     Ok(())
 }
 
+/// Compte ouvert : clé du propriétaire, agent principal, et enveloppe qui chiffre les clés d'agent.
+pub type CompteOuvert = (Keypair, agents::Principal, cle::Enveloppe);
+
 /// Phase verrouillée : seules la page, l'état du compte, la création et la connexion répondent.
-pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &FichiersCompte) -> Res<(Keypair, Keypair)> {
+pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &FichiersCompte) -> Res<CompteOuvert> {
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
@@ -603,14 +626,15 @@ pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &Fichiers
                     } else if *mdp != *conf {
                         json_rep(400, json!({ "erreur": "les deux mots de passe diffèrent" }))
                     } else {
-                        let cree = (|| -> Res<(Keypair, Keypair)> {
+                        let cree = (|| -> Res<CompteOuvert> {
                             if let Some(d) = std::path::Path::new(&fichiers.cle).parent() {
                                 fs::create_dir_all(d)?;
                             }
                             let c = cle::nouveau_coffret()?;
                             cle::ecrire(&fichiers.cle, &cle::chiffrer_coffret(&c, &mdp)?)?;
                             ecrire_compte(&fichiers.cle, &Compte::default())?;
-                            Ok((cle::cle_du_coffret(&c)?, cle_agent_compte(&fichiers.agent)?))
+                            let (agent, enveloppe) = cle_agent_compte(&fichiers.agent, &mdp)?;
+                            Ok((cle::cle_du_coffret(&c)?, agent, enveloppe))
                         })();
                         match cree {
                             Ok(k) => {
@@ -638,7 +662,7 @@ pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &Fichiers
                         match cle::depuis_phrase(&phrase) {
                             Err(_) => garde.echec("phrase de récupération invalide"),
                             Ok(c) => {
-                                let fait = (|| -> Res<(Keypair, Keypair)> {
+                                let fait = (|| -> Res<CompteOuvert> {
                                     if let Some(d) = std::path::Path::new(&fichiers.cle).parent() {
                                         fs::create_dir_all(d)?;
                                     }
@@ -647,7 +671,8 @@ pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &Fichiers
                                     }
                                     cle::ecrire(&fichiers.cle, &cle::chiffrer_coffret(&c, &mdp)?)?;
                                     ecrire_compte(&fichiers.cle, &Compte { sauvegarde_faite: true, double_auth: false })?;
-                                    Ok((cle::cle_du_coffret(&c)?, cle_agent_compte(&fichiers.agent)?))
+                                    let (agent, enveloppe) = cle_agent_compte(&fichiers.agent, &mdp)?;
+                                    Ok((cle::cle_du_coffret(&c)?, agent, enveloppe))
                                 })();
                                 match fait {
                                     Ok(k) => {
@@ -663,10 +688,10 @@ pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &Fichiers
                 }
                 ("POST", "/api/compte/ouvrir") if !existe => json_rep(404, json!({ "erreur": "aucun compte sur cet ordinateur : créez-en un" })),
                 ("POST", "/api/compte/ouvrir") => match garde.ouvrir_avec(Some(fichiers.cle.as_str()), None, &v, true) {
-                    Ok((owner, _)) => match cle_agent_compte(&fichiers.agent) {
-                        Ok(agent) => {
+                    Ok((owner, _)) => match cle_agent_compte(&fichiers.agent, &zeroize::Zeroizing::new(v["mot_de_passe"].as_str().unwrap_or("").to_string())) {
+                        Ok((agent, enveloppe)) => {
                             journal(json!({ "compte": "ouvert" }));
-                            ouvert = Some((owner, agent));
+                            ouvert = Some((owner, agent, enveloppe));
                             json_rep(200, json!({ "ouvert": true }))
                         }
                         Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
@@ -721,9 +746,11 @@ fn connexion_json(a: &agents::Agent) -> Value {
 }
 
 /// Kit de connexion d'un agent : sa clé, les règles et l'état de son coffre, ses secrets chiffrés.
-pub(crate) fn preparer_kit(a: &agents::Agent, owner: &Keypair, defaut: &str) -> Res<(connexion::Scelle, zeroize::Zeroizing<String>)> {
-    let hexa = zeroize::Zeroizing::new(fs::read_to_string(&a.cle)?);
-    let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &zeroize::Zeroizing::new(hex::decode(hexa.trim())?))?;
+/// La clé de l'agent est chiffrée sur le disque de la console : il faut l'enveloppe de la session ou le
+/// mot de passe du propriétaire (déjà exigé pour cette action depuis R72) pour l'ouvrir.
+pub(crate) fn preparer_kit(a: &agents::Agent, owner: &Keypair, defaut: &str, mot_de_passe: Option<&str>, enveloppe: Option<&cle::Enveloppe>) -> Res<(connexion::Scelle, zeroize::Zeroizing<String>)> {
+    let k = agents::cle_privee(a, mot_de_passe, enveloppe)?;
+    let hexa = zeroize::Zeroizing::new(hex::encode(k.secret_bytes()));
     let lire = |p: &str| fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
     let base = agents::base_fichiers(a, defaut);
     let kit = connexion::Kit {
@@ -753,11 +780,15 @@ struct Garde {
     echecs_code: u32,
     /// Verrous consécutifs dus aux codes : chaque nouveau verrou dure deux fois plus (1 h au plus).
     verrous_code: u32,
+    /// Console lancée sans enveloppe (clé déverrouillée dans le terminal) : le prochain mot de passe
+    /// vérifié est retenu le temps de dériver l'enveloppe des clés d'agent, puis effacé.
+    retenir_mdp: bool,
+    mdp_verifie: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Garde {
     fn neuve() -> Self {
-        Garde { echecs: 0, verrou: None, dernier_pas: 0, echecs_code: 0, verrous_code: 0 }
+        Garde { echecs: 0, verrou: None, dernier_pas: 0, echecs_code: 0, verrous_code: 0, retenir_mdp: false, mdp_verifie: None }
     }
 
     fn ouvrir(&mut self, chemin_cle: Option<&str>, owner: &Keypair, v: &Value, exiger_code: bool) -> Result<(Keypair, Option<cle::Coffret>), Rep> {
@@ -794,6 +825,9 @@ impl Garde {
             }
         }
         self.echecs = 0;
+        if self.retenir_mdp {
+            self.mdp_verifie = Some(mdp);
+        }
         Ok((k, coffret))
     }
 
@@ -834,7 +868,15 @@ fn resultat(r: Res<String>) -> Rep {
 }
 
 /// Boucle de la console (séparée pour être testée sur un port libre).
-pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, owner: Keypair, agent_principal: Keypair, chemin_cle: Option<String>) {
+///
+/// `enveloppe` : clé de chiffrement des clés d'agent, dérivée du mot de passe à l'ouverture du compte.
+/// Absente quand la console est lancée avec une clé déjà déverrouillée dans le terminal (commande
+/// `console`) : elle est alors dérivée à la première action qui demande le mot de passe, et les clés
+/// d'agent encore en clair sont chiffrées à ce moment-là. Sans fichier de clé (clés de test), il n'y a
+/// pas de mot de passe : les clés d'agent restent en clair, protégées par les seuls droits du fichier.
+pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, owner: Keypair, agent_principal: impl Into<agents::Principal>, chemin_cle: Option<String>, enveloppe: Option<cle::Enveloppe>) {
+    let agent_principal: agents::Principal = agent_principal.into();
+    let mut enveloppe = enveloppe;
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
@@ -846,6 +888,17 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
     let mut connexion_en_attente: Option<String> = None;
     let defaut = etat_par_defaut();
     let cle_ch = chemin_cle.as_deref();
+    // Migration : les clés d'agent encore en clair sont chiffrées dès que le mot de passe est connu.
+    let migrer = |e: &cle::Enveloppe| {
+        let n = agents::chiffrer_cles_en_clair(&defaut, e);
+        if n > 0 {
+            journal(json!({ "cles_agent": "chiffrées sur le disque (elles étaient en clair)", "nombre": n }));
+        }
+    };
+    if let Some(e) = &enveloppe {
+        migrer(e);
+    }
+    garde.retenir_mdp = enveloppe.is_none() && cle_ch.is_some();
     for mut req in serveur.incoming_requests() {
         let entetes: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
         let entete = |nom: &str| entetes.iter().find(|(k, _)| k == &nom.to_ascii_lowercase()).map(|(_, v)| v.clone());
@@ -958,7 +1011,7 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     } else {
                         let mandat = regles_mandat(&v);
                         let duree = mandat.as_ref().ok().and_then(|(_, d)| *d);
-                        match mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r))) {
+                        match mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r), enveloppe.as_ref())) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                             Ok(a) => {
                                 if let Some(j) = duree {
@@ -1025,7 +1078,7 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     (_, None) => json_rep(404, json!({ "erreur": "agent inconnu" })),
                     (_, Some(a)) if a.cle == "env" => json_rep(409, json!({ "erreur": "agent de test : sa clé est fournie par l'environnement, il n'y a rien à remettre" })),
                     (_, Some(a)) if agents::est_connecte(a) => json_rep(409, json!({ "erreur": "agent déjà connecté : la console n'a plus sa clé" })),
-                    (_, Some(a)) => match preparer_kit(a, &owner, &defaut) {
+                    (_, Some(a)) => match preparer_kit(a, &owner, &defaut, v["mot_de_passe"].as_str(), enveloppe.as_ref()) {
                         Ok((scelle, code)) => {
                             connexion_en_attente = Some(a.id.clone());
                             journal(json!({ "connexion": "kit préparé", "agent": a.id }));
@@ -1273,6 +1326,17 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
             }
         };
         let _ = req.respond(rep);
+        // Console lancée sans enveloppe : le mot de passe vient d'être vérifié, on en dérive l'enveloppe
+        // des clés d'agent et on chiffre celles qui étaient encore en clair. Il n'est pas gardé.
+        if let Some(mdp) = garde.mdp_verifie.take() {
+            if enveloppe.is_none() {
+                if let Ok(e) = cle::Enveloppe::nouvelle(&mdp) {
+                    migrer(&e);
+                    enveloppe = Some(e);
+                    garde.retenir_mdp = false;
+                }
+            }
+        }
     }
 }
 
@@ -1289,7 +1353,7 @@ mod tests {
         let port = serveur.server_addr().to_ip().unwrap().port();
         let (s2, h) = (serveur.clone(), rt.handle().clone());
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let fil = std::thread::spawn(move || servir(&s2, &Session::fixe("jeton-de-test"), h, k(1), k(2), None));
+        let fil = std::thread::spawn(move || servir(&s2, &Session::fixe("jeton-de-test"), h, k(1), k(2), None, None));
         let base = format!("http://127.0.0.1:{port}");
         let statut = |r: Result<ureq::Response, ureq::Error>| match r {
             Ok(r) => r.status(),
@@ -1350,9 +1414,10 @@ mod tests {
                 assert_eq!(statut(post("/api/compte/ouvrir", json!({ "mot_de_passe": "mauvais mot de passe" }))), 403);
                 assert_eq!(statut(post("/api/compte/ouvrir", json!({ "mot_de_passe": mdp }))), 200);
             }
-            let (owner, agent) = fil.join().unwrap().unwrap();
-            assert_ne!(owner.x_only_public_key(), agent.x_only_public_key());
-            cles.push((owner.x_only_public_key(), agent.x_only_public_key()));
+            let (owner, agent, _) = fil.join().unwrap().unwrap();
+            assert_ne!(owner.x_only_public_key(), agent.publique.x_only_public_key());
+            assert_eq!(agent.cle.public_key(), agent.publique, "clé de l'agent principal lisible avec le mot de passe");
+            cles.push((owner.x_only_public_key(), agent.publique.x_only_public_key()));
         }
         assert_eq!(cles[0], cles[1], "même compte à la réouverture");
         // mot de passe oublié : la phrase recrée la même clé ; l'ancien fichier est mis de côté, pas effacé
@@ -1365,8 +1430,11 @@ mod tests {
         let nouveau = "un tout nouveau mot de passe";
         assert_eq!(statut(post(json!({ "phrase": "abandon ".repeat(24), "mot_de_passe": nouveau, "confirmation": nouveau }))), 403, "phrase invalide");
         assert_eq!(statut(post(json!({ "phrase": phrase.as_str(), "mot_de_passe": nouveau, "confirmation": nouveau }))), 200);
-        let (owner, agent) = fil.join().unwrap().unwrap();
-        assert_eq!((owner.x_only_public_key(), agent.x_only_public_key()), cles[0], "même propriétaire et même agent");
+        let (owner, agent, _) = fil.join().unwrap().unwrap();
+        assert_eq!((owner.x_only_public_key(), agent.publique.x_only_public_key()), cles[0], "même propriétaire et même agent");
+        // la clé de l'agent principal est chiffrée sous l'ANCIEN mot de passe : sa clé privée n'est plus
+        // lisible, mais la console garde sa clé publique, donc son coffre (surveiller, alimenter, geler)
+        assert_ne!(agent.cle.public_key(), agent.publique, "clé privée de l'agent principal non lisible après restauration");
         assert!(cle::ouvrir_tout(&cle::lire(&fichiers.cle).unwrap(), nouveau).is_ok(), "nouveau mot de passe actif");
         assert!(fs::read_dir(&dossier).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains(".ancien-")), "ancien fichier conservé");
         for f in [&fichiers.cle, &fichiers.agent] {
@@ -1435,7 +1503,7 @@ mod tests {
         let (s2, ch2) = (serveur.clone(), ch.clone());
         let fil = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            servir(&s2, &Session::fixe("jeton-de-test"), rt.handle().clone(), owner, Keypair::from_seckey_slice(secp256k1::SECP256K1, &[2; 32]).unwrap(), Some(ch2));
+            servir(&s2, &Session::fixe("jeton-de-test"), rt.handle().clone(), owner, Keypair::from_seckey_slice(secp256k1::SECP256K1, &[2; 32]).unwrap(), Some(ch2), None);
         });
         (format!("http://127.0.0.1:{port}"), serveur, fil, phrase, secret, ch)
     }
@@ -1503,7 +1571,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let defaut = d.join("etat-coffre.json").to_string_lossy().into_owned();
-        let a = agents::nouveau(&defaut, "Recherche", None).unwrap();
+        let a = agents::nouveau(&defaut, "Recherche", None, None).unwrap();
         let cle_agent = std::fs::read_to_string(&a.cle).unwrap();
         *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(defaut.clone());
         let (base, serveur, fil, _, secret_2fa, ch) = console_avec_cle("chaine", true);
@@ -1593,7 +1661,7 @@ mod tests {
         let port = serveur.server_addr().to_ip().unwrap().port();
         let (s2, h) = (serveur.clone(), rt.handle().clone());
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let fil = std::thread::spawn(move || servir(&s2, &Session::fixe("jeton-de-test"), h, k(1), k(2), None));
+        let fil = std::thread::spawn(move || servir(&s2, &Session::fixe("jeton-de-test"), h, k(1), k(2), None, None));
         let base = format!("http://127.0.0.1:{port}");
         let statut = |r: Result<ureq::Response, ureq::Error>| match r {
             Ok(r) => r.status(),
@@ -1720,6 +1788,94 @@ mod tests {
         assert_eq!(etat(&jeton), 401);
         serveur.unblock();
         assert!(fil.join().unwrap().is_err());
+        let _ = fs::remove_dir_all(&dossier);
+    }
+
+    /// Clés d'agent côté console : jamais en clair sur le disque quand le compte a un mot de passe.
+    /// Agent principal chiffré dès la création du compte ; clés en clair d'une version précédente
+    /// (agent principal et mandat) chiffrées à l'ouverture suivante, le clair effacé ; « Connecter
+    /// l'agent » remet toujours la bonne clé, avec le mot de passe déjà demandé (R72), sans autre question.
+    #[test]
+    fn cles_d_agent_chiffrees_sur_le_disque_de_la_console() {
+        let dossier = std::env::temp_dir().join(format!("plafond-cles-agent-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dossier);
+        let fichiers = fichiers_compte(&dossier.to_string_lossy());
+        let defaut = dossier.join("etat-coffre.json").to_string_lossy().into_owned();
+        let mdp = "un mot de passe assez long";
+        let ouvrir = |chemin: &str, corps: Value| {
+            let serveur = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+            let base = format!("http://127.0.0.1:{}", serveur.server_addr().to_ip().unwrap().port());
+            let (s2, f2) = (serveur.clone(), fichiers_compte(&dossier.to_string_lossy()));
+            let fil = std::thread::spawn(move || porte(&s2, &Session::fixe("jeton-de-test"), &f2).map_err(|e| e.to_string()));
+            assert_eq!(poster(&base, chemin, corps).0, 200);
+            fil.join().unwrap().unwrap()
+        };
+        let clair = |k: &Keypair| hex::encode(k.secret_bytes());
+        // 1. création du compte : la clé de l'agent principal est chiffrée d'emblée
+        let (_, principal, enveloppe) = ouvrir("/api/compte/creer", json!({ "mot_de_passe": mdp, "confirmation": mdp }));
+        let sur_disque = fs::read_to_string(&fichiers.agent).unwrap();
+        assert!(!sur_disque.contains(&clair(&principal.cle)), "clé de l'agent principal en clair dans {}", fichiers.agent);
+        assert!(sur_disque.contains("argon2id") && sur_disque.contains(cle::USAGE_AGENT), "même format que la clé du propriétaire");
+        // 2. nouveau mandat pendant la session : clé chiffrée sans redemander le mot de passe
+        let a = agents::nouveau(&defaut, "Recherche", None, Some(&enveloppe)).unwrap();
+        let fichier_a = fs::read_to_string(&a.cle).unwrap();
+        assert!(fichier_a.contains("argon2id") && crate::prive::est_prive(std::path::Path::new(&a.cle)).unwrap());
+        let p = agents::Principal::from(principal.cle);
+        assert_eq!(agents::publique(&a, &p).unwrap().serialize().to_vec(), hex::decode(a.publique.as_ref().unwrap()).unwrap());
+        assert_ne!(agents::cle(&a, &p).unwrap().public_key(), agents::publique(&a, &p).unwrap(), "les opérations du propriétaire n'ouvrent pas la clé");
+        // 3. migration : fichiers en clair d'une version précédente (agent principal et mandat)
+        let (ancien_principal, ancien_mandat) = (cle::nouvelle().unwrap(), cle::nouvelle().unwrap());
+        fs::remove_file(&fichiers.agent).unwrap();
+        fs::write(&fichiers.agent, clair(&ancien_principal)).unwrap();
+        let b = agents::nouveau(&defaut, "Veille", None, None).unwrap();
+        fs::remove_file(&b.cle).unwrap();
+        fs::write(&b.cle, clair(&ancien_mandat)).unwrap();
+        // une migration interrompue juste avant le remplacement se termine à la lecture suivante
+        let c = agents::nouveau(&defaut, "Interrompu", None, None).unwrap();
+        let cle_c = agents::cle(&c, &p).unwrap();
+        agents::ecrire_cle(std::path::Path::new(&format!("{}.chiffre", c.cle)), &cle_c, Some(&enveloppe)).unwrap();
+        drop(enveloppe);
+        let (_, principal, enveloppe) = ouvrir("/api/compte/ouvrir", json!({ "mot_de_passe": mdp }));
+        assert_eq!(clair(&principal.cle), clair(&ancien_principal), "même agent principal après migration");
+        assert!(!fs::read_to_string(&fichiers.agent).unwrap().contains(&clair(&ancien_principal)), "clair de l'agent principal effacé");
+        // les mandats sont migrés au démarrage de la console (`servir`), avec l'enveloppe de la session
+        let serveur = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let base = format!("http://127.0.0.1:{}", serveur.server_addr().to_ip().unwrap().port());
+        *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(defaut.clone());
+        let (s2, ch, owner) = (serveur.clone(), fichiers.cle.clone(), cle::dechiffrer(&cle::lire(&fichiers.cle).unwrap(), mdp).unwrap());
+        let fil = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            servir(&s2, &Session::fixe("jeton-de-test"), rt.handle().clone(), owner, principal, Some(ch), Some(enveloppe));
+        });
+        assert_eq!(poster(&base, "/api/connecter/preparer", json!({ "agent": b.id })).0, 403, "toujours le mot de passe (R72)");
+        let (statut, r) = poster(&base, "/api/connecter/preparer", json!({ "agent": b.id, "mot_de_passe": mdp }));
+        assert_eq!(statut, 200, "{r}");
+        for (agent, cle_attendue) in [(&b, &ancien_mandat), (&c, &cle_c)] {
+            let f = fs::read_to_string(&agent.cle).unwrap();
+            assert!(f.contains("argon2id") && !f.contains(&clair(cle_attendue)), "clé du mandat {} encore en clair", agent.nom);
+            assert!(!std::path::Path::new(&format!("{}.chiffre", agent.cle)).exists(), "pas de fichier intermédiaire laissé");
+            assert!(crate::prive::est_prive(std::path::Path::new(&agent.cle)).unwrap());
+        }
+        // le kit porte bien la clé d'origine du mandat migré
+        let kit: connexion::Scelle = serde_json::from_value(r["kit"].clone()).unwrap();
+        let installe = dossier.join("serveur-agent").to_string_lossy().into_owned();
+        connexion::installer_demo(&kit, r["code"].as_str().unwrap(), &installe).unwrap();
+        assert_eq!(fs::read_to_string(format!("{installe}/agent.key")).unwrap().trim(), clair(&ancien_mandat));
+        // aucun fichier de la console ne contient une clé d'agent en clair
+        let mut tout = String::new();
+        for f in fs::read_dir(&dossier).unwrap().chain(fs::read_dir(dossier.join("agents")).unwrap()).filter_map(|e| e.ok()).filter(|e| e.path().is_file()) {
+            tout += &fs::read_to_string(f.path()).unwrap_or_default();
+        }
+        for k in [&ancien_principal, &ancien_mandat, &cle_c] {
+            assert!(!tout.contains(&clair(k)), "clé d'agent en clair restée sur le disque de la console");
+        }
+        // un autre mot de passe n'ouvre pas la clé d'un mandat : message clair, pas de kit
+        let f: cle::Fichier = serde_json::from_str(&fs::read_to_string(&c.cle).unwrap()).unwrap();
+        assert!(cle::ouvrir_cle_agent(&f, Some("un tout autre mot de passe"), None).is_err());
+        assert_eq!(clair(&cle::ouvrir_cle_agent(&f, Some(mdp), None).unwrap()), clair(&cle_c));
+        serveur.unblock();
+        fil.join().unwrap();
+        *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let _ = fs::remove_dir_all(&dossier);
     }
 

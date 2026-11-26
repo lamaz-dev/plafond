@@ -34,7 +34,11 @@ pub struct Fichier {
     pub nonce: String,
     pub chiffre: String,
     /// Clé publique x-only (en clair : sert à identifier le coffre, ne permet pas de signer).
+    /// Pour une clé d'agent (`usage` = "cle-agent") : clé publique complète (33 octets).
     pub publique: String,
+    /// Absent pour la clé du propriétaire ; "cle-agent" pour une clé d'agent gardée par la console.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<String>,
 }
 
 /// Clé dérivée du mot de passe : effacée de la mémoire à la sortie de portée (y compris en cas
@@ -65,7 +69,7 @@ pub fn chiffrer(k: &Keypair, mot_de_passe: &str) -> Res<Fichier> {
     let c = XChaCha20Poly1305::new((&*cle).into())
         .encrypt(XNonce::from_slice(&nonce), Payload { msg: &*Zeroizing::new(k.secret_bytes()), aad: &aad(&publique) })
         .map_err(|_| "chiffrement impossible")?;
-    Ok(Fichier { version: 1, kdf: "argon2id".into(), m_kio: M_KIO, t: T, p: P, sel: hex::encode(sel), nonce: hex::encode(nonce), chiffre: hex::encode(c), publique })
+    Ok(Fichier { version: 1, kdf: "argon2id".into(), m_kio: M_KIO, t: T, p: P, sel: hex::encode(sel), nonce: hex::encode(nonce), chiffre: hex::encode(c), publique, usage: None })
 }
 
 /// Contenu chiffré d'un fichier v2 : la source de la clé (phrase de récupération) et, si la double
@@ -137,13 +141,18 @@ pub fn chiffrer_coffret(c: &Coffret, mot_de_passe: &str) -> Res<Fichier> {
     let ch = XChaCha20Poly1305::new((&*cle).into())
         .encrypt(XNonce::from_slice(&nonce), Payload { msg: contenu.as_bytes(), aad: &aad_v2(&publique) })
         .map_err(|_| "chiffrement impossible")?;
-    Ok(Fichier { version: 2, kdf: "argon2id".into(), m_kio: M_KIO, t: T, p: P, sel: hex::encode(sel), nonce: hex::encode(nonce), chiffre: hex::encode(ch), publique })
+    Ok(Fichier { version: 2, kdf: "argon2id".into(), m_kio: M_KIO, t: T, p: P, sel: hex::encode(sel), nonce: hex::encode(nonce), chiffre: hex::encode(ch), publique, usage: None })
 }
 
 fn controler(f: &Fichier) -> Res<()> {
     if !(f.version == 1 || f.version == 2) || f.kdf != "argon2id" {
         return Err("format de clé inconnu".into());
     }
+    controler_cout(f)
+}
+
+/// Bornes des paramètres de dérivation, communes à la clé du propriétaire et aux clés d'agent.
+fn controler_cout(f: &Fichier) -> Res<()> {
     if f.m_kio < 19 * 1024 || f.t < 2 {
         return Err("paramètres de dérivation trop faibles : fichier refusé".into());
     }
@@ -156,6 +165,9 @@ fn controler(f: &Fichier) -> Res<()> {
 /// Ouvre un fichier v1 ou v2 : la clé, et pour v2 le coffret (phrase, double authentification).
 pub fn ouvrir_tout(f: &Fichier, mot_de_passe: &str) -> Res<(Keypair, Option<Coffret>)> {
     controler(f)?;
+    if f.usage.is_some() {
+        return Err("ce fichier n'est pas une clé de propriétaire".into());
+    }
     let cle = deriver(mot_de_passe, &hex::decode(&f.sel)?, f.m_kio, f.t, f.p)?;
     let nonce = hex::decode(&f.nonce)?;
     if nonce.len() != 24 {
@@ -184,6 +196,104 @@ pub fn ouvrir_tout(f: &Fichier, mot_de_passe: &str) -> Res<(Keypair, Option<Coff
 
 pub fn dechiffrer(f: &Fichier, mot_de_passe: &str) -> Res<Keypair> {
     Ok(ouvrir_tout(f, mot_de_passe)?.0)
+}
+
+// ---------- Clés d'agent gardées par la console ----------
+//
+// Tant qu'un agent n'est pas connecté, la console garde sa clé privée. Elle est chiffrée sur le
+// disque comme la clé du propriétaire : même dérivation (Argon2id depuis le mot de passe du
+// propriétaire, mêmes bornes), même chiffrement (XChaCha20-Poly1305), même fichier JSON (`Fichier`),
+// avec `usage` = "cle-agent" et des données associées propres (un fichier d'agent ne s'ouvre pas
+// comme une clé de propriétaire, et inversement).
+
+pub const USAGE_AGENT: &str = "cle-agent";
+
+/// Clé de chiffrement des clés d'agent, dérivée du mot de passe du propriétaire. La console la garde
+/// en mémoire le temps de la session (comme la clé du propriétaire) pour chiffrer la clé d'un nouvel
+/// agent sans redemander le mot de passe ; elle est effacée de la mémoire à la sortie de portée.
+pub struct Enveloppe {
+    sel: Vec<u8>,
+    m_kio: u32,
+    t: u32,
+    p: u32,
+    cle: Zeroizing<[u8; 32]>,
+}
+
+fn aad_agent(publique: &str) -> Vec<u8> {
+    format!("kaspa-agent-vault/cle-agent/v1/{publique}").into_bytes()
+}
+
+impl Enveloppe {
+    /// Enveloppe neuve (sel tiré au hasard, coût standard de `cle.rs`).
+    pub fn nouvelle(mot_de_passe: &str) -> Res<Self> {
+        Self::avec_cout(mot_de_passe, M_KIO, T, P)
+    }
+
+    pub(crate) fn avec_cout(mot_de_passe: &str, m_kio: u32, t: u32, p: u32) -> Res<Self> {
+        let mut sel = vec![0u8; 16];
+        getrandom::getrandom(&mut sel).map_err(|e| format!("aléa : {e}"))?;
+        Ok(Enveloppe { cle: deriver(mot_de_passe, &sel, m_kio, t, p)?, sel, m_kio, t, p })
+    }
+
+    /// Enveloppe d'un fichier de clé d'agent existant (son sel, ses paramètres) pour ce mot de passe.
+    /// Ne dit pas si le mot de passe est le bon : c'est `dechiffrer` qui tranche.
+    pub fn du_fichier(f: &Fichier, mot_de_passe: &str) -> Res<Self> {
+        controler_agent(f)?;
+        let sel = hex::decode(&f.sel)?;
+        Ok(Enveloppe { cle: deriver(mot_de_passe, &sel, f.m_kio, f.t, f.p)?, sel, m_kio: f.m_kio, t: f.t, p: f.p })
+    }
+
+    /// Vrai si ce fichier a été chiffré avec le même sel et les mêmes paramètres (même session).
+    pub fn convient(&self, f: &Fichier) -> bool {
+        hex::decode(&f.sel).is_ok_and(|s| s == self.sel) && (f.m_kio, f.t, f.p) == (self.m_kio, self.t, self.p)
+    }
+
+    pub fn chiffrer(&self, k: &Keypair) -> Res<Fichier> {
+        let mut nonce = [0u8; 24];
+        getrandom::getrandom(&mut nonce).map_err(|e| format!("aléa : {e}"))?;
+        let publique = hex::encode(k.public_key().serialize());
+        let c = XChaCha20Poly1305::new((&*self.cle).into())
+            .encrypt(XNonce::from_slice(&nonce), Payload { msg: &*Zeroizing::new(k.secret_bytes()), aad: &aad_agent(&publique) })
+            .map_err(|_| "chiffrement impossible")?;
+        Ok(Fichier { version: 1, kdf: "argon2id".into(), m_kio: self.m_kio, t: self.t, p: self.p, sel: hex::encode(&self.sel), nonce: hex::encode(nonce), chiffre: hex::encode(c), publique, usage: Some(USAGE_AGENT.into()) })
+    }
+
+    pub fn dechiffrer(&self, f: &Fichier) -> Res<Keypair> {
+        controler_agent(f)?;
+        if !self.convient(f) {
+            return Err("clé d'agent chiffrée sous d'autres paramètres".into());
+        }
+        let nonce = hex::decode(&f.nonce)?;
+        if nonce.len() != 24 {
+            return Err("nonce invalide".into());
+        }
+        let clair: Zeroizing<Vec<u8>> = XChaCha20Poly1305::new((&*self.cle).into())
+            .decrypt(XNonce::from_slice(&nonce), Payload { msg: &hex::decode(&f.chiffre)?, aad: &aad_agent(&f.publique) })
+            .map_err(|_| "mot de passe incorrect ou fichier modifié")?
+            .into();
+        let k = Keypair::from_seckey_slice(secp256k1::SECP256K1, &clair)?;
+        if hex::encode(k.public_key().serialize()) != f.publique {
+            return Err("clé publique incohérente : fichier modifié".into());
+        }
+        Ok(k)
+    }
+}
+
+fn controler_agent(f: &Fichier) -> Res<()> {
+    if f.version != 1 || f.kdf != "argon2id" || f.usage.as_deref() != Some(USAGE_AGENT) {
+        return Err("format de clé d'agent inconnu".into());
+    }
+    controler_cout(f)
+}
+
+/// Ouvre une clé d'agent chiffrée : avec l'enveloppe de la session si elle convient (aucun calcul
+/// coûteux), sinon en dérivant depuis le mot de passe.
+pub fn ouvrir_cle_agent(f: &Fichier, mot_de_passe: Option<&str>, enveloppe: Option<&Enveloppe>) -> Res<Keypair> {
+    if let Some(e) = enveloppe.filter(|e| e.convient(f)) {
+        return e.dechiffrer(f);
+    }
+    let mdp = mot_de_passe.ok_or("mot de passe requis pour ouvrir la clé de cet agent")?;
+    Enveloppe::du_fichier(f, mdp)?.dechiffrer(f)
 }
 
 /// Remplace un fichier de clé existant (même clé publique exigée), de façon atomique ; l'ancienne
@@ -299,6 +409,47 @@ mod tests {
         assert!(ouvrir_tout(&f, "mauvais mot de passe").is_err());
         let json = serde_json::to_string(&f).unwrap();
         assert!(!json.contains(&hex::encode(&*c2.entropie)) && !json.contains("abandon"));
+    }
+
+    /// Clés d'agent gardées par la console : même dérivation et même format que la clé du
+    /// propriétaire, mais un usage distinct ; rien de lisible sans le mot de passe.
+    #[test]
+    fn cle_d_agent_chiffree_par_le_mot_de_passe_du_proprietaire() {
+        let mdp = "un mot de passe long";
+        let (a, b) = (nouvelle().unwrap(), nouvelle().unwrap());
+        let env = Enveloppe::avec_cout(mdp, 19 * 1024, 2, 1).unwrap();
+        let (fa, fb) = (env.chiffrer(&a).unwrap(), env.chiffrer(&b).unwrap());
+        let json = serde_json::to_string(&fa).unwrap();
+        assert!(!json.contains(&hex::encode(a.secret_bytes())), "clé privée en clair dans le fichier");
+        assert!(json.contains("argon2id") && json.contains("cle-agent") && json.contains(&hex::encode(a.public_key().serialize())));
+        assert_ne!(fa.nonce, fb.nonce, "un nonce par fichier");
+        // même session : l'enveloppe ouvre ; autre session : le mot de passe ouvre, pas un autre
+        assert_eq!(env.dechiffrer(&fa).unwrap().secret_bytes(), a.secret_bytes());
+        let relu: Fichier = serde_json::from_str(&json).unwrap();
+        assert_eq!(ouvrir_cle_agent(&relu, Some(mdp), None).unwrap().secret_bytes(), a.secret_bytes());
+        assert_eq!(ouvrir_cle_agent(&relu, None, Some(&env)).unwrap().secret_bytes(), a.secret_bytes());
+        assert!(ouvrir_cle_agent(&relu, Some("un autre mot de passe"), None).is_err());
+        assert!(ouvrir_cle_agent(&relu, None, None).is_err(), "sans mot de passe ni enveloppe : rien");
+        let autre = Enveloppe::avec_cout(mdp, 19 * 1024, 2, 1).unwrap(); // autre sel
+        assert!(autre.dechiffrer(&fa).is_err());
+        assert_eq!(ouvrir_cle_agent(&fa, Some(mdp), Some(&autre)).unwrap().secret_bytes(), a.secret_bytes());
+        // falsifications : chiffré d'un autre agent, clé publique échangée, paramètres affaiblis ou démesurés
+        let mut f = env.chiffrer(&a).unwrap();
+        f.chiffre = fb.chiffre.clone();
+        f.nonce = fb.nonce.clone();
+        assert!(env.dechiffrer(&f).is_err());
+        let mut f = env.chiffrer(&a).unwrap();
+        f.publique = fb.publique.clone();
+        assert!(env.dechiffrer(&f).is_err());
+        for (m, t) in [(1024, 2), (19 * 1024, 1), (64 * 1024 * 1024, 2)] {
+            let mut f = env.chiffrer(&a).unwrap();
+            (f.m_kio, f.t) = (m, t);
+            assert!(ouvrir_cle_agent(&f, Some(mdp), None).is_err(), "paramètres {m}/{t} refusés avant tout calcul");
+        }
+        // les deux usages ne se confondent pas
+        assert!(dechiffrer(&fa, mdp).is_err(), "une clé d'agent ne s'ouvre pas comme une clé de propriétaire");
+        let proprio = rapide(&a, mdp);
+        assert!(ouvrir_cle_agent(&proprio, Some(mdp), None).is_err(), "une clé de propriétaire ne s'ouvre pas comme une clé d'agent");
     }
 
     #[test]

@@ -143,6 +143,7 @@ pub async fn lancer(owner: Keypair, principal: Keypair) -> Res<()> {
 /// Déroule les 7 étapes en les notant dans `etapes`. Toute erreur interrompt la démo, mais l'appelant
 /// écrit toujours le bilan et le rapport (étapes faites + cause de l'interruption).
 async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -> Res<()> {
+    let principal = agents::Principal::from(principal);
     let defaut = etat_par_defaut();
     let mut note = |numero, titre, ok, detail: String| {
         println!("\n[{numero}/7] {titre} : {}\n      {detail}", if ok { "OK" } else { "ÉCHEC" });
@@ -164,7 +165,7 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
 
     // 1. Créer un agent
     let nom = format!("Démo DSI {}", double_auth::maintenant() % 100_000);
-    let a = agents::nouveau(&defaut, &nom, Some(regles))?;
+    let a = agents::nouveau(&defaut, &nom, Some(regles), None)?; // clés jetables de la démo : pas de mot de passe
     let pub_agent = agents::xonly_pub(&a, &principal);
     note(1, "Créer un agent", true, format!("« {nom} » ({})", a.id));
 
@@ -191,7 +192,7 @@ async fn derouler(owner: Keypair, principal: Keypair, etapes: &mut Vec<Etape>) -
     note(3, "Lui donner un secret", !fichier_secrets.contains("demo-"), "clé d'API enregistrée, chiffrée pour cet agent seul ; valeur absente du fichier et des journaux".into());
 
     // 4. Le connecter : sa clé passe sur « son serveur », la console l'efface
-    let (kit, code) = console::preparer_kit(&a, &owner, &defaut)?;
+    let (kit, code) = console::preparer_kit(&a, &owner, &defaut, None, None)?;
     let serveur = std::path::Path::new(&defaut).parent().map(|p| p.to_path_buf()).unwrap_or_default().join("serveur-agent-demo").join(&a.id);
     let serveur = serveur.to_string_lossy().into_owned();
     connexion::installer_demo(&kit, &code, &serveur)?;
