@@ -64,7 +64,7 @@ pub fn est_prive(chemin: &Path) -> Res<bool> {
     }
     #[cfg(windows)]
     {
-        Ok(windows::liste_privee(&windows::liste(chemin)?, &windows::sid_courant()?))
+        Ok(windows::liste_privee(&windows::liste(chemin)?, &windows::liste_attendue()?))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -122,7 +122,7 @@ mod windows {
     }
 
     /// Identifiant de sécurité (SID) de l'utilisateur qui exécute le programme, sous forme de texte.
-    pub fn sid_courant() -> Result<String> {
+    fn sid_courant() -> Result<String> {
         unsafe {
             let mut jeton: HANDLE = null_mut();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut jeton) == 0 {
@@ -202,7 +202,17 @@ mod windows {
         if e != 0 {
             return Err(Error::from_raw_os_error(e as i32));
         }
-        let d = Descripteur(d);
+        en_texte(&Descripteur(d))
+    }
+
+    /// La liste « utilisateur courant seul », telle que le système l'écrit lui-même : il remplace
+    /// certains identifiants par un alias (`LA` pour le compte administrateur intégré, par exemple),
+    /// si bien qu'on ne peut pas comparer avec l'identifiant écrit en toutes lettres.
+    pub fn liste_attendue() -> Result<String> {
+        en_texte(&descripteur()?)
+    }
+
+    fn en_texte(d: &Descripteur) -> Result<String> {
         let mut p: *mut u16 = null_mut();
         if unsafe { ConvertSecurityDescriptorToStringSecurityDescriptorW(d.0, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &mut p, null_mut()) } == 0 {
             return Err(Error::last_os_error());
@@ -214,12 +224,16 @@ mod windows {
         Ok(s)
     }
 
-    /// Vrai si la liste est protégée (pas d'héritage) et ne contient qu'une entrée : « autoriser » pour `sid`.
-    pub fn liste_privee(sddl: &str, sid: &str) -> bool {
-        let Some(reste) = sddl.strip_prefix("D:") else { return false };
-        let Some(debut) = reste.find('(') else { return false };
-        let (drapeaux, entrees) = reste.split_at(debut);
-        drapeaux.contains('P') && entrees.matches('(').count() == 1 && entrees.starts_with("(A;") && entrees.ends_with(&format!(";;;{sid})"))
+    /// Vrai si la liste est protégée (pas d'héritage) et ne contient qu'une entrée, celle attendue :
+    /// « accès complet pour l'utilisateur courant ». Les deux textes viennent du système lui-même.
+    pub fn liste_privee(sddl: &str, attendue: &str) -> bool {
+        let decouper = |s: &str| -> Option<(String, String)> {
+            let reste = s.strip_prefix("D:")?;
+            let debut = reste.find('(')?;
+            Some((reste[..debut].to_string(), reste[debut..].to_string()))
+        };
+        let (Some((drapeaux, entrees)), Some((_, voulues))) = (decouper(sddl), decouper(attendue)) else { return false };
+        drapeaux.contains('P') && entrees == voulues && entrees.matches('(').count() == 1 && entrees.starts_with("(A;;FA;;;")
     }
 }
 
