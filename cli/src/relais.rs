@@ -41,6 +41,19 @@ pub const NETWORK: &str = "kaspa:testnet-10";
 /// Frais par entrée d'un paiement exact (valeur des vecteurs officiels : 0,003 KAS).
 pub const FRAIS_PAR_ENTREE: u64 = 300_000;
 
+/// Frais par entrée effectivement appliqués : `FRAIS_PAR_ENTREE`, sauf réglage RELAIS_FRAIS_PAR_ENTREE
+/// (borné entre 300 000 et 1 000 000 sompi). Sert à produire une transaction d'identifiant différent
+/// avec la même pièce, quand un vendeur garde une réclamation sur l'ancien identifiant (kaspa-x402 #40).
+pub fn frais_par_entree() -> Result<u64, String> {
+    match std::env::var("RELAIS_FRAIS_PAR_ENTREE") {
+        Err(_) => Ok(FRAIS_PAR_ENTREE),
+        Ok(v) => match v.trim().parse::<u64>() {
+            Ok(f) if (FRAIS_PAR_ENTREE..=1_000_000).contains(&f) => Ok(f),
+            _ => Err(format!("RELAIS_FRAIS_PAR_ENTREE invalide : {v} (attendu entre {FRAIS_PAR_ENTREE} et 1000000 sompi)")),
+        },
+    }
+}
+
 /// Politique de financement de l'agent (exigée par la spec avant toute signature non surveillée).
 #[derive(Clone, Debug)]
 pub struct Politique {
@@ -395,6 +408,7 @@ pub fn construire_tx(
     let adresse = crate::address(porte_monnaie);
     let spk_agent = pay_to_address_script(&adresse);
 
+    let frais_entree = frais_par_entree()?;
     // Sélection des pièces du porte-monnaie (P2PK de l'agent uniquement).
     let mut choisies = vec![];
     let mut total = 0u64;
@@ -404,11 +418,11 @@ pub fn construire_tx(
         }
         choisies.push((op.clone(), u.clone()));
         total += u.amount;
-        if total >= montant + FRAIS_PAR_ENTREE * choisies.len() as u64 {
+        if total >= montant + frais_entree * choisies.len() as u64 {
             break;
         }
     }
-    let frais = FRAIS_PAR_ENTREE * choisies.len().max(1) as u64;
+    let frais = frais_entree * choisies.len().max(1) as u64;
     if choisies.is_empty() || total < montant + frais {
         return Err(format!("porte-monnaie insuffisant : {total} sompi pour {} demandés (recharger depuis le coffre)", montant + frais).into());
     }

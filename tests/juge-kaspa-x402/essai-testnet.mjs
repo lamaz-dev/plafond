@@ -91,7 +91,10 @@ const fournisseur = new FournisseurCoffre({
   coffre,
   plafond: 50_000_000n,
   maxParPaiement: 50_000_000n,
-  signer: signataireRust({ binaire: VAULT_CLI, args: ["relais-payer"], env: { RELAIS_ORIGINES: ORIGINE, RELAIS_DESTINATAIRES: VENDEUR, RELAIS_MAX: PRIX_MAX.toString() } }),
+  // Frais de 300 001 sompi (au lieu de 300 000) : même pièce, mais identifiant de transaction nouveau.
+  // Le vendeur garde une réclamation sur 6837e741…4cb7 (même pièce, mêmes frais) ; ne pas le réutiliser
+  // (kaspa-x402 #40, réponse du 26 nov. 2026).
+  signer: signataireRust({ binaire: VAULT_CLI, args: ["relais-payer"], env: { RELAIS_ORIGINES: ORIGINE, RELAIS_DESTINATAIRES: VENDEUR, RELAIS_MAX: PRIX_MAX.toString(), RELAIS_FRAIS_PAR_ENTREE: "300001" } }),
 });
 
 // Les runners GitHub reçoivent aussi des adresses IPv6, que le transport borné refuse par principe.
