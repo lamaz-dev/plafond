@@ -114,6 +114,15 @@ propriétaire ajoutent alors des pièces à l'adresse.
 **Ce que la borne ne dit pas.** Un dépôt nouveau (propriétaire ou tiers) est une nouvelle racine.
 Sa contribution est comptée à part (§1), et sans rafale puisque `g = 0`.
 
+**Rechargement par regonflement (R62, 26 nov. 2026).** L'outil ne crée plus de pièce pour
+« Ajouter des fonds » : le propriétaire dépense une pièce existante (`ownerControl`) et la renvoie
+au coffre grossie de l'apport, d'âge nul. La lignée de l'ancienne pièce s'arrête ; elle a perdu au
+plus `min(V, C + C·D₁/R)` avant, la nouvelle racine perd au plus `C·D₂/R` après (pas de rafale,
+`g = 0`). Sur toute fenêtre, la place de cette pièce perd donc encore au plus `C + C·D/R` :
+le nombre de pièces, et donc la borne par période affichée, ne changent pas. La courbe promise
+(somme des apports, §1b) reste une borne : l'apport est une racine à sa date, la pièce regonflée
+garde sa propre courbe (test `coffre::tests::r62_courbe_promise_tenue_apres_regonflement`).
+
 ## 4. Comparaison avec la v0.5.1 (borne identique, preuve plus courte)
 
 | | v0.5.1 | v0.6 |

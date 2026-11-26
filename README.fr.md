@@ -77,7 +77,7 @@ relatif) : il n'y a ni compteur, ni date fournie par l'agent, ni état à suivre
 - **L'adresse est l'identité du coffre** : le script ne change jamais. Un vendeur recompile le script
   à partir des quatre paramètres et vérifie la pièce sur la chaîne, sans indexeur ni lignée.
 - **Un tiers de frais en moins** que la v0.5.1, et des coffres plus petits possibles (0,08 KAS).
-- **Contrôle total du propriétaire** : rechargement (une nouvelle pièce), gel de toutes les pièces.
+- **Contrôle total du propriétaire** : rechargement (une pièce existante est regonflée : le rythme du mandat ne change pas), gel de toutes les pièces.
 - **Ce que la v0.6 ne fait pas** : pas de rafale (un achat d'au plus `C`, puis attente), pas de liste
   blanche de vendeurs dans le contrat. Détail : [comparaison](spec/comparaison-v0.5.1-v0.6.md).
 

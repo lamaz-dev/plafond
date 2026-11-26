@@ -88,7 +88,17 @@ pub fn suivre(e: &mut EtatCoeur, pieces: &[Piece], now: u64) -> bool {
         let disparues: u64 = e.vues.iter().filter(|v| !actuelles.contains(v)).map(|v| v.1).sum();
         let nouvelles: Vec<&(String, u64)> = actuelles.iter().filter(|a| !e.vues.contains(a)).collect();
         let continuations: Vec<&&(String, u64)> = nouvelles.iter().filter(|n| !apports.contains(n.0.split(':').next().unwrap_or(""))).collect();
-        let revenu: u64 = continuations.iter().map(|n| n.1).sum();
+        // Pièces d'un apport : ce qui dépasse l'apport vient d'une pièce du coffre regonflée (R62),
+        // ce n'est pas une dépense.
+        let mut par_apport: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+        for n in nouvelles.iter().filter(|n| apports.contains(n.0.split(':').next().unwrap_or(""))) {
+            *par_apport.entry(n.0.split(':').next().unwrap_or("")).or_default() += n.1;
+        }
+        let recycle: u64 = par_apport
+            .iter()
+            .map(|(t, v)| v.saturating_sub(e.apports.iter().filter(|a| a.txid == *t).map(|a| a.sompi).sum()))
+            .sum();
+        let revenu: u64 = continuations.iter().map(|n| n.1).sum::<u64>() + recycle;
         if let (Some(dernier), true) = (continuations.last(), disparues > revenu) {
             e.achats.push(AchatVu { txid: dernier.0.split(':').next().unwrap_or("").to_string(), sompi: disparues - revenu, daa: now });
             let n = e.achats.len();
@@ -228,17 +238,106 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
     Ok(txid)
 }
 
-/// Le propriétaire ajoute une pièce au coffre. C'est une nouvelle racine : la courbe s'allonge
-/// d'autant, sans rafale (une pièce neuve n'a pas d'âge).
+/// Nombre de pièces du mandat, fixé à la création : les apports de la transaction de création
+/// (une entrée par pièce, même identifiant).
+pub fn pieces_du_mandat(e: &EtatCoeur) -> usize {
+    e.apports.first().map(|a| e.apports.iter().filter(|b| b.txid == a.txid).count()).unwrap_or(1).max(1)
+}
+
+/// Ce que fait « Ajouter des fonds ».
+#[derive(Debug, Clone, PartialEq)]
+pub enum Recharge {
+    /// Regonfler cette pièce : elle repart d'un âge nul avec l'apport en plus. Le nombre de pièces,
+    /// donc le rythme maximal du mandat, ne change pas (R62).
+    Regonfler(TransactionOutpoint, u64),
+    /// Il manque des pièces (coffre vidé par les achats) : en recréer une rend au mandat son rythme
+    /// d'origine, sans le dépasser.
+    Nouvelle,
+    /// Toutes les pièces utilisables attendent leur confirmation : réessayer dans quelques secondes.
+    Attendre,
+}
+
+/// R62 : choisir comment recharger sans ajouter de rythme. Chaque pièce a son propre rythme ; créer
+/// une pièce de plus ferait dépasser le budget par période affiché dans les règles du mandat.
+/// On regonfle donc la pièce qui a le moins de budget disponible maintenant (la plus jeune) : c'est
+/// elle qui perd le moins en repartant d'un âge nul.
+pub fn choisir_recharge(coeur: &Coeur, pieces: &[Piece], k: usize, now: u64) -> Recharge {
+    let utiles: Vec<&Piece> = pieces.iter().filter(|p| p.valeur >= coeur_plancher()).collect();
+    if utiles.len() < k {
+        return Recharge::Nouvelle;
+    }
+    utiles
+        .iter()
+        .filter_map(|p| p.creation.map(|cr| (coeur.immediate(p.valeur, now.saturating_sub(cr)), *p)))
+        .min_by_key(|(dispo, p)| (*dispo, p.valeur))
+        .map(|(_, p)| Recharge::Regonfler(p.outpoint, p.valeur))
+        .unwrap_or(Recharge::Attendre)
+}
+
+/// Transaction de rechargement par regonflement : la pièce du coffre (dépensée par `ownerControl`)
+/// et les pièces du propriétaire donnent UNE pièce du coffre (valeur + apport), plus le rendu.
+pub fn tx_regonfler(
+    art: &SilAbiArtifact,
+    piece: (TransactionOutpoint, u64),
+    proprio: (Vec<UtxoEntry>, Vec<TransactionInput>, u64),
+    montant: u64,
+    owner: &Keypair,
+) -> Res<(Transaction, Vec<UtxoEntry>)> {
+    let (op, valeur) = piece;
+    let (entrees_p, inputs_p, total_p) = proprio;
+    let mut entries = vec![UtxoEntry::new(valeur, vault_spk(art), 0, false, None)];
+    entries.extend(entrees_p);
+    let mut inputs = vec![TransactionInput::new_with_compute_budget(op, vec![], 0, coeur::CB_OWNER)];
+    inputs.extend(inputs_p);
+    let fee = FEE * inputs.len() as u64;
+    let rendu = total_p.checked_sub(montant + fee).ok_or("solde du propriétaire insuffisant pour l'apport et les frais")?;
+    let mut outputs = vec![TransactionOutput::new(valeur + montant, vault_spk(art))];
+    if rendu > 0 {
+        outputs.push(TransactionOutput::new(rendu, pay_to_address_script(&address(owner))));
+    }
+    let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+    for i in 0..tx.inputs.len() {
+        let s = sign(&tx, &entries, i, owner);
+        tx.inputs[i].signature_script =
+            if i == 0 { vault_sigscript(art, "ownerControl", &[s.into()])? } else { ScriptBuilder::new().add_data(&s)?.drain() };
+    }
+    tx.finalize();
+    Ok((tx, entries))
+}
+
+/// « Ajouter des fonds ». Le rythme maximal du mandat reste celui choisi à la création (R62) :
+/// on regonfle une pièce existante au lieu d'en ajouter une. L'apport devient dépensable
+/// progressivement, au rythme du mandat. La courbe promise reste une borne juste : l'apport est
+/// noté comme une racine à sa date, et la pièce regonflée a déjà sa propre courbe.
 pub async fn recharger(owner: &Keypair, agent: &Keypair, montant: u64) -> Res<String> {
     let mut e = charger().ok_or("aucun coffre v0.6 déployé")?;
-    let art = coeur_de(&xonly(owner), &agent_pk(agent)).artifact()?;
+    let coeur = coeur_de(&xonly(owner), &agent_pk(agent));
+    let art = coeur.artifact()?;
     let c = connect().await?;
     let daa = virtual_daa(&c).await?;
-    let txid = verser(&c, owner, &art, montant, 1).await?;
+    let ps = pieces(&c, &art).await?;
+    let (txid, quoi) = match choisir_recharge(&coeur, &ps, pieces_du_mandat(&e), daa) {
+        Recharge::Nouvelle => (verser(&c, owner, &art, montant, 1).await?, "pièce recréée"),
+        Recharge::Attendre => {
+            liberer(&c).await?;
+            return Err("le coffre attend la confirmation d'une opération : réessayer dans quelques secondes".into());
+        }
+        Recharge::Regonfler(op, valeur) => {
+            // Une entrée de plus que `verser` (la pièce du coffre) : `financer` prévoit ces frais.
+            let proprio = financer(&c, owner, montant).await?;
+            let (tx, _) = tx_regonfler(&art, (op, valeur), proprio, montant, owner)?;
+            match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+                Ok(id) => (id.to_string(), "pièce existante regonflée, rythme inchangé"),
+                Err(err) => {
+                    liberer(&c).await?;
+                    return Err(format!("rechargement refusé ({err}) : un achat utilise peut-être cette pièce, réessayer").into());
+                }
+            }
+        }
+    };
     e.apports.push(Apport { txid: txid.clone(), sompi: montant, daa });
     enregistrer(&e)?;
-    println!("Coffre rechargé de {} TKAS (nouvelle pièce) : {}", montant as f64 / 1e8, explorer(&txid));
+    println!("Coffre rechargé de {} TKAS ({quoi}) : {}", montant as f64 / 1e8, explorer(&txid));
     liberer(&c).await?;
     Ok(txid)
 }
@@ -693,28 +792,157 @@ mod tests {
         // perte nette affichée (apports − solde) et l'exposition viennent des pièces lues sur le nœud.
     }
 
-    /// R62 (ouverte, décision produit) : « Ajouter des fonds » crée une pièce de plus. Or chaque
-    /// pièce a son propre rythme (C d'un coup, puis C par période de recharge) : après n
-    /// rechargements, un agent compromis peut sortir jusqu'à (k + n)·(C + C·P/R) par période, soit
-    /// plus que le « budget par période » choisi à la création et toujours affiché dans les règles
-    /// du mandat. Les chiffres en direct (« au pire sur 24 h », courbe, perte maximale du mandat)
-    /// restent justes : ils sont calculés sur les pièces réelles. Ce test échoue tant que le
-    /// rechargement n'est pas refait (par exemple regonfler une pièce existante au lieu d'en créer
-    /// une) ou que la règle affichée n'est pas recalculée. Voir spec/red-team/rapport-2026-11-26.md.
+    /// R62 (corrigée) : « Ajouter des fonds » créait une pièce de plus, et chaque pièce a son propre
+    /// rythme : après n rechargements, un agent compromis pouvait sortir (k + n)·(C + C·P/R) par
+    /// période, plus que le budget affiché dans les règles du mandat. Désormais le rechargement
+    /// regonfle la pièce la plus jeune : le nombre de pièces, donc le maximum par période, ne change
+    /// pas. Voir spec/red-team/rapport-2026-11-26.md.
     #[test]
-    #[ignore = "R62 : après un rechargement, le maximum par période dépasse le budget affiché (décision produit attendue)"]
     fn r62_budget_par_periode_tenu_apres_rechargement() {
         // 4 TKAS par heure, 0,5 au plus par achat : 4 pièces de 1 TKAS.
         let r = crate::Regles::calculer(400_000_000, 36_000, 50_000_000).unwrap();
         let c = coeur(r.capacite, r.recharge_daa);
-        let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
-        let mut pieces: Vec<Piece> = decouper(r.depot, r.pieces).iter().map(|v| Piece { outpoint: op, valeur: *v, creation: Some(0) }).collect();
-        let vue = |pieces: Vec<Piece>| Vue { coeur: c.clone(), adresse: String::new(), pieces, now: 10 * r.periode_daa as u64, etat: None };
+        let op = |i: u32| TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), i);
+        let now = 10 * r.periode_daa as u64;
+        // Pièces d'âges différents ; la 2 a payé récemment (continuation jeune).
+        let mut pieces: Vec<Piece> =
+            decouper(r.depot, r.pieces).iter().enumerate().map(|(i, v)| Piece { outpoint: op(i as u32), valeur: *v, creation: Some(0) }).collect();
+        pieces[2] = Piece { outpoint: op(9), valeur: 60_000_000, creation: Some(now - 100) };
+        let vue = |pieces: Vec<Piece>| Vue { coeur: c.clone(), adresse: String::new(), pieces, now, etat: None };
         assert!(vue(pieces.clone()).fenetre(r.periode_daa as u64) <= r.budget as u64, "avant rechargement : le budget tient");
-        // Le propriétaire ajoute 4 TKAS : une cinquième pièce.
-        pieces.push(Piece { outpoint: op, valeur: 400_000_000, creation: Some(0) });
-        let pire = vue(pieces).fenetre(r.periode_daa as u64);
-        assert!(pire <= r.budget as u64, "après rechargement : {pire} sompi possibles sur une période, budget affiché {}", r.budget);
+
+        // Le propriétaire ajoute 4 TKAS : la pièce la plus jeune est regonflée, pas de cinquième pièce.
+        let choix = choisir_recharge(&c, &pieces, r.pieces as usize, now);
+        assert_eq!(choix, Recharge::Regonfler(op(9), 60_000_000), "la plus jeune est regonflée");
+        let Recharge::Regonfler(o, v) = choix else { unreachable!() };
+        let mut apres: Vec<Piece> = pieces.iter().filter(|p| p.outpoint != o).cloned().collect();
+        apres.push(Piece { outpoint: op(20), valeur: v + 400_000_000, creation: Some(now) });
+        assert_eq!(apres.len(), r.pieces as usize);
+        // Le maximum sur une période, mesuré à toute date après le rechargement, reste sous le budget.
+        for d in [0, 1, 10_000, r.periode_daa as u64, 5 * r.periode_daa as u64] {
+            let v = Vue { coeur: c.clone(), adresse: String::new(), pieces: apres.clone(), now: now + d, etat: None };
+            let pire = v.fenetre(r.periode_daa as u64);
+            assert!(pire <= r.budget as u64, "{d} après : {pire} sompi possibles sur une période, budget {}", r.budget);
+        }
+        // Recharger encore et encore ne change rien au nombre de pièces.
+        let mut ps = apres;
+        for n in 0..5u32 {
+            let Recharge::Regonfler(o, v) = choisir_recharge(&c, &ps, r.pieces as usize, now + 1 + n as u64) else { panic!("regonfler attendu") };
+            ps.retain(|p| p.outpoint != o);
+            ps.push(Piece { outpoint: op(30 + n), valeur: v + 100_000_000, creation: Some(now + 1 + n as u64) });
+            assert_eq!(ps.len(), r.pieces as usize);
+        }
+    }
+
+    /// Coffre vidé par les achats (pièces sous le plancher) : le rechargement recrée une pièce,
+    /// jusqu'au nombre d'origine seulement. Pièce en attente de confirmation : on attend.
+    #[test]
+    fn r62_recharge_recree_seulement_les_pieces_manquantes() {
+        let c = coeur(50_000_000, 36_000);
+        let op = |i: u32| TransactionOutpoint::new(TransactionId::from_bytes([2; 32]), i);
+        let p = |i: u32, v: u64, cr: Option<u64>| Piece { outpoint: op(i), valeur: v, creation: cr };
+        let poussiere = p(0, 5_000, Some(1));
+        assert_eq!(choisir_recharge(&c, &[poussiere.clone()], 4, 100), Recharge::Nouvelle);
+        assert_eq!(choisir_recharge(&c, &[], 1, 100), Recharge::Nouvelle);
+        let pleines: Vec<Piece> = (1..=4).map(|i| p(i, 100_000_000, Some(i as u64))).collect();
+        assert!(matches!(choisir_recharge(&c, &pleines, 4, 100), Recharge::Regonfler(..)));
+        let en_vol: Vec<Piece> = (1..=4).map(|i| p(i, 100_000_000, None)).collect();
+        assert_eq!(choisir_recharge(&c, &en_vol, 4, 100), Recharge::Attendre);
+        // Un tiers qui dépose une grosse pièce n'ouvre pas de place pour une pièce de plus.
+        let mut avec_tiers = pleines.clone();
+        avec_tiers.push(p(9, 900_000_000, Some(50)));
+        assert!(matches!(choisir_recharge(&c, &avec_tiers, 4, 100), Recharge::Regonfler(..)));
+    }
+
+    /// La transaction de regonflement est acceptée par le vrai moteur de script (entrée 0 :
+    /// `ownerControl`), reste sous la masse standard, et ne crée qu'une pièce du coffre.
+    #[test]
+    fn r62_regonflement_accepte_par_le_script_et_diffusable() {
+        use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
+        use kaspa_consensus_core::tx::{PopulatedTransaction, VerifiableTransaction};
+        use kaspa_txscript::caches::Cache;
+        use kaspa_txscript::covenants::CovenantsContext;
+        use kaspa_txscript::{EngineCtx, EngineFlags, TxScriptEngine};
+        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let c = coeur(50_000_000, 36_000);
+        let art = c.artifact().unwrap();
+        let owner = k(1);
+        let piece = (TransactionOutpoint::new(TransactionId::from_bytes([4; 32]), 1), 60_000_000u64);
+        let e_p = UtxoEntry::new(1_000_000_000, pay_to_address_script(&address(&owner)), 1, false, None);
+        let i_p = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), 0), vec![], 0, CB_P2PK);
+        let montant = 400_000_000;
+        let (tx, entries) = tx_regonfler(&art, piece, (vec![e_p], vec![i_p], 1_000_000_000), montant, &owner).unwrap();
+        assert_eq!(tx.outputs.iter().filter(|o| o.script_public_key == vault_spk(&art)).count(), 1, "une seule pièce du coffre");
+        assert_eq!(tx.outputs[0].value, piece.1 + montant);
+        assert!(masse::masses(&tx, &entries).unwrap().standard());
+        let verifier = |tx: &Transaction| -> bool {
+            let populated = PopulatedTransaction::new(tx, entries.clone());
+            let cov = CovenantsContext::from_tx(&populated).unwrap();
+            let cache = Cache::new(10);
+            let reused = SigHashReusedValuesUnsync::new();
+            (0..tx.inputs.len()).all(|i| {
+                let input = populated.inputs()[i].clone();
+                let mut vm = TxScriptEngine::from_transaction_input(
+                    &populated,
+                    &input,
+                    i,
+                    populated.utxo(i).unwrap(),
+                    EngineCtx::new(&cache).with_reused(&reused).with_covenants_ctx(&cov),
+                    EngineFlags::default(),
+                );
+                vm.execute().is_ok()
+            })
+        };
+        assert!(verifier(&tx), "regonflement refusé par le script");
+        // Signée par l'agent au lieu du propriétaire : refusée.
+        let (faux, _) = tx_regonfler(&art, piece, (entries[1..].to_vec(), tx.inputs[1..].iter().map(|i| TransactionInput::new_with_compute_budget(i.previous_outpoint, vec![], 0, CB_P2PK)).collect(), 1_000_000_000), montant, &k(2)).unwrap();
+        assert!(!verifier(&faux), "seul le propriétaire peut regonfler");
+    }
+
+    /// `suivre` : un regonflement n'est pas un achat (la pièce regonflée disparaît, sa valeur
+    /// revient dans la pièce de l'apport).
+    #[test]
+    fn r62_regonflement_n_est_pas_un_achat() {
+        let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
+        let depot = TransactionId::from_bytes([1; 32]).to_string();
+        let mut e = EtatCoeur { version: VERSION.into(), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+            apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
+        assert_eq!(pieces_du_mandat(&e), 2);
+        let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        // Regonflement de 1:1 avec 500 : nouvelle pièce 3:0 de 1 500.
+        e.apports.push(Apport { txid: TransactionId::from_bytes([3; 32]).to_string(), sompi: 500, daa: 20 });
+        assert_eq!(pieces_du_mandat(&e), 2, "un apport ne change pas le nombre de pièces du mandat");
+        suivre(&mut e, &[p(1, 0, 1_000), p(3, 0, 1_500)], 20);
+        assert!(e.achats.is_empty(), "un regonflement n'est pas un achat : {:?}", e.achats);
+        // Un vrai achat juste après est toujours reconnu.
+        suivre(&mut e, &[p(1, 0, 1_000), p(4, 1, 1_200)], 30);
+        assert_eq!(e.achats.iter().map(|a| a.sompi).sum::<u64>(), 300);
+        // Regonflement et achat entre deux lectures : seul l'achat compte.
+        e.apports.push(Apport { txid: TransactionId::from_bytes([5; 32]).to_string(), sompi: 200, daa: 40 });
+        suivre(&mut e, &[p(6, 1, 900), p(5, 0, 1_400)], 40);
+        assert_eq!(e.achats.iter().map(|a| a.sompi).sum::<u64>(), 400, "achat de 100 sur 1:0, regonflement ignoré");
+    }
+
+    /// La courbe promise (somme des apports) reste une borne de la perte possible après un
+    /// regonflement : la pièce regonflée garde sa courbe, l'apport commence la sienne à sa date.
+    #[test]
+    fn r62_courbe_promise_tenue_apres_regonflement() {
+        let c = coeur(50_000_000, 36_000);
+        let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 0);
+        let etat = |apports: Vec<Apport>| EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
+        let v0 = 200_000_000u64;
+        let mut apports = vec![Apport { txid: String::new(), sompi: v0, daa: 0 }];
+        // L'agent dépense au maximum jusqu'à t_r, puis la pièce est regonflée de m.
+        let t_r = 100_000u64;
+        let perdu_avant = c.fenetre(v0, 0, t_r);
+        let m = 300_000_000u64;
+        apports.push(Apport { txid: String::new(), sompi: m, daa: t_r });
+        let v = Vue { coeur: c.clone(), adresse: String::new(), pieces: vec![Piece { outpoint: op(1), valeur: v0 - perdu_avant + m, creation: Some(t_r) }], now: t_r, etat: Some(etat(apports)) };
+        for d in [0u64, 1, 1_000, 36_000, 500_000, 10_000_000] {
+            let possible = perdu_avant + c.fenetre(v0 - perdu_avant + m, 0, d);
+            assert!(v.courbe(t_r + d) >= possible, "courbe {} < perte possible {possible} à {d}", v.courbe(t_r + d));
+        }
     }
 
     /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
