@@ -1,2 +1,6 @@
 # Relay review (26 Nov 2026): real x402 payment through the vault with the updated provider
+deployer
+pause 240                      # let the coins age so the vault can refill the relay wallet
 essai-relais
+recuperer
+etat
