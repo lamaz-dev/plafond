@@ -24,7 +24,7 @@ test au vert. Les attaques qui échouent laissent un test qui fige le comporteme
 | R70 | FAIBLE | Registre des mandats illisible : la règle « un mandat par machine » sautait en silence | corrigé | `6c02845` |
 | R71 | IMPORTANT | Fichier de secrets non signé : fabricable par un tiers, rejouable | corrigé | `1354716` |
 | R72 | CRITIQUE (clé de l'agent) | Le lien de session suffisait à sortir la clé privée d'un agent (kit + code) | corrigé | `92c650a` |
-| R73 | FAIBLE à IMPORTANT (poste partagé) | Jeton de session visible dans la ligne de commande du navigateur | non corrigé, test ignoré | ce commit |
+| R73 | FAIBLE à IMPORTANT (poste partagé) | Jeton de session visible dans la ligne de commande du navigateur | corrigé l'après-midi (voir « Suites ») | `af0a8e0` |
 
 Aucune faille trouvée dans : la force du code de connexion, le scellement du kit, le stockage chiffré
 de la clé du propriétaire, le chiffrement des secrets, l'authentification du routeur, la protection
@@ -217,3 +217,130 @@ marqué `#[ignore]`.
 - La page de la console a été relue et deux parcours modifiés joués dans un navigateur ; pas d'audit
   complet du JavaScript.
 - Contrat, moteur de risque et vendeur x402 hors périmètre (voir `rapport-2026-11-26.md`).
+
+## Suites du 26 novembre (après-midi)
+
+Travaux décidés par le propriétaire après lecture de ce rapport. Même méthode : un test en échec
+d'abord, puis le correctif, puis le test au vert. Aucun essai sur le testnet.
+
+État des tests : 146 passés et 1 ignoré au départ ; 152 passés, 0 ignoré, 0 échec à la fin (Linux).
+Sous Windows : 150 passés, 0 échec (les 2 tests restants fabriquent des liens symboliques, voir plus bas).
+
+| Travail | Ce qui change | Tests | Commit |
+|---|---|---|---|
+| R73 | Lien d'ouverture à ticket à usage unique | `r73_lien_remis_au_navigateur_sans_jeton_de_session` (réactivé), `r73_ticket_a_usage_unique_par_http` | `af0a8e0` |
+| Clés d'agent côté console | Chiffrées par le mot de passe du propriétaire, migration des clés en clair | `cle_d_agent_chiffree_par_le_mot_de_passe_du_proprietaire`, `cles_d_agent_chiffrees_sur_le_disque_de_la_console` | `66fd9cd`, `20d44b2` |
+| Kit de connexion | Effacé après installation et vérification réussies | `kit_efface_apres_installation_reussie_seulement` | `c45aaa9` |
+| Windows | Fichiers sensibles réservés à l'utilisateur courant ; tests automatiques sous Windows | `fichier_sensible_lisible_par_le_seul_utilisateur` et les contrôles de droits des tests existants | `2679b62`, `af45a14` |
+| Documentation | `SECURITY.md` : clés et secrets sur le disque, limite côté agent | | `20d44b2` |
+
+Ordre suivi : R73, puis la protection Windows et son workflow (avancés pour que les tests Windows
+tournent pendant la suite du travail), puis le chiffrement des clés d'agent, puis le kit.
+
+### R73 : ticket à usage unique (corrigé)
+
+Le lien affiché dans le terminal et remis au navigateur ne porte plus le jeton de session. Il porte
+un ticket de 256 bits, valable deux minutes, que la page échange une seule fois contre le jeton
+(`POST /api/session`, ticket dans un en-tête, jamais dans l'URL), puis elle le retire de la barre
+d'adresse. Chaque échange ouvre une session neuve et ferme la précédente.
+
+**Changements visibles** :
+- le lien ne s'ouvre qu'une fois, dans les deux minutes ;
+- appuyer sur Entrée dans le terminal affiche un nouveau lien (relancer la commande marche aussi) ;
+- un lien déjà utilisé ou expiré l'explique et dit quoi faire (français, anglais, japonais) ;
+- recharger la page (F5) ferme la session : il faut un nouveau lien. C'était déjà le cas pour le
+  rechargement, mais l'ancien lien pouvait être rouvert.
+
+Ce qui reste de R73 : quelqu'un qui lit le ticket dans la ligne de commande et l'échange avant le
+navigateur (course de quelques millisecondes) obtient la session. Le propriétaire le voit (« ce lien a
+déjà servi » alors qu'il ne l'avait pas ouvert) et reprend la main avec un nouveau lien, qui ferme la
+session de l'intrus. Entre-temps l'intrus peut agir comme tout porteur de session (geler, alimenter,
+créer un mandat, remplacer un secret), sans pouvoir sortir de clé (R65, R72).
+
+### Clés d'agent chiffrées côté console
+
+Les clés d'agent que la console garde (`agents/<id>.key` jusqu'à la connexion, `agent-principal.key`)
+sont chiffrées comme la clé du propriétaire : même dérivation (Argon2id depuis son mot de passe,
+mêmes bornes), même chiffrement, même fichier JSON, avec un champ `usage` = `cle-agent` et des données
+associées propres (les deux types de fichier ne s'ouvrent pas l'un pour l'autre).
+
+- Aucune demande de plus : la clé de chiffrement est dérivée à l'ouverture du compte et gardée en
+  mémoire pour la session ; « Connecter l'agent » se sert du mot de passe déjà demandé (R72).
+- Surveiller, alimenter, geler n'ouvrent pas la clé : la clé publique suffit, comme pour un agent connecté.
+- Migration testée : une clé en clair est chiffrée à l'ouverture suivante, relue, puis le fichier en
+  clair est effacé (`effacer_fichier`). Une migration interrompue se termine à la lecture suivante.
+
+**Changement visible, à connaître** : après un « mot de passe oublié » (compte restauré depuis les 24
+mots), les clés chiffrées sous l'ancien mot de passe ne sont plus lisibles. Les coffres restent
+visibles, alimentables et gelables. Mais un mandat pas encore connecté ne peut plus l'être : le
+message demande de l'arrêter et d'en créer un nouveau. Avant, ces clés étant en clair, elles
+survivaient à la restauration. Le test `compte_cree_puis_rouvert_depuis_la_page` a été adapté : même
+agent principal (clé publique), clé privée non lisible. Si ce comportement gêne, l'autre voie est de
+chiffrer ces clés pour la clé du propriétaire (que la phrase restaure) plutôt que par le mot de passe :
+décision du propriétaire.
+
+**Limite assumée, écrite dans `SECURITY.md`** : la clé installée sur la machine de l'agent n'est PAS
+chiffrée. L'agent paie sans humain, personne n'est là pour saisir un mot de passe. Elle est protégée
+par les droits du fichier ; qui la lit peut dépenser, jamais au-delà du plafond imposé par le contrat,
+et le propriétaire peut geler à tout moment.
+
+Autres limites :
+- la clé de chiffrement des clés d'agent reste en mémoire pendant la session (comme la clé du propriétaire) ;
+- clés de test et de démonstration (pas de mot de passe) : toujours en clair ;
+- console lancée par la commande `console` avec une clé déverrouillée dans le terminal : un mandat créé
+  avant toute action à mot de passe reste en clair jusqu'à la première (au plus tard « Connecter
+  l'agent »). Le parcours normal (`plafond`) n'a pas cette fenêtre.
+
+### Kit effacé après installation
+
+`agent-installer` installe, vérifie que la clé et chaque secret sont lisibles, puis efface le fichier
+du kit. Mauvais code, dossier déjà occupé ou secret illisible : le kit reste, intact. Si l'effacement
+échoue, l'installation reste valable et le message demande de supprimer le kit à la main.
+
+Limites : seule la copie donnée à `agent-installer` est effacée ; la copie téléchargée par le
+navigateur sur l'ordinateur du propriétaire est à supprimer à la main (la console le dit maintenant,
+dans les trois langues). Si la vérification échoue après l'écriture, le dossier de l'agent existe
+déjà : il faut le supprimer avant de réessayer (le message le dit).
+
+### Windows
+
+- Toute écriture de fichier sensible passe par `cli/src/prive.rs` : 0600 sous Unix ; sous Windows,
+  liste d'accès protégée à une seule entrée (l'utilisateur courant), posée à la création du fichier
+  (`CreateFileW` avec un descripteur de sécurité), donc sans instant où le fichier serait plus ouvert.
+  Concernés : clé du propriétaire et sa copie `.precedent`, clés d'agent côté console, clé et secrets
+  côté agent, secrets de la console, clés jetables de la démo. Le kit est écrit par le navigateur, pas
+  par l'outil ; le jeton de session n'est jamais écrit sur le disque.
+- Dépendance ajoutée, pour Windows seulement : `windows-sys` 0.59 (déjà présente dans `Cargo.lock`
+  par d'autres dépendances ; une ligne ajoutée au fichier).
+- Nouveau workflow « Tests Windows » (`.github/workflows/windows.yml`) : la suite Rust sur
+  `windows-latest` à chaque envoi. Windows n'a pas été ajouté à autre chose (la publication des
+  versions le compilait déjà).
+- Premier passage : 141 réussis, 6 échecs, tous dans le contrôle des tests et non dans la protection
+  (Windows écrit le compte administrateur intégré par un alias, `LA`). Corrigé (`af45a14`).
+- **État de la CI au commit `af45a14`** : « Tests Windows » vert (150 tests), « Tests et empreintes »
+  (Linux) vert (152 tests). Les commits suivants ne touchent que la documentation et un test ; ils
+  passent par les mêmes workflows.
+- Deux tests restent propres à Unix, avec la justification dans le code : `installation_cle_privee_jamais_exposee`
+  et `r69_installation_ne_suit_pas_les_liens_symboliques`. Ils fabriquent des liens symboliques, ce
+  qui demande un droit particulier sous Windows.
+
+### Ce qui n'a pas été vérifié
+
+- La page modifiée (échange du ticket, nouveaux messages) a été contrôlée par les tests HTTP, par un
+  essai du vrai programme en ligne de commande et par une vérification de syntaxe du JavaScript ; elle
+  n'a pas été jouée dans un navigateur.
+- Aucun essai à la main sur un vrai poste Windows : ouverture automatique du navigateur, touche Entrée
+  dans la fenêtre de `Plafond.bat`. Seuls les tests automatiques y tournent.
+- Sous Windows, un administrateur de l'ordinateur peut toujours s'approprier un fichier.
+
+### Ce qui reste
+
+De la liste du matin, inchangé : effacement en mémoire du corps des requêtes ; rejeu d'un code à 6
+chiffres après redémarrage de la console ; jeton de session = pouvoir d'agir (par choix) ; secrets
+non utilisés par le routeur.
+
+Nouveau :
+- décision sur les clés d'agent après un mot de passe oublié (voir plus haut) ;
+- jouer les parcours modifiés dans un navigateur, et un essai à la main sous Windows ;
+- un agent principal dont la clé privée n'est plus lisible garde son ancien fichier chiffré : rien ne
+  propose de le renouveler.
