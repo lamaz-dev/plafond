@@ -799,6 +799,36 @@ mod tests {
         assert!(!accepte(&tx, &entree, r as u64 - 1));
     }
 
+    /// R63 (durcissement, prochaine version du contrat) : selon UNDEFINED-BEHAVIOUR.md du
+    /// compilateur, une division par zéro ou un dépassement arithmétique est un « comportement
+    /// indéfini » sur lequel un contrat ne doit pas compter pour refuser. Or coeur.sil compte
+    /// dessus dans trois cas de réglages aberrants : période nulle (division de la garde), capacité
+    /// nulle (division du délai) et C × R + C au-delà de 2^63 − 1 (somme du délai). Avec le
+    /// compilateur épinglé (443d519e) et le bytecode figé par son empreinte, le moteur refuse bien
+    /// dans les trois cas : ce test le fige. L'outil et le vendeur refusent ces réglages en amont.
+    #[test]
+    fn r63_reglages_aberrants_refuses_par_le_bytecode_fige() {
+        let essais = |c: &Coeur, valeur: u64| -> bool {
+            let Ok(art) = c.artifact_sans_verification() else { return false }; // refus dès la compilation : sûr aussi
+            let entree = UtxoEntry::new(valeur, vault_spk(&art), 0, false, None);
+            let mut passe = false;
+            for montant in [0u64, 1, 1_000, valeur / 2, valeur] {
+                for seq in [0u64, 1, 1_000, u32::MAX as u64] {
+                    passe |= script(&tx_pay(&art, valeur, externe(), montant, 0, seq), &entree).is_some();
+                }
+            }
+            passe
+        };
+        assert!(coeur(200_000_000, 0).verifier().is_err() && coeur(0, 864_000).verifier().is_err());
+        assert!(!essais(&coeur(200_000_000, 0), 1_000_000_000), "période nulle : aucun paiement ne doit passer");
+        assert!(!essais(&coeur(200_000_000, -5), 1_000_000_000), "période négative");
+        assert!(!essais(&coeur(-5, -5), 1_000_000_000), "capacité et période négatives");
+        assert!(!essais(&coeur(-5, 864_000), 1_000_000_000), "capacité négative");
+        // Capacité nulle : seule la dépense nulle resterait concevable (rien ne sort) ; le bytecode
+        // figé la refuse aussi (division par zéro dans le calcul du délai).
+        assert!(!essais(&coeur(0, 864_000), 1_000_000_000), "capacité nulle");
+    }
+
     /// Dépense nulle (ni paiement ni frais) : le délai exigé est 0, le script accepte. L'agent ne
     /// gagne rien (rien ne sort, et la pièce recréée repart de l'âge 0) ; noté pour mémoire.
     #[test]

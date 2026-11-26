@@ -45,8 +45,17 @@ La table des opcodes (`tools/opcodes-kaspa-txscript-2.1.0.txt`) est extraite de 
    - **Conséquence :** notre garde `period < 2^32` n'est pas porteuse, contrairement à ce qu'écrivait
      la preuve v0.6 (§5). Elle double celle du compilateur et reste dans le contrat par prudence. Le
      test `delai_tronque_a_32_bits_impossible` passerait aussi sans elle.
-   - **À confirmer par la séance Red Team :** ce contrôle est-il garanti pour toute utilisation de
-     `this.ageDaa` ? Voir `UNDEFINED-BEHAVIOUR.md` et le code de génération du compilateur.
+   - **Confirmé par la séance Red Team du 26 nov. 2026 :** oui, pour toute utilisation de
+     `this.ageDaa`. La grammaire n'admet `this.ageDaa` que sous la forme
+     `require(this.ageDaa >= expression)` (`silverscript.pest`, règle `lock_requirement_statement`),
+     et le compilateur n'émet `OpCheckSequenceVerify` qu'à un seul endroit
+     (`compile_require_age_daa_statement`), toujours précédé de `OpDup 0 <2^32> OpWithin OpVerify`.
+     Test : `coeur::tests::compilateur_garde_toujours_le_verrou_relatif`. Détail :
+     `spec/red-team/rapport-2026-11-26.md`, §2.
+   - **Ordre du calcul (R59).** Le délai est calculé dans l'ordre `spent × R`, `+ C`, `− 1`, `/ C`.
+     Le moteur refuse tout dépassement des 64 bits signés, même intermédiaire : si `C × R + C`
+     dépasse 2^63 − 1, un paiement proche de la capacité est refusé par le réseau. Sans danger pour
+     les fonds ; l'outil refuse désormais ces réglages (`Coeur::verifier`).
 2. **Rien d'autre que le source.** Chaque opcode correspond à une ligne du contrat. Les constantes
    sont inscrites telles quelles : C, R et MAX. Le calcul `MAX / period` se fait à l'exécution ; il
    pourrait être fait à la compilation, pour environ 9 octets de moins (piste d'allègement, sans

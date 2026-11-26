@@ -80,6 +80,12 @@ L1_i = min(V_i, C_i, C_i × g_i / R_i)
 L2_i(D) = min(V_i, min(C_i, C_i × g_i / R_i) + C_i × D / R_i)
 ```
 
+*Arrondi (Red Team, 26 nov. 2026).* La somme se calcule avec UNE seule division, comme le fait
+l'outil : `L2_i(D) = min(V_i, ⌊(min(C_i × R_i, C_i × g_i) + C_i × D) / R_i⌋)`. Arrondir chaque terme
+séparément annoncerait jusqu'à 1 sompi de moins que ce que l'agent peut réellement sortir (exemple :
+C = 100, R = 1000, g = 5, D = 5 : chaque terme vaut 0, mais à l'âge 10 l'agent peut dépenser 1).
+Preuve et tests : `spec/red-team/rapport-2026-11-26.md`, §3.
+
 *Justification.* Théorème du §1 de `borne-de-perte-v0.6.md`. Il couvre aussi ce que l'agent
 transfère vers un coffre frère : une pièce ne laisse jamais sortir plus que ce qu'elle a reçu.
 
@@ -185,7 +191,9 @@ Hypothèses dont dépendent les chiffres :
 - **Lecture de la chaîne.** Les chiffres valent pour l'état lu sur le nœud interrogé. Un vérificateur
   prudent interroge plusieurs nœuds indépendants.
 - **Réorganisation.** La borne porte sur l'historique final (le réseau revalide le verrou relatif) ; un
-  chiffre calculé juste avant une réorganisation est recalculé après.
+  chiffre calculé juste avant une réorganisation est recalculé après. Modèle et tests :
+  `coeur::tests::reorganisation_sous_la_courbe` et `reorganisation_cas_choisis` ; conséquences pour
+  l'outil (R57, R58) : `spec/red-team/rapport-2026-11-26.md`, §1.
 
 ## 7. Vérifiable par n'importe qui
 

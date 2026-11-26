@@ -693,6 +693,30 @@ mod tests {
         // perte nette affichée (apports − solde) et l'exposition viennent des pièces lues sur le nœud.
     }
 
+    /// R62 (ouverte, décision produit) : « Ajouter des fonds » crée une pièce de plus. Or chaque
+    /// pièce a son propre rythme (C d'un coup, puis C par période de recharge) : après n
+    /// rechargements, un agent compromis peut sortir jusqu'à (k + n)·(C + C·P/R) par période, soit
+    /// plus que le « budget par période » choisi à la création et toujours affiché dans les règles
+    /// du mandat. Les chiffres en direct (« au pire sur 24 h », courbe, perte maximale du mandat)
+    /// restent justes : ils sont calculés sur les pièces réelles. Ce test échoue tant que le
+    /// rechargement n'est pas refait (par exemple regonfler une pièce existante au lieu d'en créer
+    /// une) ou que la règle affichée n'est pas recalculée. Voir spec/red-team/rapport-2026-11-26.md.
+    #[test]
+    #[ignore = "R62 : après un rechargement, le maximum par période dépasse le budget affiché (décision produit attendue)"]
+    fn r62_budget_par_periode_tenu_apres_rechargement() {
+        // 4 TKAS par heure, 0,5 au plus par achat : 4 pièces de 1 TKAS.
+        let r = crate::Regles::calculer(400_000_000, 36_000, 50_000_000).unwrap();
+        let c = coeur(r.capacite, r.recharge_daa);
+        let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
+        let mut pieces: Vec<Piece> = decouper(r.depot, r.pieces).iter().map(|v| Piece { outpoint: op, valeur: *v, creation: Some(0) }).collect();
+        let vue = |pieces: Vec<Piece>| Vue { coeur: c.clone(), adresse: String::new(), pieces, now: 10 * r.periode_daa as u64, etat: None };
+        assert!(vue(pieces.clone()).fenetre(r.periode_daa as u64) <= r.budget as u64, "avant rechargement : le budget tient");
+        // Le propriétaire ajoute 4 TKAS : une cinquième pièce.
+        pieces.push(Piece { outpoint: op, valeur: 400_000_000, creation: Some(0) });
+        let pire = vue(pieces).fenetre(r.periode_daa as u64);
+        assert!(pire <= r.budget as u64, "après rechargement : {pire} sompi possibles sur une période, budget affiché {}", r.budget);
+    }
+
     /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
     #[test]
     fn plusieurs_pieces_rafale_et_budget_tenus() {

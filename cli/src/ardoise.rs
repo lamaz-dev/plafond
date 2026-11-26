@@ -302,4 +302,18 @@ mod tests {
         court.inputs[0].compute_commit = kaspa_consensus_core::mass::ComputeBudget((deux / 10_000) as u16 - 1).into();
         assert!(crate::masse::unites_sous_la_limite_du_reseau(&court, utxo(a.depot)).is_err());
     }
+    /// R63 (durcissement) : `close` lit tx.outputs[0] avant d'avoir vérifié le nombre de sorties.
+    /// Pour une transaction sans aucune sortie, cette lecture est un « comportement indéfini » au
+    /// sens du compilateur ; avec le bytecode figé, le moteur refuse. Fige ce comportement.
+    #[test]
+    fn r63_cloture_sans_sortie_refusee() {
+        let (vendeur, agent, proprio, art, a) = setup();
+        let total = a.depot as i64;
+        let mut tx = build_close(&art, &a, &vendeur, proprio, bon(&agent, &a, total).unwrap(), total, crate::FEE).unwrap();
+        tx.outputs.clear();
+        let utxo = UtxoEntry::new(a.depot, pay_to_script_hash_script(&bytecode(&art)), 0, false, None);
+        let sig = crate::sign(&tx, &[utxo], 0, &vendeur);
+        tx.inputs[0].signature_script = vault_sigscript(&art, "close", &[sig.into(), bon(&agent, &a, total).unwrap().into(), total.into()]).unwrap();
+        assert!(exec(&tx, &art, a.depot, CB_CLOSE).is_err(), "clôture sans sortie : tout le dépôt partirait en frais");
+    }
 }
