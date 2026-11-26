@@ -1004,3 +1004,71 @@ Solde du propriétaire : 989.245 TKAS (4 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-26 14:18 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.7) : 5 TKAS en 4 pièce(s) à l'adresse kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90
+Adresse de retour (gel, retrait) : kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+Transaction : https://tn10.kaspa.stream/transactions/647815cc7525d25c297e0f2134c3addfc206cfa7e5a8e57a3bc98d32b9a9e411
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli course-recharge
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+(nœud injoignable, essai 2/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+(attente d'une pièce prête : 270 s)
+(attente d'une pièce prête : 241 s)
+(attente d'une pièce prête : 209 s)
+(attente d'une pièce prête : 175 s)
+(attente d'une pièce prête : 141 s)
+(attente d'une pièce prête : 106 s)
+(attente d'une pièce prête : 77 s)
+(attente d'une pièce prête : 46 s)
+(attente d'une pièce prête : 15 s)
+Course : paiement de l'agent (0.03 TKAS) contre rechargement de 1 TKAS, même pièce
+Connecté au testnet-10 : wss://quark-10.kaspa.red/kaspa/testnet-10/wrpc/borsh
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+  paiement : refusé par le nœud (RPC Server (remote error) -> Rejected transaction 890fb9ebd627f32b2a870eaa4fd4b658bcc813c6d638acf24bcf92b772273625: output (647815cc7525d25c297e0f2134c3addfc206cfa7e5a8e57a3bc98d32b9a9e411, 1) already spent by transaction 74883ce62f64c28356c8b88e21308550d84951c8dddc4bdb736f29247db7c2c8 in the mempool)
+  rechargement : accepté par le nœud (https://tn10.kaspa.stream/transactions/74883ce62f64c28356c8b88e21308550d84951c8dddc4bdb736f29247db7c2c8)
+  gagnant inscrit : le rechargement
+[OK] course paiement/rechargement : nombre de pièces 4 → 4 (rythme inchangé), argent du propriétaire versé au coffre (rechargement gagnant)
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633673733
+Solde du propriétaire : 983.2 TKAS (4 UTXO)
+Coffre (cœur v0.7) kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90 : 6 TKAS en 4 pièce(s)
+  disponible maintenant : 0.18318053 TKAS ; pire cas sur 24 h : 6 TKAS
+  perte nette depuis la création : 0 TKAS (courbe promise : 0.23527775 TKAS)
+
+$ vault-cli course-gel
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+(nœud injoignable, essai 2/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Course : paiement de l'agent (0.03 TKAS) contre gel du propriétaire, même pièce (1.25 TKAS)
+Connecté au testnet-10 : wss://proton-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+  paiement : accepté par le nœud (https://tn10.kaspa.stream/transactions/6bafe112b406a3807952d6615759539a8179d1e09dac975344079d579419c370)
+  gel : accepté par le nœud (https://tn10.kaspa.stream/transactions/e2f9e66820c5db53893c15032a061f94afdc258c009abc730b4133c107aa7d02)
+  gagnant inscrit : le gel
+  gel terminé : coffre déjà vide
+[OK] course paiement/gel : coffre vide après gel (oui), paiement sous le plafond par achat (oui)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633674568
+Solde du propriétaire : 989.18358 TKAS (8 UTXO)
+Coffre (cœur v0.7) kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90 : 0 TKAS en 0 pièce(s)
+  disponible maintenant : 0 TKAS ; pire cas sur 24 h : 0 TKAS
+  perte nette depuis la création : 6 TKAS (courbe promise : 0.293125 TKAS)
+
+```
