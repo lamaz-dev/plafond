@@ -972,3 +972,35 @@ Solde du propriétaire : 994.275 TKAS (5 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-26 13:18 UTC
+
+```
+$ vault-cli deployer kaspatest:qzznh6lxw7ryl5h9d9efe5e8ahrq8003ej2vc5swqednec49z8gpyk89quv6f
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.7) : 5 TKAS en 4 pièce(s) à l'adresse kaspatest:pr4zc7wyw46832lu3jda7up9xl97jgjjnatvz7helt8w5p6h37xzuvn8k3yh0
+Adresse de retour (gel, retrait) : kaspatest:qzznh6lxw7ryl5h9d9efe5e8ahrq8003ej2vc5swqednec49z8gpyk89quv6f
+Transaction : https://tn10.kaspa.stream/transactions/1e2e19bb37578f111918a38dfaabd0b725fe0aee52350bb849d247ff003efced
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633633800
+Solde du propriétaire : 989.245 TKAS (4 UTXO)
+Coffre (cœur v0.6) kaspatest:pr4zc7wyw46832lu3jda7up9xl97jgjjnatvz7helt8w5p6h37xzuvn8k3yh0 : 5 TKAS en 4 pièce(s)
+  disponible maintenant : 0.00827776 TKAS ; pire cas sur 24 h : 5 TKAS
+  perte nette depuis la création : 0 TKAS (courbe promise : 0.00983332 TKAS)
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+4 pièce(s) rapatriée(s) vers kaspatest:qzznh6lxw7ryl5h9d9efe5e8ahrq8003ej2vc5swqednec49z8gpyk89quv6f : 4.98358 TKAS, https://tn10.kaspa.stream/transactions/ec404c9f8ccedfd42c97c4e7d1e636473fbd89421ed86ccf0507e1eb105d2d22
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 633634136
+Solde du propriétaire : 989.245 TKAS (4 UTXO)
+Coffre : pas encore déployé
+
+```
