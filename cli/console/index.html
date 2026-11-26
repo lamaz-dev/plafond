@@ -1337,7 +1337,7 @@ $("b-geler-tout").onclick=async()=>{if(!await confirmer(t("conf_gel_tout"),t("ur
   catch(e){message("m-geler-tout","err",e.message)}finally{$("b-geler-tout").disabled=false}};
 $("b-bandeau").onclick=()=>{page("securite");setTimeout(sauvegarderRecup,50)};
 $("b-recup").onclick=sauvegarderRecup;$("b-2fa").onclick=activerDoubleAuth;$("b-export").onclick=exporterCle;$("b-restaurer").onclick=restaurerCompte;$("s-fermer").onclick=fermerSecu;
-$("b-sauvegarde").onclick=()=>{ouvrirSecu(t("sauv_fichier"));identification(t("auth_txt"),async mdp=>{const j=await api("/api/cle-chiffree",{mot_de_passe:mdp});telecharger("cle-proprietaire-chiffree.json","application/json",JSON.stringify(j.fichier,null,2));message("s-msg","ok",t("fait"))},false)};
+$("b-sauvegarde").onclick=()=>{ouvrirSecu(t("sauv_fichier"));identification(t("auth_txt"),async(mdp,code)=>{const j=await api("/api/cle-chiffree",{mot_de_passe:mdp,code});telecharger("cle-proprietaire-chiffree.json","application/json",JSON.stringify(j.fichier,null,2));message("s-msg","ok",t("fait"))},true)};
 $("b-lignee").onclick=async()=>{$("b-lignee").disabled=true;message("m-lignee","ok",t("en_cours"));
   const res=[];for(const a of (etat.vue&&etat.vue.agents)||[]){if(!actif(a))continue;try{const r=await api("/api/verifier-lignee?agent="+encodeURIComponent(a.id));res.push(a.nom+" : "+(r.ok?t("lignee_ok"):t("lignee_ko").replace("{d}",r.detail||"")))}catch(e){res.push(a.nom+" : "+e.message)}}
   message("m-lignee","ok",res.length?res.join("\n"):t("aucun_agent_actif"));$("b-lignee").disabled=false};

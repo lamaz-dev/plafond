@@ -441,7 +441,7 @@ pub fn porte(serveur: &tiny_http::Server, jeton: &str, fichiers: &FichiersCompte
     let port = serveur.server_addr().to_ip().map(|a| a.port()).unwrap_or(PORT);
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
-    let mut garde = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+    let mut garde = Garde::neuve();
     for mut req in serveur.incoming_requests() {
         let entetes: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
         let entete = |nom: &str| entetes.iter().find(|(k, _)| k == &nom.to_ascii_lowercase()).map(|(_, v)| v.clone());
@@ -620,9 +620,17 @@ struct Garde {
     echecs: u32,
     verrou: Option<Instant>,
     dernier_pas: u64,
+    /// Échecs de code à 6 chiffres : comptés à part, jamais remis à zéro par un mot de passe seul (R67).
+    echecs_code: u32,
+    /// Verrous consécutifs dus aux codes : chaque nouveau verrou dure deux fois plus (1 h au plus).
+    verrous_code: u32,
 }
 
 impl Garde {
+    fn neuve() -> Self {
+        Garde { echecs: 0, verrou: None, dernier_pas: 0, echecs_code: 0, verrous_code: 0 }
+    }
+
     fn ouvrir(&mut self, chemin_cle: Option<&str>, owner: &Keypair, v: &Value, exiger_code: bool) -> Result<(Keypair, Option<cle::Coffret>), Rep> {
         self.ouvrir_avec(chemin_cle, Some(owner), v, exiger_code)
     }
@@ -643,13 +651,35 @@ impl Garde {
         if exiger_code {
             if let Some(secret) = coffret.as_ref().and_then(|c| c.totp.as_ref()) {
                 match double_auth::verifier(secret, v["code"].as_str().unwrap_or(""), double_auth::maintenant(), self.dernier_pas) {
-                    Some(pas) => self.dernier_pas = pas,
-                    None => return Err(self.echec("code de double authentification incorrect ou expiré")),
+                    Some(pas) => {
+                        self.dernier_pas = pas;
+                        self.echecs_code = 0;
+                        self.verrous_code = 0;
+                    }
+                    None => {
+                        self.echecs = 0; // le mot de passe, lui, était bon
+                        self.echec_secret("code de double authentification incorrect ou expiré");
+                        return Err(json_rep(403, json!({ "erreur": "code de double authentification incorrect ou expiré" })));
+                    }
                 }
             }
         }
         self.echecs = 0;
         Ok((k, coffret))
+    }
+
+    /// Échec sur un secret autre que le mot de passe (code à 6 chiffres, mots de la phrase). Compté à
+    /// part : un mot de passe juste ne le remet pas à zéro (R67). 5 échecs = verrou d'une minute, doublé
+    /// à chaque verrou consécutif (1 h au plus) ; seul un code juste remet ces compteurs à zéro.
+    fn echec_secret(&mut self, quoi: &str) {
+        self.echecs_code += 1;
+        if self.echecs_code >= 5 {
+            let duree = 60u64.saturating_mul(1 << self.verrous_code.min(6)).min(3600);
+            self.verrou = Some(Instant::now() + Duration::from_secs(duree));
+            self.echecs_code = 0;
+            self.verrous_code = self.verrous_code.saturating_add(1);
+        }
+        journal(json!({ "action_sensible": "refusée", "motif": quoi }));
     }
 
     fn echec(&mut self, quoi: &str) -> Rep {
@@ -680,7 +710,7 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
     let hotes = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let origines = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
     let mut cours = Cours { valeur: None, lu: None };
-    let mut garde = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+    let mut garde = Garde::neuve();
     // Secret de double authentification en cours d'activation (en mémoire seulement).
     let mut double_auth_en_attente: Option<zeroize::Zeroizing<Vec<u8>>> = None;
     // Agent dont le kit de connexion a été remis, en attente de confirmation (mémoire seulement).
@@ -1013,8 +1043,12 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         let phrase = cle::phrase(&c).unwrap_or_default();
                         let mots: Vec<&str> = phrase.split(' ').collect();
                         let essais: Vec<(usize, String)> = v["positions"].as_array().into_iter().flatten().zip(v["mots"].as_array().into_iter().flatten()).filter_map(|(p, m)| Some((p.as_u64()? as usize, m.as_str()?.trim().to_lowercase()))).collect();
-                        let juste = essais.len() >= 3 && essais.iter().all(|(p, m)| mots.get(*p).is_some_and(|x| *x == m));
+                        // R66 : trois positions DISTINCTES au moins (sinon un mot se devine seul, en 2048 essais),
+                        // et chaque essai manqué compte pour le verrouillage.
+                        let distinctes = essais.iter().map(|(p, _)| *p).collect::<std::collections::BTreeSet<_>>().len();
+                        let juste = distinctes >= 3 && essais.iter().all(|(p, m)| mots.get(*p).is_some_and(|x| *x == m));
                         if !juste {
+                            garde.echec_secret("mots de la phrase de récupération incorrects");
                             json_rep(400, json!({ "erreur": "un ou plusieurs mots ne correspondent pas : vérifiez votre sauvegarde" }))
                         } else {
                             let mut compte = lire_compte(cle_ch);
@@ -1034,7 +1068,9 @@ pub fn servir(serveur: &tiny_http::Server, jeton: &str, handle: Handle, owner: K
                         json_rep(200, json!({ "cle_privee": hex::encode(k.secret_bytes()), "adresse": address(&k).to_string(), "chemin_derivation": cle::CHEMIN_DERIVATION }))
                     }
                 },
-                ("POST", "/api/cle-chiffree") => match garde.ouvrir(cle_ch, &owner, &v, false) {
+                // R65 : ce fichier et le mot de passe suffisent, hors ligne, à retrouver la phrase : le code
+                // de double authentification est donc exigé ici aussi quand elle est active.
+                ("POST", "/api/cle-chiffree") => match garde.ouvrir(cle_ch, &owner, &v, true) {
                     Err(r) => r,
                     Ok(_) => match fs::read_to_string(cle_ch.unwrap_or_default()) {
                         Ok(t) => json_rep(200, json!({ "fichier": serde_json::from_str::<Value>(&t).unwrap_or(Value::Null) })),
@@ -1218,7 +1254,7 @@ mod tests {
         let ch = chemin.to_str().unwrap();
         let _ = std::fs::remove_file(ch);
         cle::ecrire(ch, &cle::chiffrer_coffret(&c, mdp).unwrap()).unwrap();
-        let mut g = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+        let mut g = Garde::neuve();
         assert!(g.ouvrir(None, &owner, &json!({}), true).is_err(), "mode test : rien à exporter");
         assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), true).ok().unwrap().1.is_some());
         let autre = Keypair::from_seckey_slice(secp256k1::SECP256K1, &[9; 32]).unwrap();
@@ -1227,13 +1263,13 @@ mod tests {
         let secret = vec![3u8; 20];
         c.totp = Some(zeroize::Zeroizing::new(secret.clone()));
         cle::remplacer(ch, &cle::chiffrer_coffret(&c, mdp).unwrap()).unwrap();
-        let mut g = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+        let mut g = Garde::neuve();
         assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), true).is_err(), "code manquant");
         let code = format!("{:06}", double_auth::code(&secret, double_auth::maintenant() / 30));
         assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": code }), true).is_ok());
         assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": code }), true).is_err(), "rejeu refusé");
         assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), false).is_ok(), "confirmation de sauvegarde : mot de passe seul");
-        let mut g = Garde { echecs: 0, verrou: None, dernier_pas: 0 };
+        let mut g = Garde::neuve();
         for _ in 0..5 {
             assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": "mauvais" }), false).is_err());
         }
@@ -1242,6 +1278,144 @@ mod tests {
         for f in [ch.to_string(), format!("{ch}.precedent")] {
             let _ = std::fs::remove_file(f);
         }
+    }
+
+    /// Console de test avec un vrai fichier de clé (double authentification active ou non).
+    /// Renvoie (base, serveur, fil, phrase, secret de double authentification, chemin du fichier).
+    #[cfg(test)]
+    fn console_avec_cle(nom: &str, double_auth_active: bool) -> (String, std::sync::Arc<tiny_http::Server>, std::thread::JoinHandle<()>, Vec<String>, Vec<u8>, String) {
+        use std::sync::Arc;
+        let mdp = "le bon mot de passe";
+        let mut c = cle::nouveau_coffret().unwrap();
+        let owner = cle::cle_du_coffret(&c).unwrap();
+        let secret = vec![5u8; 20];
+        if double_auth_active {
+            c.totp = Some(zeroize::Zeroizing::new(secret.clone()));
+        }
+        let phrase: Vec<String> = cle::phrase(&c).unwrap().split(' ').map(String::from).collect();
+        let chemin = std::env::temp_dir().join(format!("cle-{nom}-{}.json", std::process::id()));
+        let ch = chemin.to_str().unwrap().to_string();
+        let _ = std::fs::remove_file(&ch);
+        cle::ecrire(&ch, &cle::chiffrer_coffret(&c, mdp).unwrap()).unwrap();
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let (s2, ch2) = (serveur.clone(), ch.clone());
+        let fil = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            servir(&s2, "jeton-de-test", rt.handle().clone(), owner, Keypair::from_seckey_slice(secp256k1::SECP256K1, &[2; 32]).unwrap(), Some(ch2));
+        });
+        (format!("http://127.0.0.1:{port}"), serveur, fil, phrase, secret, ch)
+    }
+
+    #[cfg(test)]
+    fn poster(base: &str, chemin: &str, corps: Value) -> (u16, Value) {
+        match ureq::post(&format!("{base}{chemin}")).set("X-Jeton", "jeton-de-test").send_string(&corps.to_string()) {
+            Ok(r) => (r.status(), r.into_string().ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)),
+            Err(ureq::Error::Status(c, r)) => (c, r.into_string().ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)),
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// R65 : avec la double authentification active, le mot de passe seul ne doit pas suffire à
+    /// sortir le fichier de clé chiffré (ce fichier + le mot de passe = la phrase et le secret de
+    /// double authentification, hors ligne : la double authentification serait contournée).
+    #[test]
+    fn r65_fichier_de_cle_chiffre_exige_la_double_authentification() {
+        let mdp = "le bon mot de passe";
+        let (base, serveur, fil, _, secret, ch) = console_avec_cle("r65", true);
+        let (statut, corps) = poster(&base, "/api/cle-chiffree", json!({ "mot_de_passe": mdp }));
+        assert_eq!(statut, 403, "mot de passe seul : le fichier chiffré ne sort pas ({corps})");
+        assert!(corps["fichier"].is_null());
+        let code = format!("{:06}", double_auth::code(&secret, double_auth::maintenant() / 30));
+        let (statut, corps) = poster(&base, "/api/cle-chiffree", json!({ "mot_de_passe": mdp, "code": code }));
+        assert_eq!(statut, 200, "mot de passe + code : sauvegarde permise ({corps})");
+        assert!(corps["fichier"]["chiffre"].is_string());
+        // la page demande bien le code pour cette action
+        assert!(PAGE.contains("api(\"/api/cle-chiffree\",{mot_de_passe:mdp,code})"), "la page doit envoyer le code");
+        serveur.unblock();
+        fil.join().unwrap();
+        let _ = std::fs::remove_file(ch);
+    }
+
+    /// R66 : la confirmation de sauvegarde (mot de passe seul) ne doit pas servir d'oracle pour
+    /// deviner la phrase mot par mot : trois positions DISTINCTES exigées, échecs comptés.
+    #[test]
+    fn r66_confirmation_de_sauvegarde_sans_oracle() {
+        let mdp = "le bon mot de passe";
+        let (base, serveur, fil, phrase, _, ch) = console_avec_cle("r66", true);
+        // un seul mot juste, répété trois fois à la même position : refusé (sinon 2048 essais par mot)
+        let (statut, _) = poster(&base, "/api/recuperation/confirmer", json!({ "mot_de_passe": mdp, "positions": [0, 0, 0], "mots": [phrase[0], phrase[0], phrase[0]] }));
+        assert_eq!(statut, 400, "positions répétées : refus");
+        assert!(!lire_compte(Some(&ch)).sauvegarde_faite);
+        // les mauvais essais sont comptés : verrouillage après 5 échecs
+        let mut statuts = Vec::new();
+        for _ in 0..6 {
+            statuts.push(poster(&base, "/api/recuperation/confirmer", json!({ "mot_de_passe": mdp, "positions": [0, 1, 2], "mots": ["zoo", "zoo", "zoo"] })).0);
+        }
+        assert_eq!(statuts.last(), Some(&429), "essais illimités sur les mots de la phrase : {statuts:?}");
+        serveur.unblock();
+        fil.join().unwrap();
+        for f in [ch.clone(), chemin_compte(&ch)] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// R66 (suite) : trois positions distinctes et les bons mots : la sauvegarde est confirmée.
+    #[test]
+    fn r66_confirmation_de_sauvegarde_legitime() {
+        let mdp = "le bon mot de passe";
+        let (base, serveur, fil, phrase, _, ch) = console_avec_cle("r66b", false);
+        let (statut, corps) = poster(&base, "/api/recuperation/confirmer", json!({ "mot_de_passe": mdp, "positions": [3, 11, 23], "mots": [phrase[3], format!(" {} ", phrase[11].to_uppercase()), phrase[23]] }));
+        assert_eq!(statut, 200, "{corps}");
+        assert!(lire_compte(Some(&ch)).sauvegarde_faite);
+        serveur.unblock();
+        fil.join().unwrap();
+        for f in [ch.clone(), chemin_compte(&ch)] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// R67 : les échecs de code à 6 chiffres ne doivent pas être remis à zéro par une action au mot
+    /// de passe seul (sinon : 4 codes faux, 1 action sans code, 4 codes faux… sans jamais de verrou).
+    #[test]
+    fn r67_essais_de_code_non_remis_a_zero_par_le_mot_de_passe_seul() {
+        let mdp = "le bon mot de passe";
+        let mut c = cle::nouveau_coffret().unwrap();
+        let owner = cle::cle_du_coffret(&c).unwrap();
+        let secret = vec![6u8; 20];
+        c.totp = Some(zeroize::Zeroizing::new(secret.clone()));
+        let chemin = std::env::temp_dir().join(format!("cle-r67-{}.json", std::process::id()));
+        let ch = chemin.to_str().unwrap();
+        let _ = std::fs::remove_file(ch);
+        cle::ecrire(ch, &cle::chiffrer_coffret(&c, mdp).unwrap()).unwrap();
+        let p = double_auth::maintenant() / 30;
+        let faux = (0..1_000_000u32).find(|n| (p.saturating_sub(2)..=p + 2).all(|q| double_auth::code(&secret, q) != *n)).unwrap();
+        let faux = format!("{faux:06}");
+        let mut g = Garde::neuve();
+        let mut essais_de_code = 0;
+        for _ in 0..3 {
+            for _ in 0..4 {
+                if g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": faux }), true).is_err() && g.verrou.is_none() {
+                    essais_de_code += 1;
+                }
+            }
+            let _ = g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp }), false); // action au mot de passe seul
+        }
+        assert!(g.verrou.is_some(), "12 codes faux sans verrouillage");
+        assert!(essais_de_code <= 5, "au plus 5 essais de code avant le verrou, obtenu {essais_de_code}");
+        // les verrous successifs s'allongent (essais de code seulement) : 1 min, puis 2 min…
+        let premier = g.verrou.unwrap();
+        g.verrou = None;
+        for _ in 0..5 {
+            let _ = g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": faux }), true);
+        }
+        assert!(g.verrou.is_some_and(|v| v > premier && v.duration_since(Instant::now()) >= Duration::from_secs(100)), "le deuxième verrou dure au moins 2 minutes");
+        // un bon code remet les compteurs à zéro
+        g.verrou = None;
+        let bon = format!("{:06}", double_auth::code(&secret, double_auth::maintenant() / 30));
+        assert!(g.ouvrir(Some(ch), &owner, &json!({ "mot_de_passe": mdp, "code": bon }), true).is_ok());
+        assert_eq!((g.echecs_code, g.verrous_code), (0, 0));
+        let _ = std::fs::remove_file(ch);
     }
 
     #[test]
