@@ -13,7 +13,7 @@ standard facile à relire et à réimplémenter. Lire d'abord `SOCLE.md`.
 | Lignes de Rust par fichier de `cli/src/` | `wc -l` |
 | Dépendances directes | `cli/Cargo.toml` |
 
-Comparer au rapport précédent (`fantomes/rapports/*-allegement.md`).
+Comparer au rapport précédent (`review-agents/rapports/*-allegement.md`).
 
 ## Ce qu'il cherche
 

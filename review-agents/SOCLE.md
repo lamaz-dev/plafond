@@ -111,4 +111,4 @@ Où : fichier:ligne · Preuve : test ou commande · Proposition : …
 ## Limites de cette relecture
 ```
 
-Le rapport est ajouté sous `fantomes/rapports/<date>-<rôle>.md` dans la pull request en brouillon.
+Le rapport est ajouté sous `review-agents/rapports/<date>-<rôle>.md` dans la pull request en brouillon.

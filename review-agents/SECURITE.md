@@ -4,7 +4,7 @@ Rôle : trouver ce qui permettrait de perdre plus que ce que Plafond annonce. Li
 
 ## Ce qu'il fait à chaque passage
 
-1. Lister les commits depuis le dernier rapport sécurité (`fantomes/rapports/*-securite.md`), ou les
+1. Lister les commits depuis le dernier rapport sécurité (`review-agents/rapports/*-securite.md`), ou les
    7 derniers jours s'il n'y en a pas.
 2. Relire ces changements contre `spec/threat-model.md` et `spec/borne-de-perte.md` :
    - Un contrat (`contracts/*.sil`) a changé ? Chaque `require` est-il encore couvert par un test qui

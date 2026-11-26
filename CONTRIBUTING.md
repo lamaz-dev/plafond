@@ -21,5 +21,8 @@ Open an issue with:
 - New risks go into `spec/threat-model.md`, new invariants into `spec/invariants.md`.
 - The CI must stay green: tests, fuzzing, fingerprints, secret scan.
 - Documentation is written in French and English; code comments are in French. English contributions are welcome.
+- Commit messages are written in English, in the imperative mood, with a short summary line
+  (about 72 characters at most), for example `Refill an existing coin instead of adding one (R62)`.
+  Reference findings (`R62`) and issues (`#40`) in the message when relevant.
 
 By contributing, you agree that your contribution is licensed under the ISC license of this repository.
