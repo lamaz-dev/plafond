@@ -944,7 +944,7 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     for a in &liste {
                         let Ok(k) = agents::cle(a, &agent_principal) else { continue };
                         let t = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(tableau(&owner, &k, c.clone())));
-                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a), "echeance": a.echeance });
+                        let mut ligne = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a), "echeance": a.echeance, "retour": a.retour });
                         match t {
                             Ok(t) => {
                                 // Échéance du mandat atteinte : révocation automatique (les fonds reviennent en
