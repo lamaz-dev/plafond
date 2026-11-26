@@ -36,3 +36,11 @@ jobs:
       - name: Tests de l'outil, dont fichiers sensibles et fuzzing d'état (dépendances figées)
         working-directory: cli
         run: cargo test --release --locked
+      - name: Program for manual testnet checks (kept 7 days)
+        working-directory: cli
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vault-cli-windows
+          path: cli/target/release/vault-cli.exe
+          retention-days: 7
