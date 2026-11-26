@@ -1,4 +1,5 @@
-# Race tests on testnet, second batch (26 Nov 2026): repeat to see both winners
+# Race tests on testnet, third batch (26 Nov 2026): clear the stale state, then repeat
+recuperer                      # vault already empty: forgets the stale local state
 deployer
 pause 15
 course-recharge
@@ -9,5 +10,4 @@ etat                           # vault empty, no false loss
 deployer
 pause 15
 course-gel
-course-gel                     # vault already empty: must say so, not fail the check
 etat
