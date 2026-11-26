@@ -60,3 +60,19 @@ serveur. Les fois suivantes, connectez-vous avec le mot de passe (et le code à 
 authentification est active). Mot de passe oublié ? « Restaurer avec ma phrase de 24 mots » recrée la clé sous un
 nouveau mot de passe ; l'ancien fichier est conservé. Sauvegardez votre phrase de récupération dès la création, depuis
 le bandeau.
+
+### Démarrage rapide pour développeurs (5 minutes)
+
+1. Lancez `Plafond.bat` (ou `./plafond.sh`) : la console s'ouvre dans votre navigateur. Laissez la fenêtre du
+   terminal ouverte, c'est elle qui fait tourner la console.
+2. Créez votre compte. En haut de la page s'affichent tout de suite vos **deux adresses** :
+   - l'**adresse principale** (votre trésorerie) ;
+   - une **adresse de retour de test** : un second portefeuille créé avec le compte (`compte/retour-test.key`,
+     chiffré). Elle est proposée pour chaque nouveau mandat ; le gel y envoie l'argent.
+3. « Obtenir des fonds de test gratuits » copie votre adresse principale et ouvre le distributeur : collez-la,
+   demandez des TKAS. Le solde s'affiche dès leur arrivée.
+4. Créez un mandat (l'adresse de retour est déjà remplie), puis arrêtez-le : vérifiez sur l'explorateur que
+   l'argent part vers l'adresse de retour, pas vers votre trésorerie.
+
+L'adresse de retour de test est sur le même ordinateur que votre clé : elle sert à essayer, pas à se protéger. En vrai,
+mettez l'adresse d'un Ledger, d'une multisignature ou d'un conservateur.

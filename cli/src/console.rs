@@ -353,6 +353,29 @@ fn journal(entree: Value) {
 /// La démo ouvre la console dans le navigateur par défaut (rien à recopier pour la filmer).
 pub static OUVRIR_NAVIGATEUR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Réseau de test : adresse d'un second portefeuille créé avec le compte, proposée comme adresse de
+/// retour des nouveaux mandats. Le développeur voit tout de suite un gel partir ailleurs que vers sa
+/// trésorerie. Sa clé est sur le même ordinateur : elle sert à essayer, pas à se protéger.
+pub static RETOUR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Portefeuille de retour de test du compte (`retour-test.key`, chiffré comme les clés d'agent) :
+/// créé au premier lancement, relu ensuite. Seule son adresse sert à la console.
+fn portefeuille_retour_test(dossier: &str, enveloppe: &cle::Enveloppe) -> Res<String> {
+    let chemin = std::path::Path::new(dossier).join("retour-test.key");
+    let ch = chemin.to_string_lossy().into_owned();
+    let pk = match agents::lire_cle_stockee(&ch)? {
+        Some(agents::CleStockee::Chiffree(f)) => secp256k1::PublicKey::from_slice(&hex::decode(&f.publique)?)?.x_only_public_key().0.serialize().to_vec(),
+        Some(agents::CleStockee::Claire(k)) => xonly(&k),
+        None => {
+            let k = cle::nouvelle()?;
+            agents::ecrire_cle(&chemin, &k, Some(enveloppe))?;
+            journal(json!({ "retour_test": "portefeuille de retour de test créé" }));
+            xonly(&k)
+        }
+    };
+    Ok(Address::new(Prefix::Testnet, Version::PubKey, &pk).to_string())
+}
+
 /// Ouvre un lien local dans le navigateur par défaut ; un échec n'empêche rien (le lien est affiché).
 fn ouvrir_navigateur(lien: &str) {
     #[cfg(windows)]
@@ -490,7 +513,12 @@ fn lien_de_session(port: u16, session: &Session) -> Res<String> {
 /// affiche un nouveau lien (le précédent ne s'ouvre qu'une fois).
 fn annoncer_lien(titre: &str, session: &std::sync::Arc<Session>) -> Res<()> {
     let lien = lien_de_session(PORT, session)?;
-    println!("{titre} : ouvrez {lien}");
+    if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
+        println!("{titre} s'ouvre dans votre navigateur. Laissez cette fenêtre ouverte : elle fait tourner la console.");
+        println!("Si la page ne s'est pas ouverte, collez ce lien dans la barre d'adresse du navigateur : {lien}");
+    } else {
+        println!("{titre} : ouvrez {lien}");
+    }
     println!("(lien personnel : il ne s'ouvre qu'une fois, dans les deux minutes. Pour un nouveau lien, appuyez sur Entrée ici. Ctrl+C pour arrêter)");
     if OUVRIR_NAVIGATEUR.load(std::sync::atomic::Ordering::Relaxed) {
         ouvrir_navigateur(&lien);
@@ -593,6 +621,13 @@ pub fn lancer_compte(handle: Handle, dossier: String) -> Res<()> {
     annoncer_lien("Plafond", &session)?;
     let (owner, agent, enveloppe) = porte(&serveur, &session, &fichiers)?;
     println!("Compte ouvert.");
+    match portefeuille_retour_test(&dossier, &enveloppe) {
+        Ok(a) => {
+            println!("Adresse de retour de test (proposée pour les nouveaux mandats) : {a}");
+            *RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(a);
+        }
+        Err(e) => eprintln!("portefeuille de retour de test indisponible : {e}"),
+    }
     servir(&serveur, &session, handle, owner, agent, Some(fichiers.cle), Some(enveloppe));
     Ok(())
 }
@@ -1004,7 +1039,7 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     }
                     let compte = lire_compte(cle_ch);
                     json_rep(200, json!({
-                        "agents": vus, "solde_proprietaire_sompi": solde, "adresse_proprietaire": address(&owner).to_string(),
+                        "agents": vus, "solde_proprietaire_sompi": solde, "adresse_proprietaire": address(&owner).to_string(), "adresse_retour_test": RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()).clone(),
                         "risque": crate::risque::rapport(&couloirs, &[], instant, crate::JOUR_DAA), "cours": c, "tarif_reference_sompi": tarif_reference(),
                         "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))
@@ -1373,6 +1408,23 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portefeuille_de_retour_de_test_cree_une_fois_et_chiffre() {
+        let d = std::env::temp_dir().join(format!("plafond-retour-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let proprio = cle::nouvelle().unwrap();
+        let env = cle::Enveloppe::du_proprietaire(&proprio);
+        let dossier = d.to_string_lossy().into_owned();
+        let a = portefeuille_retour_test(&dossier, &env).unwrap();
+        assert!(a.starts_with("kaspatest:"));
+        assert_ne!(a, address(&proprio).to_string(), "l'adresse de retour de test n'est pas la trésorerie");
+        assert_eq!(portefeuille_retour_test(&dossier, &env).unwrap(), a, "relu, pas recréé");
+        let texte = fs::read_to_string(d.join("retour-test.key")).unwrap();
+        assert!(texte.trim_start().starts_with('{'), "clé chiffrée, jamais en clair");
+        let _ = fs::remove_dir_all(&d);
+    }
 
     /// Protections de la console, sans réseau : hôte, jeton, origine, confirmation.
     #[test]

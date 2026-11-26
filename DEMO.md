@@ -61,3 +61,19 @@ or more): your key is generated and encrypted on your computer, in the `compte` 
 server. The next times, sign in with the password (and the 6-digit code if you enabled two-factor authentication).
 Forgot the password? "Restore with my 24-word phrase" recreates the key under a new password; the old file is kept.
 Back up your recovery phrase from the banner as soon as the account is created.
+
+### Developer quick start (5 minutes)
+
+1. Run `Plafond.bat` (or `./plafond.sh`): the console opens in your browser. Keep the terminal window open; it runs
+   the console.
+2. Create your account. Your **two addresses** show at the top of the page right away:
+   - the **main address** (your treasury);
+   - a **test return address**: a second wallet created with the account (`compte/retour-test.key`, encrypted). It
+     is suggested for every new mandate; freezing sends the money there.
+3. "Get free test funds" copies your main address and opens the faucet: paste it and request TKAS. The balance
+   shows as soon as they arrive.
+4. Create a mandate (the return address is already filled in), then stop it: check on the explorer that the money
+   goes to the return address, not to your treasury.
+
+The test return address lives on the same computer as your key: it is for trying things out, not for protection. For
+real use, set the address of a Ledger, a multisig or a custodian.
