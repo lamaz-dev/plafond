@@ -200,3 +200,30 @@ mod tests {
         assert_eq!(utxo_plurality(&spk, false), 1);
     }
 }
+
+/// Exécute l'entrée 0 avec le vrai moteur, sous la limite d'unités de script que le réseau accorde
+/// au budget de calcul DÉCLARÉ par l'entrée (consensus : `ComputeCommit::allowed_script_units`).
+/// Renvoie les unités de script consommées, ou l'erreur du moteur (dont le dépassement de budget).
+#[cfg(test)]
+pub fn unites_sous_la_limite_du_reseau(tx: &Transaction, utxos: Vec<UtxoEntry>) -> Result<u64, String> {
+    use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
+    use kaspa_consensus_core::tx::VerifiableTransaction;
+    use kaspa_txscript::{EngineCtx, EngineFlags, TxScriptEngine, caches::Cache, covenants::CovenantsContext};
+    let populated = PopulatedTransaction::new(tx, utxos);
+    let cov = CovenantsContext::from_tx(&populated).map_err(|e| format!("{e:?}"))?;
+    let cache = Cache::new(10);
+    let reused = SigHashReusedValuesUnsync::new();
+    let input = populated.inputs()[0].clone();
+    let limite = input.compute_commit.allowed_script_units();
+    let mut vm = TxScriptEngine::from_transaction_input_with_script_units_limit(
+        &populated,
+        &input,
+        0,
+        populated.utxo(0).unwrap(),
+        EngineCtx::new(&cache).with_reused(&reused).with_covenants_ctx(&cov),
+        EngineFlags::default(),
+        limite,
+    );
+    vm.execute().map_err(|e| format!("{e:?}"))?;
+    Ok(vm.used_script_units().0)
+}

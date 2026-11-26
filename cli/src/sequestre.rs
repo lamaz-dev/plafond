@@ -210,4 +210,31 @@ mod tests {
             assert!(m.standard() && m.compute * 100 <= crate::FEE);
         }
     }
+    /// Cible 8 (Red Team, 26 nov. 2026) : pire cas du budget de calcul du séquestre, branche par
+    /// branche, sous la limite exacte du réseau pour le budget déclaré par l'outil.
+    #[test]
+    fn budget_de_calcul_branche_par_branche() {
+        let (merchant, refund, verifier, a, s) = setup();
+        let utxo = |v: u64| vec![UtxoEntry::new(v, pay_to_script_hash_script(&bytecode(&a)), 0, false, None)];
+        let (p, r) = proof(&verifier, &s, "contenu livre").unwrap();
+        let claim = crate::masse::unites_sous_la_limite_du_reseau(&build_claim(&a, &s, merchant.clone(), crate::FEE, p.clone(), r).unwrap(), utxo(s.valeur)).unwrap();
+        let rembourse = crate::masse::unites_sous_la_limite_du_reseau(&build_refund(&a, &s, refund, crate::FEE).unwrap(), utxo(s.valeur)).unwrap();
+        // Séquestre de valeur maximale et index de sortie élevé : mêmes branches, opérandes les plus longs.
+        // (Un index ≥ 2^31 ne tient pas dans `as byte[4]`, nombre signé : `claim` échouerait et seul
+        // `refund` resterait. Sans portée : une transaction n'a jamais autant de sorties.)
+        for index in [127u32, 128, 255, 256, 32_767, 32_768, 8_388_608] {
+            let si = Sequestre { index, ..s.clone() };
+            let (pi, ri) = proof(&verifier, &si, "x").unwrap();
+            exec(&build_claim(&a, &si, merchant.clone(), crate::FEE, pi, ri).unwrap(), &a, si.valeur).unwrap_or_else(|e| panic!("index {index} : {e}"));
+        }
+        let gros = Sequestre { valeur: 2_900_000_000_000_000_000, index: i32::MAX as u32, ..s.clone() };
+        let (p2, r2) = proof(&verifier, &gros, "x").unwrap();
+        let claim_max = crate::masse::unites_sous_la_limite_du_reseau(&build_claim(&a, &gros, merchant.clone(), crate::FEE, p2, r2).unwrap(), utxo(gros.valeur)).unwrap();
+        eprintln!("séquestre : claim {claim}, claim opérandes maximaux {claim_max}, refund {rembourse} unités de script");
+        assert!(claim.max(claim_max).div_ceil(10_000) <= CB_CLAIM as u64 && rembourse.div_ceil(10_000) <= CB_REFUND as u64);
+        // Budget trop court d'une unité : refusé, la mesure est bien celle du réseau.
+        let mut court = build_claim(&a, &s, merchant, crate::FEE, p, r).unwrap();
+        court.inputs[0].compute_commit = kaspa_consensus_core::mass::ComputeBudget((claim / 10_000) as u16 - 1).into();
+        assert!(crate::masse::unites_sous_la_limite_du_reseau(&court, utxo(s.valeur)).is_err());
+    }
 }

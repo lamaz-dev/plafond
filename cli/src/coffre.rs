@@ -397,7 +397,7 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
     let mut tentative = 0u64;
     let mut stable = false;
     let debut = std::time::Instant::now();
-    while tentative < 8 && debut.elapsed().as_secs() < 600 {
+    while debut.elapsed().as_secs() < 600 {
         let ps = pieces(&c, &art).await?;
         let now = virtual_daa(&c).await?;
         match suivi.observer(&ps, now) {
@@ -415,6 +415,9 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
                 continue;
             }
             EtatGel::ARapatrier => {}
+        }
+        if tentative >= 8 {
+            break; // huit tentatives : on rend la main, le propriétaire relance
         }
         tentative += 1;
         for lot in &lots(&ps) {

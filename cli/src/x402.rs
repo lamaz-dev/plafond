@@ -692,4 +692,103 @@ mod vendeur_attaque_hors_ligne {
         // L'offre n'est pas celle que l'agent a acceptée : refus immédiat, quoi qu'il en soit.
         assert!(preparer(URL, &cher, &vendeur(), &pl).is_err());
     }
+    // ------------------------------------------------ Red Team 26 nov. 2026 (rapport §5)
+
+    /// Paiement honnête pour une offre et un coffre donnés (prix et frais choisis).
+    fn paiement_pour(c: &crate::coeur::Coeur, offre: &Offer, frais: u64) -> String {
+        let art = c.artifact().unwrap();
+        let op = TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), 1);
+        let tx = {
+            let mut tx = crate::coeur::build_pay(c, &art, op, PIECE, pay_to_address_script(&vendeur()), offre.price, frais, &k(2), None).unwrap();
+            tx.finalize();
+            tx
+        };
+        let req_hash = request_hash("GET", URL);
+        let expires = now_unix() + 60;
+        let digest = auth_digest(&tx.id().to_string(), &req_hash, &vendeur().to_string(), &offre.price.to_string(), expires);
+        let sig = k(2).sign_schnorr(Message::from_digest(digest));
+        B64.encode(json!({
+            "x402Version": 2,
+            "accepted": requirement(offre, &vendeur()),
+            "payload": {
+                "type": "covenant-budget-transaction", "profile": PROFILE,
+                "transaction": hex::encode(borsh::to_vec(&tx).unwrap()),
+                "vault": { "params": c.publics(), "outpoint": { "txid": op.transaction_id.to_string(), "index": op.index } },
+                "requestHash": req_hash,
+                "authorization": { "version": "x402cov-auth-v0", "expiresAt": expires, "signature": hex::encode(sig.as_ref()) }
+            }
+        }).to_string())
+    }
+
+    /// Prix exactement à la capacité. Avec les frais, la dépense vaut prix + frais : le prix le plus
+    /// haut payable est capacité − frais, et il exige une période entière d'attente, à l'unité près.
+    #[test]
+    fn prix_exactement_a_la_capacite() {
+        let c = coeur();
+        let cap = c.capacite as u64;
+        let p_de = |v: u64| PieceVue { valeur: v, spk: vault_spk(&c.artifact().unwrap()), block_daa: 1_000 };
+        // Dépense = capacité pile (prix = capacité − frais) : accepté après une période entière, pas avant.
+        let pile = Offer { path: "/pile", price: cap - FEE, content: "" };
+        let p = preparer(URL, &pile, &vendeur(), &paiement_pour(&c, &pile, FEE)).unwrap();
+        assert_eq!(c.attente(c.capacite), c.periode as u64);
+        controler(&p, Some(&p_de(PIECE)), 1_000 + c.periode as u64).unwrap();
+        assert!(controler(&p, Some(&p_de(PIECE)), 1_000 + c.periode as u64 - 1).unwrap_err().contains("pas encore disponible"));
+        // Un sompi de plus que la capacité : l'agent honnête ne sait même pas construire le paiement…
+        let art = c.artifact().unwrap();
+        let op = TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), 1);
+        assert!(crate::coeur::build_pay(&c, &art, op, PIECE, pay_to_address_script(&vendeur()), cap - FEE + 1, FEE, &k(2), None).is_err());
+        // …et un agent tricheur (frais rognés pour rester « sous » la capacité) est refusé par le vendeur :
+        // prix = capacité, frais nuls.
+        let egal = Offer { path: "/egal", price: cap, content: "" };
+        let e = preparer(URL, &egal, &vendeur(), &paiement_pour(&c, &egal, 0)).err().expect("prix égal à la capacité : devait être refusé");
+        assert!(e.contains("plafond par paiement"), "{e}");
+        // Prix = capacité − 1, frais 1 : forme correcte, dépense = capacité ; le vendeur l'accepte
+        // (le réseau décidera si des frais d'un sompi suffisent).
+        let ras = Offer { path: "/ras", price: cap - 1, content: "" };
+        let p = preparer(URL, &ras, &vendeur(), &paiement_pour(&c, &ras, 1)).unwrap();
+        controler(&p, Some(&p_de(PIECE)), 1_000 + c.periode as u64).unwrap();
+        // La pièce vaut un sompi de plus qu'annoncé : la dépense réelle dépasserait la capacité.
+        assert!(controler(&p, Some(&p_de(PIECE + 1)), 1_000 + 10 * c.periode as u64).unwrap_err().contains("hors des limites"));
+    }
+
+    /// Rejeu du même paiement pour la même requête. Une fois le paiement inscrit, la pièce qu'il
+    /// dépensait n'existe plus : le même en-tête présenté de nouveau est refusé, le vendeur ne sert
+    /// pas deux fois. Revers (R61, limite connue) : si la première réponse s'est perdue en route,
+    /// l'agent ne peut pas récupérer son contenu en représentant le même paiement.
+    #[test]
+    fn rejeu_du_meme_paiement_refuse_apres_inscription() {
+        let en_tete = paiement(Forge::default());
+        let p = preparer(URL, &OFFERS[0], &vendeur(), &en_tete).unwrap();
+        controler(&p, Some(&piece(1_000)), 1_000 + exige()).unwrap();
+        // Après inscription : le nœud ne renvoie plus la pièce dépensée, seulement sa continuation
+        // (autre identifiant de sortie). `verify_and_settle` cherche la pièce par son identifiant.
+        let rejoue = preparer(URL, &OFFERS[0], &vendeur(), &en_tete).unwrap();
+        assert_eq!(rejoue.txid, p.txid, "même paiement, même transaction");
+        assert!(controler(&rejoue, None, 1_000 + exige() + 50).unwrap_err().contains("non authentique"));
+        // Le même paiement ne vaut pas pour une autre ressource du même vendeur.
+        assert!(preparer("https://vendeur.exemple/rapport-premium", &OFFERS[0], &vendeur(), &en_tete).err().unwrap().contains("autre requête"));
+    }
+
+    /// Vendeur qui retient la transaction (R61) : le paiement signé n'a pas de date limite sur la
+    /// chaîne (l'expiration de l'autorisation ne lie que les vendeurs honnêtes). Tant que la pièce
+    /// n'a pas été redépensée, un vendeur peut diffuser plus tard un paiement qu'il a dit refuser.
+    /// Ce que l'on vérifie ici : la perte reste celle que l'agent avait acceptée (le prix, sous le
+    /// plafond), et tout nouveau paiement depuis la même pièce rend l'ancien inutilisable.
+    #[test]
+    fn paiement_retenu_annule_par_le_paiement_suivant() {
+        let c = coeur();
+        let art = c.artifact().unwrap();
+        let op = TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), 1);
+        let retenu = crate::coeur::build_pay(&c, &art, op, PIECE, pay_to_address_script(&vendeur()), OFFERS[0].price, FEE, &k(2), None).unwrap();
+        let suivant = crate::coeur::build_pay(&c, &art, op, PIECE, pay_to_address_script(&crate::address(&k(8))), 10_000_000, FEE, &k(2), None).unwrap();
+        // Les deux dépensent la même pièce : le réseau n'en inscrira qu'un.
+        assert_eq!(retenu.inputs[0].previous_outpoint, suivant.inputs[0].previous_outpoint);
+        assert_ne!(retenu.id(), suivant.id());
+        // Le paiement retenu ne prend jamais plus que le prix accepté, frais compris sous la capacité.
+        let sorti = PIECE - retenu.outputs[1].value;
+        assert_eq!(sorti, OFFERS[0].price + FEE);
+        assert!(sorti as i64 <= c.capacite);
+        // Aucune date limite dans la transaction elle-même.
+        assert_eq!(retenu.lock_time, 0);
+    }
 }

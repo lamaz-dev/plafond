@@ -1419,6 +1419,10 @@ async fn main() -> Res<()> {
             if o.total <= 0 {
                 return Err("aucun bon à encaisser : laisser le délai passer puis rembourser".into());
             }
+            if !ardoise::encaissable(&o.ardoise, o.total, FEE) {
+                // R60 : sous le seuil, la part du vendeur pèserait trop lourd (masse de stockage) ou ne couvrirait pas les frais.
+                return Err("clôture impossible pour l'instant : le total dû est trop petit pour être encaissé (frais et masse minimale)".into());
+            }
             let art = ardoise::artifact(&pay_to_address_script(&address(&service)), &xonly(&service), &pay_to_address_script(&address(&owner)), &agent_pk(&agent), o.ardoise.timeout)?;
             let tx = ardoise::build_close(&art, &o.ardoise, &service, pay_to_address_script(&address(&owner)), hex::decode(&o.bon)?, o.total, FEE)?;
             let c = connect().await?;
