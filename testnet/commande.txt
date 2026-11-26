@@ -1,2 +1,9 @@
-# Relance kaspa-x402 #40 (26 nov. 2026) : nouvel identifiant de transaction (frais 300 001 sompi)
-essai-relais
+# Essai réel de R62 (regonflement) et du gel R58 (26 nov. 2026)
+deployer                       # coffre de test : 4 pièces
+pause 15
+etat                           # 4 pièces
+recharger 100000000            # 1 TKAS : une pièce existante est regonflée, pas de cinquième pièce
+pause 15
+etat                           # toujours 4 pièces, solde + 1 TKAS
+recuperer                      # gel : terminé seulement après ~10 s d'adresse vide
+etat                           # coffre vide
