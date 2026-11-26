@@ -61,7 +61,11 @@ impl Coeur {
         if self.periode <= 0 || self.periode > PERIODE_MAX {
             return Err(format!("période hors de 1..={PERIODE_MAX} (verrou relatif 32 bits)").into());
         }
-        if self.capacite > i64::MAX / self.periode {
+        // Le script calcule (spent × period + capacity) − 1 en 64 bits signés, dans cet ordre, et le
+        // moteur refuse tout dépassement intermédiaire : il faut C × R + C ≤ 2^63 − 1 pour qu'un
+        // paiement à pleine capacité reste possible (R59). Plus strict que la garde du script
+        // (C × R ≤ 2^63 − 1), donc sans danger.
+        if self.capacite as i128 * (self.periode as i128 + 1) > i64::MAX as i128 {
             return Err("capacité × période déborde".into());
         }
         Ok(())
@@ -99,7 +103,8 @@ impl Coeur {
     pub fn fenetre(&self, valeur: u64, age: u64, d: u64) -> u64 {
         let (c, r) = (self.capacite as i128, self.periode as i128);
         let depart = (c * r).min(c * age as i128);
-        (((depart + c * d as i128) / r) as u64).min(valeur)
+        // Borner par la valeur AVANT de revenir à 64 bits : le quotient peut dépasser 2^64 (R59).
+        ((depart + c * d as i128) / r).min(valeur as i128) as u64
     }
 }
 
@@ -176,7 +181,12 @@ mod tests {
             EngineCtx::new(&cache).with_reused(&reused).with_covenants_ctx(&cov),
             EngineFlags::default(),
         );
-        vm.execute().ok()?;
+        if let Err(e) = vm.execute() {
+            if std::env::var("PLAFOND_DEBUG_SCRIPT").is_ok() {
+                eprintln!("script refusé : {e}");
+            }
+            return None;
+        }
         Some(vm.used_script_units().0.div_ceil(kaspa_consensus_core::mass::units::SCRIPT_UNITS_PER_COMPUTE_BUDGET_UNIT))
     }
 
@@ -646,15 +656,574 @@ mod tests {
         }
     }
 
-    /// À écrire pendant la séance Red Team : réorganisation de chaîne. Une branche de blocs est
-    /// annulée, les paiements qu'elle contenait reviennent au mempool et sont rejoués sur l'autre
-    /// branche, avec d'autres scores DAA d'inscription. L'invariant à tenir : la perte nette reste
-    /// sous la courbe sur l'historique FINAL. Le réseau revalide les verrous relatifs, et cela doit
-    /// suffire. Squelette : rejouer `simuler` en remplaçant l'horloge par une suite non monotone.
+    // ------------------------------------------------ Red Team 26 nov. 2026 : code = spécification
+    // Preuves écrites : spec/red-team/rapport-2026-11-26.md, §3.
+
+    /// Référence en grands entiers, écrite sans reprendre le code de l'outil.
+    fn ref_immediate(c: i128, r: i128, v: i128, age: i128) -> i128 {
+        v.min(c).min(c * age / r)
+    }
+    fn ref_fenetre(c: i128, r: i128, v: i128, age: i128, d: i128) -> i128 {
+        // min(V, floor((min(C·R, C·âge) + C·D) / R)) : UNE seule division, voir le rapport §3.3.
+        v.min(((c * r).min(c * age) + c * d) / r)
+    }
+
+    /// Paramètres aux bornes : capacité et période petites, ordinaires, ou collées aux limites
+    /// (période = 2^32 − 1, C × R au ras de 2^63).
+    fn params_aux_bornes() -> impl Strategy<Value = (i64, i64)> {
+        prop_oneof![
+            (1i64..=2_000_000_000, 1i64..2_000_000),
+            (1i64..=1_000, 1i64..=1_000),
+            (1i64..=2_000_000_000, PERIODE_MAX - 3..=PERIODE_MAX),
+            // C × R tout près de la limite : C = (2^63 − 1) / R − écart.
+            (1i64..=PERIODE_MAX, 0i64..3).prop_map(|(r, e)| ((i64::MAX / r - e).max(1), r)),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(4_000), ..ProptestConfig::default() })]
+
+        /// Équivalence (rapport §3.1) : pour tout coffre accepté par l'outil et toute dépense
+        /// 0 ≤ s ≤ C, « ceil(s·R/C) ≤ âge » (ce que le script exige) ⇔ « s ≤ floor(C·âge/R) »
+        /// (ce que l'outil et le moteur de risque annoncent). Aux bornes : s = 0, s = C, âge à ±2
+        /// de la frontière, âge au-delà de 2^32.
+        #[test]
+        fn script_et_outil_disent_la_meme_chose(
+            (cap, r) in params_aux_bornes(),
+            part in 0.0f64..=1.0,
+            coin in 0u8..6,
+            ecart in -2i64..=2,
+            age_hasard in prop_oneof![0u64..10_000_000, (1u64 << 32) - 2..(1u64 << 32) + 2, any::<u64>()],
+        ) {
+            let c = coeur(cap, r);
+            prop_assume!(c.verifier().is_ok());
+            let s = match coin { 0 => 0, 1 => cap, 2 => 1, 3 => cap - 1, _ => (cap as f64 * part) as i64 }.clamp(0, cap);
+            let attente = c.attente(s);
+            // Le délai calculé est exact (plafond de la division), et il tient dans le verrou 32 bits.
+            let (ci, ri, si) = (cap as i128, r as i128, s as i128);
+            prop_assert_eq!(attente as i128, (si * ri + ci - 1) / ci);
+            prop_assert!((attente as i128) * ci >= si * ri && (attente as i128 - 1) * ci < si * ri || s == 0 && attente == 0);
+            prop_assert!(attente <= r as u64 && attente <= SEQUENCE_LOCK_TIME_MASK);
+            // Ce que le script calcule ne déborde jamais des 64 bits signés (R59).
+            prop_assert!(si * ri + ci <= i64::MAX as i128, "le calcul du script déborderait");
+            for age in [(attente as i64 + ecart).max(0) as u64, age_hasard] {
+                let permis = c.immediate(u64::MAX, age);
+                prop_assert_eq!(permis as i128, ref_immediate(ci, ri, u64::MAX as i128, age as i128));
+                prop_assert_eq!(attente <= age, s as u64 <= permis, "s={} attente={} age={} permis={}", s, attente, age, permis);
+            }
+        }
+
+        /// M1, M2 et la courbe (spec/moteur-de-risque.md §4.2) : l'outil (`Coeur`), le moteur de
+        /// risque (`risque::Couloir`) et la vue du coffre (`coffre::Vue`) rendent exactement les
+        /// formules, sans dépassement, pour toutes les valeurs que le type permet.
+        #[test]
+        fn m1_m2_et_courbe_sans_arrondi_ni_depassement(
+            (cap, r) in params_aux_bornes(),
+            v in prop_oneof![1u64..20_000_000_000, any::<u64>()],
+            age in prop_oneof![0u64..10_000_000, any::<u64>()],
+            d in prop_oneof![0u64..10_000_000, any::<u64>()],
+        ) {
+            let c = coeur(cap, r);
+            prop_assume!(c.verifier().is_ok());
+            let (ci, ri) = (cap as i128, r as i128);
+            let m1 = c.immediate(v, age);
+            let m2 = c.fenetre(v, age, d);
+            prop_assert_eq!(m1 as i128, ref_immediate(ci, ri, v as i128, age as i128));
+            prop_assert_eq!(m2 as i128, ref_fenetre(ci, ri, v as i128, age as i128, d as i128), "M2 (R59 : dépassement)");
+            prop_assert!(m1 <= m2 && m2 <= v);
+            prop_assert_eq!(c.fenetre(v, age, 0), m1, "M2 sur une fenêtre nulle = M1");
+            if let Some(d2) = d.checked_add(1) {
+                prop_assert!(c.fenetre(v, age, d2) >= m2, "M2 croît avec D");
+            }
+            // Le moteur de risque et la vue appellent bien les mêmes formules.
+            if v <= i64::MAX as u64 && age <= 1 << 62 && d <= i64::MAX as u64 {
+                let now = 1i64 << 62;
+                let couloir = crate::risque::Couloir {
+                    agent: String::new(), params: crate::risque::Rythme { capacite: cap, periode: r }, creation: now - age as i64, valeur: v,
+                };
+                prop_assert_eq!(couloir.immediate(now) as u64, m1);
+                prop_assert_eq!(couloir.fenetre(now, d as i64) as u64, m2);
+            }
+            let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
+            let x = 1u64 << 40;
+            let etat = crate::coffre::EtatCoeur { version: crate::coffre::VERSION.into(), capacite: cap, periode: r, agent: String::new(), cree_daa: x,
+                apports: vec![crate::coffre::Apport { txid: String::new(), sompi: v, daa: x }], vues: vec![], achats: vec![] };
+            let vue = crate::coffre::Vue { coeur: c.clone(), adresse: String::new(),
+                pieces: vec![crate::coffre::Piece { outpoint: op, valeur: v, creation: Some(x) }], now: x.saturating_add(age), etat: Some(etat) };
+            prop_assert_eq!(vue.immediate(), c.immediate(v, x.saturating_add(age) - x));
+            prop_assert_eq!(vue.courbe(x.saturating_add(d)) as i128, ref_fenetre(ci, ri, v as i128, 0, (x.saturating_add(d) - x) as i128));
+            prop_assert_eq!(vue.courbe(x - 1), 0, "avant l'apport : rien");
+        }
+    }
+
+    /// R59 (a) : la perte annoncée sur une fenêtre ne doit jamais « reboucler » vers une petite
+    /// valeur. Avant correctif, le résultat était tronqué à 64 bits AVANT d'être borné par la
+    /// valeur de la pièce : une fenêtre assez longue annonçait 0.
     #[test]
-    #[ignore = "squelette pour la séance Red Team (réorganisations)"]
-    fn reorganisation_sous_la_courbe() {
-        unimplemented!("à concevoir en séance : modèle de réorganisation (profondeur, ré-inscription des pièces)")
+    fn r59_fenetre_ne_reboucle_pas() {
+        let c = coeur(1 << 40, 1);
+        assert!(c.verifier().is_ok());
+        assert_eq!(c.fenetre(5_000_000_000, 0, 1 << 24), 5_000_000_000, "C·D/R = 2^64 : toute la pièce est exposée");
+        // Coffre de référence, fenêtre démesurée (affichage de la courbe très loin dans le temps).
+        let c = coeur(50_000_000, 288_000);
+        for d in [u64::MAX, u64::MAX / 2, 106_250_000_000_000_000] {
+            assert_eq!(c.fenetre(2_000_000_000, 0, d), 2_000_000_000, "D = {d}");
+        }
+    }
+
+    /// R59 (b) : le script calcule (spent × period + capacity) − 1 en 64 bits signés ; le moteur
+    /// refuse tout dépassement, même intermédiaire. Si C × R + C dépasse 2^63 − 1, un paiement proche de la
+    /// capacité serait refusé par le réseau alors que l'outil l'annonce possible. Sans danger
+    /// pour les fonds (le propriétaire garde la main), mais l'outil doit refuser ces réglages.
+    #[test]
+    fn r59_reglages_au_ras_du_debordement() {
+        let r = PERIODE_MAX;
+        let cap = i64::MAX / r; // C × R ≤ 2^63 − 1 mais la somme intermédiaire C × R + C déborde
+        let c = coeur(cap, r);
+        let art = c.artifact_sans_verification().unwrap();
+        let valeur = 10 * cap as u64;
+        // Le script, lui, refuse bien le paiement à pleine capacité (débordement détecté par le moteur)…
+        let tx = tx_pay(&art, valeur, externe(), cap as u64, 0, r as u64);
+        let entree = UtxoEntry::new(valeur, vault_spk(&art), 0, false, None);
+        assert!(script(&tx, &entree).is_none(), "débordement : le moteur refuse");
+        // …donc l'outil ne doit pas laisser créer un tel coffre.
+        assert!(c.verifier().is_err(), "réglages au ras du débordement refusés par l'outil");
+        // Juste en dessous de la limite : accepté par l'outil, et le paiement à pleine capacité passe.
+        let cap_ok = i64::MAX / (r + 1);
+        let c = coeur(cap_ok, r);
+        assert!(c.verifier().is_ok());
+        let art = c.artifact().unwrap();
+        let tx = tx_pay(&art, 10 * cap_ok as u64, externe(), cap_ok as u64, 0, c.attente(cap_ok));
+        let entree = UtxoEntry::new(10 * cap_ok as u64, vault_spk(&art), 0, false, None);
+        assert!(accepte(&tx, &entree, r as u64), "pleine capacité au bout d'une période");
+        assert!(!accepte(&tx, &entree, r as u64 - 1));
+    }
+
+    /// Dépense nulle (ni paiement ni frais) : le délai exigé est 0, le script accepte. L'agent ne
+    /// gagne rien (rien ne sort, et la pièce recréée repart de l'âge 0) ; noté pour mémoire.
+    #[test]
+    fn depense_nulle_sans_effet() {
+        let c = coeur(200_000_000, 864_000);
+        let art = c.artifact().unwrap();
+        let tx = tx_pay(&art, 1_000_000_000, externe(), 0, 0, 0);
+        let entree = UtxoEntry::new(1_000_000_000, vault_spk(&art), 5_000, false, None);
+        assert!(accepte(&tx, &entree, 5_000));
+        assert_eq!(tx.outputs[1].value, 1_000_000_000, "tout reste dans le coffre");
+    }
+
+    // ------------------------------------------------ Red Team : le compilateur et `this.ageDaa`
+    // Lecture des sources du compilateur (révision 443d519e) : rapport §2.
+
+    /// Garde émise par le compilateur juste avant OpCheckSequenceVerify :
+    /// OpDup 0 <2^32> OpWithin OpVerify (10 octets), puis 0xb1.
+    const GARDE_CSV: [u8; 11] = [0x76, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x01, 0xa5, 0x69, 0xb1];
+
+    /// Positions des opcodes OpCheckSequenceVerify (0xb1) d'un script, en sautant les données
+    /// poussées (une clé peut contenir l'octet 0xb1).
+    fn positions_csv(b: &[u8]) -> Vec<usize> {
+        let (mut i, mut out) = (0, vec![]);
+        while i < b.len() {
+            let op = b[i];
+            let saut = match op {
+                0x01..=0x4b => op as usize,
+                0x4c => 1 + b[i + 1] as usize,
+                0x4d => 2 + u16::from_le_bytes([b[i + 1], b[i + 2]]) as usize,
+                0x4e => 4 + u32::from_le_bytes([b[i + 1], b[i + 2], b[i + 3], b[i + 4]]) as usize,
+                _ => 0,
+            };
+            if op == 0xb1 {
+                out.push(i);
+            }
+            i += 1 + saut;
+        }
+        out
+    }
+    fn tous_les_csv_gardes(b: &[u8]) -> usize {
+        let pos = positions_csv(b);
+        for p in &pos {
+            assert!(*p >= 10 && b[p - 10..=*p] == GARDE_CSV, "OpCheckSequenceVerify sans garde à l'octet {p}");
+        }
+        pos.len()
+    }
+    fn mini(corps: &str, args: &[ArtifactValue]) -> Result<SilAbiArtifact, String> {
+        let src = format!("pragma silverscript ^0.1.0;\ncontract Mini(int d) {{\n{corps}\n}}\n");
+        compile_to_sil_abi_artifact_with_options(&src, args, CompileOptions::default()).map_err(|e| e.to_string())
+    }
+    /// Exécute l'entrée `go(x)` du mini-contrat avec la `sequence` donnée, par le vrai moteur.
+    fn mini_accepte(art: &SilAbiArtifact, x: i64, seq: u64) -> bool {
+        let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], seq, CB_PAY);
+        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(1, externe())], 0, Default::default(), 0, vec![]);
+        tx.inputs[0].signature_script = vault_sigscript(art, "go", &[x.into()]).unwrap();
+        script(&tx, &UtxoEntry::new(10, vault_spk(art), 0, false, None)).is_some()
+    }
+
+    /// Cible 3 : le contrôle « délai ∈ [0, 2^32) » accompagne-t-il TOUTE utilisation de
+    /// `this.ageDaa` ? Oui : la grammaire n'admet `this.ageDaa` que sous la forme
+    /// `require(this.ageDaa >= expression)`, et le compilateur n'émet OpCheckSequenceVerify qu'à un
+    /// seul endroit, toujours précédé de la garde. Ce test le vérifie sur le bytecode produit, pour
+    /// le cœur et pour des contrats écrits exprès (constante, argument, calcul, branche, boucle
+    /// d'appels), puis par l'exécution : aucun délai hors bornes n'est tronqué.
+    #[test]
+    fn compilateur_garde_toujours_le_verrou_relatif() {
+        // Le cœur : un seul verrou, gardé.
+        assert_eq!(tous_les_csv_gardes(&crate::bytecode(&coeur(200_000_000, 864_000).artifact().unwrap())), 1);
+        for (c, r) in [(1, 1), (1, PERIODE_MAX), (i64::MAX / 2, 1), (177, 0xb1b1b1)] {
+            assert_eq!(tous_les_csv_gardes(&crate::bytecode(&coeur(c, r).artifact_sans_verification().unwrap())), 1);
+        }
+        // Formes variées : chacune compile, et chaque verrou émis est gardé.
+        let formes = [
+            ("entry go(int x) { require(this.ageDaa >= d); require(x == x); }", 1),
+            ("entry go(int x) { require(this.ageDaa >= x); }", 1),
+            ("entry go(int x) { require(this.ageDaa >= x * 2 + d); }", 1),
+            ("entry go(int x) { if (x > 3) { require(this.ageDaa >= x); } else { require(this.ageDaa >= d); } }", 2),
+            ("entry go(int x) { int y = x - 1; require(this.ageDaa >= y); require(this.ageDaa >= x, \"encore\"); }", 2),
+        ];
+        for (corps, n) in formes {
+            let art = mini(corps, &[5i64.into()]).unwrap_or_else(|e| panic!("{corps} : {e}"));
+            assert_eq!(tous_les_csv_gardes(&crate::bytecode(&art)), n, "{corps}");
+        }
+        // Toute autre utilisation de `this.ageDaa` est refusée à la compilation.
+        for corps in [
+            "entry go(int x) { int a = this.ageDaa; require(a >= x); }",
+            "entry go(int x) { require(this.ageDaa > x); }",
+            "entry go(int x) { require(x <= this.ageDaa); }",
+            "entry go(int x) { require(this.ageDaa >= x || x == 0); }",
+            "entry go(int x) { require(this.ageDaa + 1 >= x); }",
+            "entry go(int x) { require(!(this.ageDaa >= x)); }",
+        ] {
+            assert!(mini(corps, &[5i64.into()]).is_err(), "devrait être refusé : {corps}");
+        }
+        // Constante hors bornes : refusée dès la compilation.
+        let constante = "entry go(int x) { require(this.ageDaa >= d); require(x == x); }";
+        assert!(mini(constante, &[(1i64 << 32).into()]).is_err());
+        assert!(mini(constante, &[(-1i64).into()]).is_err());
+        assert!(mini(constante, &[((1i64 << 32) - 1).into()]).is_ok());
+        // Valeur connue seulement à l'exécution : la garde refuse, rien n'est tronqué à 32 bits.
+        let art = mini("entry go(int x) { require(this.ageDaa >= x); }", &[5i64.into()]).unwrap();
+        assert!(mini_accepte(&art, 5, 5) && mini_accepte(&art, 5, 6) && !mini_accepte(&art, 5, 4));
+        assert!(mini_accepte(&art, 0, 0));
+        let max = (1i64 << 32) - 1;
+        assert!(mini_accepte(&art, max, max as u64) && !mini_accepte(&art, max, max as u64 - 1));
+        for (x, seq) in [
+            (1i64 << 32, 0u64),              // 2^32 tronqué vaudrait 0
+            (1 << 32, 1 << 32),
+            ((1 << 32) + 5, 5),              // 2^32 + 5 tronqué vaudrait 5
+            ((1 << 32) + 5, (1 << 32) + 5),
+            (-1, 0),
+            (-1, u32::MAX as u64),
+            (i64::MIN + 1, 0),               // bit de poids fort
+            (i64::MAX, u64::MAX >> 1),
+            (1 << 40, 1 << 40),
+        ] {
+            assert!(!mini_accepte(&art, x, seq), "délai {x} avec sequence {seq:#x} : devrait être refusé");
+        }
+        // `sequence` avec le bit « verrou désactivé » : refusée par OpCheckSequenceVerify.
+        assert!(!mini_accepte(&art, 5, SEQUENCE_LOCK_TIME_DISABLED | 5));
+    }
+
+    // ------------------------------------------------ Red Team : réorganisations de chaîne
+    //
+    // Modèle (rapport §1). Une réorganisation abandonne une branche de blocs et en adopte une autre
+    // à partir d'un point de fourche. Vu du coffre :
+    //  - l'état revient à celui de la fourche (les pièces dépensées sur la branche abandonnée
+    //    réapparaissent, celles qu'elle avait créées disparaissent) ;
+    //  - l'horloge (score DAA) repart de la fourche : elle n'est PAS monotone pour un observateur ;
+    //  - les transactions de la branche abandonnée retournent au mempool. Chacune peut être
+    //    ré-inscrite telle quelle (mêmes octets, même signature, même `sequence`) à un autre score,
+    //    dans le même ordre de dépendance, ou ne jamais l'être ; le réseau la revalide alors
+    //    entièrement : sa pièce d'entrée doit exister sur la nouvelle branche, et son verrou
+    //    relatif est recompté depuis la NOUVELLE date d'inscription de cette pièce ;
+    //  - l'adversaire (l'agent) choisit lesquelles rejouer, quand, et peut glisser d'autres
+    //    paiements à la place (double dépense de la même pièce) ; il peut aussi doubler un gel.
+    // Invariant : sur l'historique FINAL, la perte nette reste sous la courbe, et la borne par
+    // fenêtre tient pour les pièces de l'historique final.
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct Pc {
+        id: u32,
+        valeur: u64,
+        cree: u64,
+    }
+
+    /// Une transaction diffusée, telle qu'elle peut être rejouée sur une autre branche.
+    #[derive(Clone, Debug)]
+    enum Diffusee {
+        /// Dépôt d'une pièce (propriétaire, ou tiers si `tiers`).
+        Depot { id: u32, valeur: u64, tiers: bool },
+        /// Paiement signé de l'agent : dépense la pièce `entree`, crée la continuation `sortie`.
+        Pay { entree: u32, sortie: u32, valeur: u64, montant: u64, frais: u64, seq: u64 },
+        /// Gel d'une pièce par le propriétaire.
+        Gel { entree: u32 },
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct Branche {
+        t: u64,
+        pieces: Vec<Pc>,
+        pertes: Vec<(u64, u64)>,
+        retours: Vec<(u64, u64)>,
+        /// Dépôts (instant d'inscription, valeur, du propriétaire ?).
+        depots: Vec<(u64, u64, bool)>,
+        instantanes: Vec<(u64, Vec<Pc>)>,
+        geles: Vec<u32>,
+        inscrites: usize,
+    }
+
+    impl Branche {
+        fn avancer(&mut self, dt: u64) {
+            self.t += dt;
+            if self.instantanes.last().map(|x| x.0) != Some(self.t) {
+                self.instantanes.push((self.t, self.pieces.clone()));
+            }
+        }
+
+        /// Le réseau valide `tx` dans le contexte de CETTE branche, à l'instant courant, avec le vrai
+        /// moteur de script et la règle de consensus du verrou relatif. Vrai si elle est inscrite.
+        fn inscrire(&mut self, c: &Coeur, art: &SilAbiArtifact, tx: &Diffusee) -> bool {
+            let ok = match tx {
+                Diffusee::Depot { id, valeur, tiers } => {
+                    if self.pieces.iter().any(|p| p.id == *id) {
+                        return false;
+                    }
+                    self.pieces.push(Pc { id: *id, valeur: *valeur, cree: self.t });
+                    self.depots.push((self.t, *valeur, !*tiers));
+                    if *tiers {
+                        self.retours.push((self.t, *valeur));
+                    }
+                    true
+                }
+                Diffusee::Gel { entree } => {
+                    let Some(i) = self.pieces.iter().position(|p| p.id == *entree) else { return false };
+                    assert!(gel_accepte(art, self.pieces[i].valeur, self.pieces[i].cree), "le gel passe toujours si la pièce existe");
+                    self.pieces.remove(i);
+                    self.geles.push(*entree);
+                    true
+                }
+                Diffusee::Pay { entree, sortie, valeur, montant, frais, seq } => {
+                    // La pièce d'entrée doit exister ici (sinon : entrée manquante ou déjà dépensée).
+                    let Some(i) = self.pieces.iter().position(|p| p.id == *entree) else { return false };
+                    let pc = self.pieces[i].clone();
+                    assert_eq!(pc.valeur, *valeur, "même identifiant, même pièce");
+                    let signee = tx_pay(art, *valeur, externe(), *montant, *frais, *seq);
+                    let utxo = UtxoEntry::new(*valeur, vault_spk(art), pc.cree, false, None);
+                    let ok = accepte(&signee, &utxo, self.t);
+                    assert_eq!(ok, modele(c, *valeur, *montant, *frais, *seq, self.t - pc.cree), "moteur ≠ modèle");
+                    if ok {
+                        let spent = valeur - signee.outputs[1].value;
+                        self.pieces.remove(i);
+                        self.pieces.push(Pc { id: *sortie, valeur: valeur - spent, cree: self.t });
+                        self.pertes.push((self.t, spent));
+                    }
+                    ok
+                }
+            };
+            self.inscrites += ok as usize;
+            ok
+        }
+
+        /// Les deux invariants de la preuve, sur l'historique de cette branche.
+        fn verifier(&self, c: &Coeur, initiales: &[Pc], debut: u64) -> Result<(), TestCaseError> {
+            let mut moments: Vec<u64> = self.pertes.iter().map(|p| p.0).chain(self.retours.iter().map(|r| r.0)).chain([self.t]).collect();
+            moments.sort();
+            for x in moments {
+                let sorti: u64 = self.pertes.iter().filter(|(y, _)| *y <= x).map(|(_, v)| v).sum();
+                let revenu: u64 = self.retours.iter().filter(|(y, _)| *y <= x).map(|(_, v)| v).sum();
+                let courbe: u64 = initiales.iter().map(|p| c.fenetre(p.valeur, debut - p.cree, x - debut)).sum::<u64>()
+                    + self.depots.iter().filter(|(y, _, proprio)| *proprio && *y <= x).map(|(y, v, _)| c.fenetre(*v, 0, x - y)).sum::<u64>();
+                prop_assert!(sorti as i128 - revenu as i128 <= courbe as i128, "courbe dépassée à {} : sorti {} − revenu {} > {}", x, sorti, revenu, courbe);
+            }
+            for (a, presentes) in &self.instantanes {
+                for d in [0u64, 1, 1_000, 86_400, 864_000, self.t - a] {
+                    let perte: u64 = self.pertes.iter().filter(|(x, _)| *x >= *a && *x <= a + d).map(|(_, v)| v).sum();
+                    let annonce: u64 = presentes.iter().map(|p| c.fenetre(p.valeur, a - p.cree, d)).sum::<u64>()
+                        + self.depots.iter().filter(|(x, _, _)| *x >= *a && *x <= a + d).map(|(x, v, _)| c.fenetre(*v, 0, a + d - x)).sum::<u64>();
+                    prop_assert!(perte <= annonce, "fenêtre [{}, +{}] : perte {} > annonce {}", a, d, perte, annonce);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Ce que fait un acteur sur une branche : produit une transaction (identifiants neufs).
+    #[derive(Clone, Debug)]
+    enum Geste {
+        Payer { i: usize, avidite: f64, frais: u64, s: Seq },
+        Deposer { valeur: u64, tiers: bool },
+        Geler { i: usize },
+    }
+
+    fn geste() -> impl Strategy<Value = (u64, Geste)> {
+        let payer = (any::<usize>(), prop_oneof![3 => 0.0f64..1.2, 1 => 1.0f64..3.0], 0u64..500_000, seq())
+            .prop_map(|(i, avidite, frais, s)| Geste::Payer { i, avidite, frais, s });
+        let deposer = (1u64..3_000_000_000, any::<bool>()).prop_map(|(valeur, tiers)| Geste::Deposer { valeur, tiers });
+        let geler = any::<usize>().prop_map(|i| Geste::Geler { i });
+        let dt = prop_oneof![1 => Just(0u64), 3 => 1u64..2_000, 3 => 1u64..2_000_000];
+        (dt, prop_oneof![12 => payer, 3 => deposer, 1 => geler])
+    }
+
+    /// Fabrique la transaction du geste dans l'état de la branche (sans l'inscrire).
+    fn fabriquer(c: &Coeur, b: &Branche, g: &Geste, prochain: &mut u32) -> Option<Diffusee> {
+        let mut neuf = || {
+            *prochain += 1;
+            *prochain
+        };
+        match g {
+            Geste::Deposer { valeur, tiers } => Some(Diffusee::Depot { id: neuf(), valeur: *valeur, tiers: *tiers }),
+            Geste::Geler { i } => (!b.pieces.is_empty()).then(|| Diffusee::Gel { entree: b.pieces[i % b.pieces.len()].id }),
+            Geste::Payer { i, avidite, frais, s } => {
+                if b.pieces.is_empty() {
+                    return None;
+                }
+                let pc = &b.pieces[i % b.pieces.len()];
+                let age = b.t - pc.cree;
+                let permis = c.immediate(pc.valeur, age);
+                let spent = ((permis as f64 * avidite) as u64).max(1).min(pc.valeur);
+                let frais = (*frais).min(spent - 1);
+                let sq = valeur_seq(s, c.attente(spent as i64), age);
+                Some(Diffusee::Pay { entree: pc.id, sortie: neuf(), valeur: pc.valeur, montant: spent - frais, frais, seq: sq })
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(192), ..ProptestConfig::default() })]
+
+        /// Réorganisation : une histoire commune, puis une branche A (abandonnée) et une branche B
+        /// (finale) qui repart de la fourche. Sur B, l'adversaire rejoue tout ou partie des
+        /// transactions de A à d'autres scores, y intercale des doubles dépenses, puis continue.
+        /// La courbe et la borne par fenêtre tiennent sur l'historique final, et aussi sur A tant
+        /// qu'elle était la chaîne. Les pièces gelées sur B ne reparaissent jamais.
+        #[test]
+        fn reorganisation_sous_la_courbe(
+            cap in 1_000i64..2_000_000_000,
+            r in 1i64..3_000_000,
+            valeur in 1u64..20_000_000_000,
+            age0 in 0u64..5_000_000,
+            commun in prop::collection::vec(geste(), 0..12),
+            suite_a in prop::collection::vec(geste(), 1..16),
+            // Pour chaque transaction de A : écart de temps sur B, rejouée ou non, intrus éventuel.
+            rejeu in prop::collection::vec((prop_oneof![2 => Just(0u64), 3 => 1u64..2_000, 2 => 1u64..2_000_000], prop::bool::weighted(0.8), prop::option::weighted(0.3, geste())), 16),
+            suite_b in prop::collection::vec(geste(), 0..10),
+        ) {
+            let c = coeur(cap, r);
+            prop_assume!(c.verifier().is_ok());
+            let art = c.artifact().unwrap();
+            let debut = 10_000_000u64;
+            let initiales = vec![Pc { id: 0, valeur, cree: debut - age0 }];
+            let mut prochain = 0u32;
+            let mut tronc = Branche { t: debut, pieces: initiales.clone(), ..Default::default() };
+            for (dt, g) in &commun {
+                tronc.avancer(*dt);
+                if let Some(tx) = fabriquer(&c, &tronc, g, &mut prochain) {
+                    tronc.inscrire(&c, &art, &tx);
+                }
+            }
+            // Branche A : ce que le réseau a d'abord inscrit.
+            let mut a = tronc.clone();
+            let mut diffusees = vec![];
+            for (dt, g) in &suite_a {
+                a.avancer(*dt);
+                if let Some(tx) = fabriquer(&c, &a, g, &mut prochain) {
+                    if a.inscrire(&c, &art, &tx) {
+                        diffusees.push(tx);
+                    }
+                }
+            }
+            a.verifier(&c, &initiales, debut)?;
+            // Branche B : l'horloge et l'état repartent de la fourche.
+            let mut b = tronc.clone();
+            for (tx, (dt, rejouer, intrus)) in diffusees.iter().zip(&rejeu) {
+                b.avancer(*dt);
+                if let Some((dt2, g)) = intrus {
+                    if let Some(autre) = fabriquer(&c, &b, g, &mut prochain) {
+                        b.inscrire(&c, &art, &autre);
+                    }
+                    b.avancer(*dt2 % 1_000);
+                }
+                if *rejouer {
+                    b.inscrire(&c, &art, tx);
+                }
+            }
+            for (dt, g) in &suite_b {
+                b.avancer(*dt);
+                if let Some(tx) = fabriquer(&c, &b, g, &mut prochain) {
+                    b.inscrire(&c, &art, &tx);
+                }
+            }
+            b.verifier(&c, &initiales, debut)?;
+            prop_assert!(b.geles.iter().all(|g| b.pieces.iter().all(|p| p.id != *g)), "une pièce gelée sur la chaîne finale ne reparaît pas");
+        }
+    }
+
+    /// Réorganisation, cas choisis à la main : ce que le modèle doit montrer (et montre).
+    #[test]
+    fn reorganisation_cas_choisis() {
+        let (cap, r) = (200_000_000i64, 864_000i64);
+        let c = coeur(cap, r);
+        let art = c.artifact().unwrap();
+        let depot = Diffusee::Depot { id: 1, valeur: 1_000_000_000, tiers: false };
+        let spent = 50_000_000u64;
+        let att = c.attente(spent as i64);
+        let pay = Diffusee::Pay { entree: 1, sortie: 2, valeur: 1_000_000_000, montant: spent - 20_000, frais: 20_000, seq: att };
+        let suite = Diffusee::Pay { entree: 2, sortie: 3, valeur: 1_000_000_000 - spent, montant: spent - 20_000, frais: 20_000, seq: att };
+
+        // Branche A : dépôt à 1 000, deux paiements enchaînés, chacun au plus tôt.
+        let mut a = Branche { t: 1_000, ..Default::default() };
+        assert!(a.inscrire(&c, &art, &depot));
+        a.avancer(att);
+        assert!(a.inscrire(&c, &art, &pay));
+        a.avancer(att);
+        assert!(a.inscrire(&c, &art, &suite));
+
+        // (1) Branche B : le dépôt est ré-inscrit 500 unités PLUS TARD. Le même paiement signé,
+        // présenté au même score que sur A, est refusé : le verrou est recompté depuis la nouvelle
+        // inscription. Il ne passe qu'une fois le délai entier écoulé de nouveau, et la suite aussi.
+        let mut b = Branche { t: 1_500, ..Default::default() };
+        assert!(b.inscrire(&c, &art, &depot));
+        b.avancer(att - 500);
+        assert!(!b.inscrire(&c, &art, &pay), "rejoué trop tôt pour la nouvelle inscription : refusé");
+        assert!(!b.inscrire(&c, &art, &suite), "la suite dépend d'une pièce qui n'existe pas encore");
+        b.avancer(500);
+        assert!(b.inscrire(&c, &art, &pay));
+        assert!(!b.inscrire(&c, &art, &suite), "continuation trop jeune sur la nouvelle branche");
+        b.avancer(att);
+        assert!(b.inscrire(&c, &art, &suite));
+        b.verifier(&c, &[], 1_500).unwrap();
+
+        // (2) Branche B' : le dépôt n'est pas ré-inscrit. Aucun paiement de A ne survit.
+        let mut b2 = Branche { t: 1_000, ..Default::default() };
+        b2.avancer(10 * att);
+        assert!(!b2.inscrire(&c, &art, &pay) && !b2.inscrire(&c, &art, &suite));
+
+        // (3) Double dépense : sur B'', l'agent remplace son premier paiement par un plus gros.
+        // Le paiement de A et sa suite ne peuvent plus être inscrits ; la perte reste sous la courbe.
+        let mut b3 = Branche { t: 1_000, ..Default::default() };
+        assert!(b3.inscrire(&c, &art, &depot));
+        b3.avancer(r as u64);
+        let gros = Diffusee::Pay { entree: 1, sortie: 9, valeur: 1_000_000_000, montant: cap as u64, frais: 0, seq: r as u64 };
+        assert!(b3.inscrire(&c, &art, &gros));
+        assert!(!b3.inscrire(&c, &art, &pay) && !b3.inscrire(&c, &art, &suite));
+        b3.verifier(&c, &[], 1_000).unwrap();
+
+        // (4) Limite documentée (spec/moteur-de-risque.md §6) : un chiffre annoncé sur une branche
+        // ensuite abandonnée ne vaut pas pour la branche finale. Sur A, juste après le deuxième
+        // paiement, le moteur annonce 0 d'exposition immédiate (la continuation est neuve). Si A
+        // est abandonnée et que B inscrit les mêmes paiements plus tard, ils tombent APRÈS
+        // l'instant de l'annonce : la perte sur [annonce, annonce + 0] n'est plus nulle. L'écart ne
+        // dépasse jamais ce que la branche abandonnée avait déjà compté comme perdu.
+        let instant = a.t;
+        let annonce_a: u64 = a.pieces.iter().map(|p| c.fenetre(p.valeur, instant - p.cree, 0)).sum();
+        assert_eq!(annonce_a, 0);
+        let mut b4 = Branche { t: 1_000, ..Default::default() };
+        assert!(b4.inscrire(&c, &art, &depot));
+        b4.avancer(att);
+        assert!(b4.inscrire(&c, &art, &pay));
+        b4.avancer(instant - b4.t); // la suite est inscrite pile à l'instant de l'annonce faite sur A
+        assert!(b4.inscrire(&c, &art, &suite));
+        let perte_b: u64 = b4.pertes.iter().filter(|(x, _)| *x >= instant).map(|(_, v)| v).sum();
+        let annulees: u64 = a.pertes.iter().map(|(_, v)| v).sum();
+        assert!(perte_b > annonce_a && perte_b <= annonce_a + annulees);
+        b4.verifier(&c, &[], 1_000).unwrap(); // sur l'historique final, tout tient
     }
 
     /// La borne simple, vérifiée directement : la pièce déposée de longue date, attaquée par un
