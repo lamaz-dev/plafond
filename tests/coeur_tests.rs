@@ -1,7 +1,8 @@
-//! Cœur v0.6 (budget sans mémoire) : comportement du contrat contre le vrai moteur de script.
+//! Cœur v0.7 (budget sans mémoire, adresse de retour) : comportement du contrat contre le vrai moteur de script.
 //! Le verrou relatif est donné par `sequence` : le script exige `sequence ≥ délai` (OpCheckSequenceVerify),
 //! et le réseau exige que la pièce ait réellement cet âge (check_sequence_lock, testé côté outil).
 mod common;
+use blake2b_simd::Params;
 use common::{bytecode, compile_contract, encode_entry_sig_script, execute_input_with_covenants, push_redeem_script};
 use kaspa_consensus_core::hashing::sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash};
 use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
@@ -31,8 +32,17 @@ fn p2pk(k: &Keypair) -> ScriptPublicKey {
     s.push(0xac);
     ScriptPublicKey::new(0, s.into())
 }
+/// Empreinte d'un scriptPubKey telle que la calcule `blake2b(tx.outputs[i].scriptPubKey)`.
+fn spk_hash(spk: &ScriptPublicKey) -> Vec<u8> {
+    let bytes: Vec<u8> = spk.version().to_be_bytes().into_iter().chain(spk.script().iter().copied()).collect();
+    Params::new().hash_length(32).hash(&bytes).as_bytes().to_vec()
+}
+/// Adresse de retour des tests : une adresse du propriétaire distincte (clé 11).
+fn retour() -> ScriptPublicKey {
+    p2pk(&kp(11))
+}
 fn art_avec(c: i64, r: i64) -> SilAbiArtifact {
-    compile_contract(SOURCE, &[x(1).into(), x(2).into(), c.into(), r.into()], CompileOptions::default()).unwrap()
+    compile_contract(SOURCE, &[x(1).into(), x(2).into(), c.into(), r.into(), spk_hash(&retour()).into()], CompileOptions::default()).unwrap()
 }
 fn art() -> SilAbiArtifact {
     art_avec(C, R)
@@ -98,9 +108,24 @@ fn seul_l_agent_paie_et_seul_le_proprietaire_controle() {
     let outs = vec![(50_000_000, vendeur()), (V - 50_000_000 - FEE, moi(&a))];
     assert!(!run(&a, 9, "pay", outs.clone(), w), "autre signataire refusé");
     assert!(!run(&a, 1, "pay", outs, w), "le propriétaire n'utilise pas l'entrée de l'agent");
-    assert!(run(&a, 1, "ownerControl", vec![(V - FEE, p2pk(&kp(1)))], 0), "propriétaire : retrait total immédiat");
-    assert!(run(&a, 1, "ownerControl", vec![(V / 2, p2pk(&kp(1))), (V / 2 - FEE, moi(&a))], 0), "propriétaire : retrait partiel");
-    assert!(!run(&a, 2, "ownerControl", vec![(V - FEE, p2pk(&kp(2)))], R as u64), "l'agent ne peut pas utiliser ownerControl");
+    assert!(run(&a, 1, "ownerControl", vec![(V - FEE, retour())], 0), "propriétaire : gel vers l'adresse de retour");
+    assert!(run(&a, 1, "ownerControl", vec![(V + 5, moi(&a))], 0), "propriétaire : rechargement");
+    assert!(!run(&a, 2, "ownerControl", vec![(V - FEE, retour())], R as u64), "l'agent ne peut pas utiliser ownerControl");
+}
+
+#[test]
+fn le_proprietaire_ne_peut_rien_envoyer_ailleurs() {
+    // v0.7 : même avec la clé du propriétaire, la pièce ne va qu'au coffre ou à l'adresse de retour.
+    let a = art();
+    assert!(!run(&a, 1, "ownerControl", vec![(V - FEE, p2pk(&kp(1)))], 0), "vers l'adresse ordinaire du propriétaire : refusé");
+    assert!(!run(&a, 1, "ownerControl", vec![(V - FEE, p2pk(&kp(9)))], 0), "vers une adresse étrangère : refusé");
+    assert!(!run(&a, 1, "ownerControl", vec![(V / 2, retour()), (V / 2 - FEE, moi(&a))], 0), "retrait partiel hors règle : refusé");
+    assert!(run(&a, 1, "ownerControl", vec![(V - C as u64, retour())], 0), "frais égaux à la capacité : acceptés");
+    assert!(!run(&a, 1, "ownerControl", vec![(V - C as u64 - 1, retour())], 0), "frais au-delà de la capacité : refusés");
+    assert!(!run(&a, 1, "ownerControl", vec![(V - 1, moi(&a))], 0), "rechargement qui fait fondre la pièce : refusé");
+    // Gel par lot (entrée i -> sortie i) ; le refus de deux pièces sur une seule sortie se joue sur
+    // l'entrée 1, vérifié entrée par entrée côté outil (coeur::tests::retour_cle_proprietaire_volee_…).
+    assert!(run_n(&a, 1, "ownerControl", &[V, V], vec![(V - FEE, retour()), (V - FEE, retour())], 0), "gel par lot : accepté");
 }
 
 #[test]

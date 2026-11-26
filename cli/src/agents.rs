@@ -35,6 +35,9 @@ pub struct Agent {
     /// Confort, pas garantie : la garantie est le capital alloué (spec/moteur-de-risque.md).
     #[serde(default)]
     pub echeance: Option<u64>,
+    /// Adresse de retour du coffre (gel, retrait) choisie à la création ; absente : la trésorerie.
+    #[serde(default)]
+    pub retour: Option<String>,
 }
 
 /// Agent principal du compte, vu de la console. Elle n'a besoin que de sa clé publique (surveiller,
@@ -77,6 +80,14 @@ pub fn noter(etat_defaut: &str, agent: &str, genre: &str, sompi: Option<i64>) {
 }
 
 /// Fixe l'échéance d'un mandat (révocation automatique par la console).
+/// Adresse de retour du mandat, fixée avant l'ouverture de son coffre (elle entre dans son adresse).
+pub fn fixer_retour(etat_defaut: &str, id: &str, retour: Option<String>) -> Res<()> {
+    let mut agents = charger(etat_defaut);
+    let a = agents.iter_mut().find(|a| a.id == id).ok_or("mandat inconnu")?;
+    a.retour = retour;
+    enregistrer(etat_defaut, &agents)
+}
+
 pub fn fixer_echeance(etat_defaut: &str, id: &str, echeance: Option<u64>) -> Res<()> {
     let mut agents = charger(etat_defaut);
     let a = agents.iter_mut().find(|a| a.id == id).ok_or("mandat inconnu")?;
@@ -99,7 +110,7 @@ pub fn charger(etat_defaut: &str) -> Vec<Agent> {
     let lu: Option<Vec<Agent>> = std::fs::read_to_string(chemin_registre(etat_defaut)).ok().and_then(|t| serde_json::from_str(&t).ok());
     match lu {
         Some(v) if !v.is_empty() => v,
-        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None, echeance: None }],
+        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None, echeance: None, retour: None }],
     }
 }
 
@@ -146,6 +157,7 @@ pub fn nouveau(etat_defaut: &str, nom: &str, regles: Option<crate::Regles>, enve
         publique: Some(hex::encode(cle.public_key().serialize())),
         connecte_le: None,
         echeance: None,
+        retour: None,
     };
     agents.push(a.clone());
     enregistrer(etat_defaut, &agents)?;

@@ -30,7 +30,7 @@ pub struct Engagement {
 
 impl Couloir {
     fn coeur(&self) -> crate::coeur::Coeur {
-        crate::coeur::Coeur { owner: vec![], agent: vec![], capacite: self.params.capacite.max(1), periode: self.params.periode.max(1) }
+        crate::coeur::Coeur { owner: vec![], agent: vec![], capacite: self.params.capacite.max(1), periode: self.params.periode.max(1), retour: None }
     }
     fn age(&self, now: i64) -> u64 {
         (now - self.creation).max(0) as u64

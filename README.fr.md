@@ -35,7 +35,8 @@ Les budgets, coffres et modes de paiement sont les moyens ; le pire scénario ga
 **Statut**
 
 - ✅ testnet-10
-- ✅ **cœur v0.6, sans mémoire** : 211 octets, 4 paramètres, une seule règle (attendre en proportion de ce qu'on dépense), imposée par le verrou relatif du réseau ([contrat](contracts/coeur.sil))
+- ✅ **cœur v0.7, sans mémoire** : 289 octets, 5 paramètres, une seule règle pour l'agent (attendre en proportion de ce qu'on dépense), imposée par le verrou relatif du réseau ([contrat](contracts/coeur.sil))
+- ✅ **adresse de retour** : même avec la clé du propriétaire, l'argent d'un coffre ne peut revenir qu'au coffre ou à l'adresse de retour choisie à la création (par défaut la trésorerie ; au choix un Ledger, une multisignature ou un conservateur)
 - ✅ **courbe promise à la création** : la perte totale d'un mandat ne dépasse jamais `C × t / R`, plafonnée au capital, quoi que fasse l'agent ; démontrée sur papier et vérifiée par tests contre le vrai moteur de Kaspa ([preuve](spec/borne-de-perte-v0.6.md), [comparaison avec la v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - 🧪 ardoise (prototype) : micropaiements répétés chez un vendeur, signés hors chaîne par l'agent et réglés en une seule transaction ; contrat de 35 lignes et tests contre le vrai moteur, commandes de l'outil à venir ([contrat](contracts/ardoise.sil))
 - ✅ moteur de risque : perte maximale immédiate, sur 24 h, par agent et par vendeur, avec ce que la garantie ne couvre pas ([spécification](spec/moteur-de-risque.md)), affiché dans la console et vérifié par test contre le vrai moteur de Kaspa
@@ -56,7 +57,7 @@ Kaspa (covenant SilverScript), pas par un logiciel.
 ## Architecture
 
 ```
-contracts/   coeur.sil (le coffre, v0.6), DeliveryEscrow (paiement à la livraison), Ardoise ; ancien AgentBudget v0.5.1
+contracts/   coeur.sil (le coffre, v0.7), DeliveryEscrow (paiement à la livraison), Ardoise ; ancien AgentBudget v0.5.1
 tests/       tests des contrats dans le moteur de script de Kaspa ; l'outil a 94 tests, dont le fuzzing de la borne
 cli/         outil en ligne de commande : déployer, payer, récupérer, démo x402 sur le testnet-10
 spec/        spécification du profil x402 « covenant-budget » (paiement direct depuis le coffre)

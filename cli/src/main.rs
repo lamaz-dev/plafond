@@ -8,7 +8,7 @@
 //!   cles                  génère deux nouvelles clés de test (à ranger dans les secrets GitHub)
 //!   adresses              affiche les adresses du propriétaire, de l'agent et du service payé
 //!   etat                  état du réseau, solde du propriétaire, état du coffre
-//!   deployer              crée le coffre (couloir 0) avec les fonds du propriétaire
+//!   deployer [retour]     crée le coffre avec les fonds du propriétaire ; [retour] : adresse de retour
 //!   payer <sompi> [--sans-verif]   l'agent paie le service depuis le coffre
 //!   recuperer             le propriétaire récupère tout le coffre
 //!   sequestre-ouvrir <sompi> <requete> [delai]   l'agent paie un séquestre de livraison (DeliveryEscrow)
@@ -494,15 +494,31 @@ pub fn empreintes() -> Res<String> {
     let refund = pay_to_address_script(&address(&k(1)));
     let escrow = sequestre::artifact(&merchant, &refund, &k(7), "GET:/meteo-kaspa/commande-1", sequestre::DEFAULT_TIMEOUT)?;
     let tab = ardoise::artifact(&merchant, &xonly(&k(3)), &refund, &xonly(&k(2)), ardoise::DEFAULT_TIMEOUT)?;
-    let coeur = coeur::Coeur { owner: xonly(&k(1)), agent: xonly(&k(2)), capacite: CAPACITY, periode: JOUR_DAA }.artifact()?;
+    // Cœur v0.7 : adresse de retour de référence = l'adresse du propriétaire de test (valeur par défaut).
+    let coeur_ref = coeur::Coeur {
+        owner: xonly(&k(1)),
+        agent: xonly(&k(2)),
+        capacite: CAPACITY,
+        periode: JOUR_DAA,
+        retour: Some(sequestre::spk_hash(&refund).to_vec()),
+    };
+    let coeur = coeur_ref.artifact()?;
+    let coeur_v06 = coeur::Coeur { retour: None, ..coeur_ref }.artifact()?;
     let mut r = String::new();
     r.push_str("# Empreintes reproductibles (blake2b-256). Régénérer : vault-cli empreintes > contracts/EMPREINTES.txt\n");
     r.push_str(&format!("compilateur silverscript : {}\n", SILVERSCRIPT_REV));
     r.push_str(&format!("source agent_budget.sil : {}\n", b2(SOURCE.as_bytes())));
     r.push_str(&format!("source delivery_escrow.sil : {}\n", b2(sequestre::SOURCE.as_bytes())));
     r.push_str(&format!("source ardoise.sil : {}\n", b2(ardoise::SOURCE.as_bytes())));
-    r.push_str(&format!("source coeur.sil (v0.6, branche coeur-v0.6) : {}\n", b2(coeur::SOURCE.as_bytes())));
-    for (name, a) in [("AgentBudget (paramètres de référence)", &vault), ("DeliveryEscrow (paramètres de référence)", &escrow), ("Ardoise (paramètres de référence)", &tab), ("Coeur v0.6 (paramètres de référence)", &coeur)] {
+    r.push_str(&format!("source coeur.sil (v0.7, adresse de retour) : {}\n", b2(coeur::SOURCE.as_bytes())));
+    r.push_str(&format!("source archive/coeur-v0.6.sil (gel des anciens coffres) : {}\n", b2(coeur::SOURCE_V06.as_bytes())));
+    for (name, a) in [
+        ("AgentBudget (paramètres de référence)", &vault),
+        ("DeliveryEscrow (paramètres de référence)", &escrow),
+        ("Ardoise (paramètres de référence)", &tab),
+        ("Coeur v0.7 (paramètres de référence)", &coeur),
+        ("Coeur v0.6 (paramètres de référence)", &coeur_v06),
+    ] {
         let code = bytecode(a);
         let addr = extract_script_pub_key_address(&pay_to_script_hash_script(&code), Prefix::Testnet)?;
         r.push_str(&format!("{name} : {} octets, bytecode {}\n  adresse P2SH testnet : {addr}\n", code.len(), b2(&code)));
@@ -1322,7 +1338,15 @@ async fn main() -> Res<()> {
             liberer(&c).await?;
         }
         "deployer" => {
-            deployer(&owner, &agent).await?;
+            // `deployer [adresse_de_retour]` : sans adresse, l'adresse du propriétaire (ou PLAFOND_RETOUR).
+            match args.get(2) {
+                Some(retour) => {
+                    coffre::deployer_vers(&owner, &agent, Some(retour)).await?;
+                }
+                None => {
+                    deployer(&owner, &agent).await?;
+                }
+            }
         }
         "payer" => {
             let amount: i64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
@@ -1511,7 +1535,7 @@ async fn main() -> Res<()> {
             x402::demo(&owner, &agent).await?;
         }
         _ => {
-            println!("Commandes : cles | adresses | etat | deployer | payer <sompi> [--sans-verif] | recharger <sompi> | recuperer | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
+            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | recharger <sompi> | recuperer | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
         }
     }
     Ok(())

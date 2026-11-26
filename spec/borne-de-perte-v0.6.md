@@ -3,7 +3,9 @@
 Statut : prototype sur branche, à côté de la v0.5.1 (`spec/borne-de-perte.md`), qui reste la
 version de `main`. Comparaison et choix : `spec/comparaison-v0.5.1-v0.6.md`.
 
-Contrat : `contracts/coeur.sil` (211 octets avec les paramètres de référence, 4 paramètres).
+Contrat : `contracts/coeur.sil`, v0.7 depuis le 26 nov. 2026 (289 octets avec les paramètres de
+référence, 5 paramètres) ; la règle de l'agent (`pay`) est identique à la v0.6 (211 octets, 4 paramètres,
+`contracts/archive/coeur-v0.6.sil`), seule l'entrée du propriétaire change (§7).
 Tests : `tests/coeur_tests.rs` (compilateur figé), `cli/src/coeur.rs` (moteur + modèle du consensus).
 
 ## 1. Ce que l'on promet
@@ -175,3 +177,40 @@ Retirées par rapport au prototype, parce que redondantes (vérifié par mutatio
 Le banc détecte un contrat saboté : l'arrondi vers le bas, un délai divisé par deux, la capacité
 ignorée et le verrou retiré font tous échouer le fuzzing. 2 000 cas par propriété passent sans
 divergence.
+
+## 7. v0.7 : la clé du propriétaire ne peut renvoyer l'argent que chez lui
+
+Paramètre ajouté : `retourSpkHash` = blake2b du scriptPubKey de l'**adresse de retour**, fixée à la
+création (par défaut l'adresse du propriétaire ; au choix, un portefeuille dont la clé n'est pas sur
+l'ordinateur de la console : Ledger, multisignature, conservateur).
+
+**Théorème.** Soit une pièce `P` du coffre, de valeur `v`, dépensée par `ownerControl` comme entrée
+d'indice `i` d'une transaction `T`. Alors `T` a une sortie d'indice `i`, et cette sortie est
+- soit au script du coffre, de valeur `≥ v` (rechargement : rien ne sort) ;
+- soit à l'adresse de retour, de valeur `≥ v − C` (gel ou retrait, au plus `C` de frais par pièce).
+
+Ceci vaut quel que soit le signataire, donc même si la clé du propriétaire est volée.
+
+**Démonstration.** Le script exige `i < |outputs|` puis, selon que `outputs[i].scriptPubKey` est égal
+au script de l'entrée active, `outputs[i].value ≥ v`, sinon `blake2b(outputs[i].scriptPubKey) ==
+retourSpkHash` et `outputs[i].value ≥ v − C` (lecture directe du script ; blake2b est résistante aux
+secondes préimages, donc aucun autre script n'a cette empreinte). Deux pièces du coffre ne peuvent pas
+se partager une sortie : leurs indices d'entrée diffèrent, donc leurs sorties d'indice aussi. ∎
+
+**Conséquences.**
+- La borne côté agent (§3) est inchangée : `pay` n'a pas changé, et un rechargement par le
+  propriétaire produit une pièce de valeur `≥ v` d'âge nul (déjà couvert par le §3, R62).
+- Vol de la clé du propriétaire : sa perte est au plus `C` par pièce (frais brûlés), et l'argent ne
+  peut arriver qu'à l'adresse de retour. Si l'adresse de retour est la trésorerie du propriétaire
+  (valeur par défaut), le voleur peut ensuite vider cette trésorerie, qui n'est pas un coffre : la
+  protection complète demande une adresse de retour dont la clé est ailleurs.
+- Un voleur peut aussi « recharger » sans rien ajouter : la pièce repart d'un âge nul, ce qui retarde
+  l'agent sans rien coûter au propriétaire (gêne, pas perte).
+- Les sorties autres que celles d'indice des entrées du coffre restent libres : elles ne peuvent
+  dépenser que les autres entrées (rendu du propriétaire lors d'un rechargement).
+
+**Tests.** `coeur::tests::retour_cle_proprietaire_volee_ne_peut_rien_detourner` (vrai moteur, chaque
+entrée vérifiée), `retour_coffres_v06_toujours_reconnus` (bytecode v0.6 inchangé, adresse identique),
+`tests/coeur_tests.rs::le_proprietaire_ne_peut_rien_envoyer_ailleurs` (compilateur figé),
+`coffre::tests::gel_par_lots_sous_la_masse_standard` (gel v0.7 : une sortie par pièce, frais à la
+masse, lots coupés si nécessaire, toutes les tentatives d'escalade diffusables).

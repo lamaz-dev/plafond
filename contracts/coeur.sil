@@ -1,6 +1,12 @@
 pragma silverscript ^0.1.0;
 
-// Cœur v0.6 (branche coeur-v0.6) — budget d'agent SANS MÉMOIRE.
+// Cœur v0.7 — budget d'agent SANS MÉMOIRE, avec adresse de retour.
+//
+// v0.7 (26 nov. 2026) : l'argent d'un coffre ne peut sortir que vers les vendeurs (pay, au rythme
+// permis) ou, par la clé du propriétaire, vers le coffre lui-même (rechargement) ou vers l'adresse
+// de retour fixée à la création (gel, retrait). Même si la clé du propriétaire est volée, l'argent
+// ne peut aller nulle part ailleurs. La règle de l'agent (pay) est identique à la v0.6.
+// La v0.6 reste dans contracts/archive/coeur-v0.6.sil pour geler les coffres déjà créés.
 //
 // Règle unique : pour dépenser `spent` sompi (paiement + frais), la pièce du coffre doit avoir
 // attendu au moins ceil(spent × period / capacity) unités DAA depuis sa création.
@@ -18,13 +24,15 @@ pragma silverscript ^0.1.0;
 // Les frais sont comptés dans `spent` : la borne tient quels qu'ils soient.
 //
 //  - pay          : l'agent paie UN bénéficiaire ; le reste revient à la même adresse.
-//  - ownerControl : le propriétaire fait ce qu'il veut (gel, retrait, rechargement).
+//  - ownerControl : le propriétaire gèle, retire ou recharge ; la pièce ne va qu'au coffre ou à
+//                   l'adresse de retour (au plus `capacity` de frais par pièce).
 
 contract Coeur(
     pubkey ownerKey, // propriétaire : contrôle total
     pubkey agentKey, // agent : ne peut que payer, au rythme permis
     int capacity,    // dépense maximale d'un seul paiement (frais compris), en sompi
-    int period       // unités DAA pour regagner toute la capacité (864 000 ≈ 1 jour)
+    int period,      // unités DAA pour regagner toute la capacité (864 000 ≈ 1 jour)
+    byte[32] retourSpkHash // empreinte blake2b du script de l'adresse de retour (gel, retrait)
 ) {
     entry pay(sig agentSig) {
         require(checkSig(agentSig, agentKey));
@@ -54,7 +62,23 @@ contract Coeur(
         require(this.ageDaa >= (spent * period + capacity - 1) / capacity);
     }
 
+    // Entrée i -> sortie i : chaque pièce a sa propre sortie, ce qui permet le gel par lots sans
+    // que deux pièces se partagent une sortie ; les autres sorties (rendu du propriétaire lors
+    // d'un rechargement) restent libres.
     entry ownerControl(sig ownerSig) {
         require(checkSig(ownerSig, ownerKey));
+
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        byte[] moi = tx.inputs[i].scriptPubKey;
+        int valeur = tx.inputs[i].value;
+        if (tx.outputs[i].scriptPubKey == moi) {
+            // Rechargement : la pièce revient au coffre, au moins entière.
+            require(tx.outputs[i].value >= valeur);
+        } else {
+            // Gel ou retrait : uniquement vers l'adresse de retour, frais bornés par la capacité.
+            require(blake2b(tx.outputs[i].scriptPubKey) == retourSpkHash);
+            require(tx.outputs[i].value >= valeur - capacity);
+        }
     }
 }

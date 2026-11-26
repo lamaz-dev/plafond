@@ -8,7 +8,9 @@
 use crate::coeur::{self, Coeur};
 use crate::*;
 
-pub const VERSION: &str = "coeur-v0.6";
+pub const VERSION: &str = "coeur-v0.7";
+/// Coffres créés avant l'adresse de retour : retrouvés et gelables, plus créés.
+pub const VERSION_V06: &str = "coeur-v0.6";
 /// Marge (unités DAA, ≈ 2 s) entre l'âge lu et l'âge exigé : le bloc qui accepte le paiement est
 /// toujours un peu plus tard que la lecture.
 const MARGE: u64 = 20;
@@ -25,6 +27,10 @@ pub struct Apport {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct EtatCoeur {
     pub version: String,
+    /// Adresse de retour du coffre (v0.7) : seule destination possible du gel et du retrait.
+    /// Absente : coffre v0.6 (le gel rend au propriétaire).
+    #[serde(default)]
+    pub retour: Option<String>,
     pub capacite: i64,
     pub periode: i64,
     pub agent: String,
@@ -118,7 +124,30 @@ pub fn memoriser(e: &EtatCoeur) {
 
 pub fn charger() -> Option<EtatCoeur> {
     let e: EtatCoeur = serde_json::from_str(&fs::read_to_string(state_path()).ok()?).ok()?;
-    (e.version == VERSION).then_some(e)
+    (e.version == VERSION || e.version == VERSION_V06).then_some(e)
+}
+
+/// Adresse de retour d'un coffre : celle fixée à la création, sinon l'adresse du propriétaire
+/// (valeur par défaut, et seule destination possible d'un coffre v0.6).
+pub fn adresse_retour(e: Option<&EtatCoeur>, owner_pk: &[u8]) -> Res<Address> {
+    match e.and_then(|e| e.retour.as_deref()) {
+        Some(a) => valider_retour(a),
+        None => Ok(Address::new(Prefix::Testnet, Version::PubKey, owner_pk)),
+    }
+}
+
+/// Adresse de retour saisie par l'utilisateur : une adresse du réseau de test, valide.
+pub fn valider_retour(a: &str) -> Res<Address> {
+    let adr = Address::try_from(a.trim()).map_err(|_| format!("adresse de retour invalide : {a}"))?;
+    if adr.prefix != Prefix::Testnet {
+        return Err("adresse de retour : une adresse du réseau de test (kaspatest:…) est attendue".into());
+    }
+    Ok(adr)
+}
+
+/// Empreinte de l'adresse de retour, telle que le contrat la compare (v0.7).
+pub fn empreinte_retour(adr: &Address) -> Vec<u8> {
+    crate::sequestre::spk_hash(&pay_to_address_script(adr)).to_vec()
 }
 
 fn enregistrer(e: &EtatCoeur) -> Res<()> {
@@ -132,11 +161,19 @@ fn enregistrer(e: &EtatCoeur) -> Res<()> {
 
 /// Le contrat du coffre : réglages du fichier s'il existe (ils font foi), sinon règles courantes.
 pub fn coeur_de(owner_pk: &[u8], agent_pk: &[u8]) -> Coeur {
-    let (capacite, periode) = match charger() {
+    let e = charger();
+    let (capacite, periode) = match &e {
         Some(e) => (e.capacite, e.periode),
         None => (regles().capacite, regles().recharge_daa),
     };
-    Coeur { owner: owner_pk.to_vec(), agent: agent_pk.to_vec(), capacite, periode }
+    let retour = match &e {
+        Some(e) if e.version == VERSION_V06 => None,
+        // Adresse enregistrée invalide (fichier modifié à la main) : repli sur le propriétaire.
+        _ => Some(empreinte_retour(
+            &adresse_retour(e.as_ref(), owner_pk).unwrap_or_else(|_| Address::new(Prefix::Testnet, Version::PubKey, owner_pk)),
+        )),
+    };
+    Coeur { owner: owner_pk.to_vec(), agent: agent_pk.to_vec(), capacite, periode, retour }
 }
 
 pub fn adresse(art: &SilAbiArtifact) -> Res<Address> {
@@ -211,17 +248,34 @@ async fn verser(c: &KaspaRpcClient, owner: &Keypair, art: &SilAbiArtifact, monta
 
 /// Crée le coffre de l'agent : une pièce à l'adresse du contrat. Pas de genèse, pas de lignée.
 pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
+    deployer_vers(owner, agent, std::env::var("PLAFOND_RETOUR").ok().filter(|a| !a.trim().is_empty()).as_deref()).await
+}
+
+/// Crée le coffre avec une adresse de retour : `None` = l'adresse du propriétaire (par défaut).
+pub async fn deployer_vers(owner: &Keypair, agent: &Keypair, retour: Option<&str>) -> Res<String> {
     if charger().is_some() || load_state().is_ok() {
         return Err("un coffre est déjà déployé".into());
     }
     let r = regles();
-    let coeur = Coeur { owner: xonly(owner), agent: agent_pk(agent), capacite: r.capacite, periode: r.recharge_daa };
+    let retour_adr = match retour {
+        Some(a) => valider_retour(a)?,
+        None => address(owner),
+    };
+    let coeur = Coeur {
+        owner: xonly(owner),
+        agent: agent_pk(agent),
+        capacite: r.capacite,
+        periode: r.recharge_daa,
+        retour: Some(empreinte_retour(&retour_adr)),
+    };
     let art = coeur.artifact()?;
     let c = connect().await?;
     let daa = virtual_daa(&c).await?;
     let txid = verser(&c, owner, &art, r.depot, r.pieces).await?;
     let e = EtatCoeur {
         version: VERSION.into(),
+        // Rien d'enregistré pour l'adresse par défaut : le coffre suit l'adresse du propriétaire.
+        retour: retour.map(|_| retour_adr.to_string()),
         capacite: coeur.capacite,
         periode: coeur.periode,
         agent: hex::encode(&coeur.agent),
@@ -232,7 +286,8 @@ pub async fn deployer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         achats: vec![],
     };
     enregistrer(&e)?;
-    println!("Coffre créé (cœur v0.6) : {} TKAS en {} pièce(s) à l'adresse {}", r.depot as f64 / 1e8, r.pieces, adresse(&art)?);
+    println!("Coffre créé (cœur v0.7) : {} TKAS en {} pièce(s) à l'adresse {}", r.depot as f64 / 1e8, r.pieces, adresse(&art)?);
+    println!("Adresse de retour (gel, retrait) : {retour_adr}");
     println!("Transaction : {}", explorer(&txid));
     liberer(&c).await?;
     Ok(txid)
@@ -423,19 +478,71 @@ pub fn lots(pieces: &[Piece]) -> Vec<Vec<Piece>> {
     utiles.chunks(LOT_GEL).map(|c| c.to_vec()).collect()
 }
 
-/// Transaction de gel d'un lot : toutes ses pièces vers l'adresse du propriétaire.
-pub fn tx_gel(art: &SilAbiArtifact, lot: &[Piece], owner: &Keypair, frais: u64) -> Res<(Transaction, Vec<UtxoEntry>)> {
+/// Transaction de gel d'un lot : ses pièces vers l'adresse de retour `dest`.
+/// v0.7 : une sortie par pièce (entrée i -> sortie i, exigé par le contrat), au plus `capacite` de
+/// frais par pièce. v0.6 (`coeur.retour == None`) : une seule sortie, comme avant.
+pub fn tx_gel(coeur: &Coeur, art: &SilAbiArtifact, lot: &[Piece], owner: &Keypair, dest: &Address, frais: u64) -> Res<(Transaction, Vec<UtxoEntry>)> {
     let total: u64 = lot.iter().map(|p| p.valeur).sum();
     let entries: Vec<UtxoEntry> = lot.iter().map(|p| UtxoEntry::new(p.valeur, vault_spk(art), p.creation.unwrap_or(0), false, None)).collect();
     let inputs = lot.iter().map(|p| TransactionInput::new_with_compute_budget(p.outpoint, vec![], 0, coeur::CB_OWNER)).collect();
-    let sortie = TransactionOutput::new(total.checked_sub(frais).ok_or("lot trop petit pour les frais du gel")?, pay_to_address_script(&address(owner)));
-    let mut tx = Transaction::new(1, inputs, vec![sortie], 0, Default::default(), 0, vec![]);
+    let spk = pay_to_address_script(dest);
+    let sorties = if coeur.retour.is_some() {
+        // Au plus `capacite` par pièce (règle du contrat) et au plus un tiers de la pièce : une
+        // sortie trop réduite alourdirait la masse de stockage (KIP-9) plus qu'elle ne paierait.
+        let par_piece = frais.div_ceil(lot.len().max(1) as u64);
+        lot.iter().map(|p| TransactionOutput::new(p.valeur - par_piece.min(coeur.capacite.max(0) as u64).min(p.valeur / 3), spk.clone())).collect()
+    } else {
+        vec![TransactionOutput::new(total.checked_sub(frais).ok_or("lot trop petit pour les frais du gel")?, spk)]
+    };
+    let mut tx = Transaction::new(1, inputs, sorties, 0, Default::default(), 0, vec![]);
     for i in 0..tx.inputs.len() {
         let s = sign(&tx, &entries, i, owner);
         tx.inputs[i].signature_script = vault_sigscript(art, "ownerControl", &[s.into()])?;
     }
     tx.finalize();
     Ok((tx, entries))
+}
+
+/// Frais minimaux du réseau : 100 sompi par gramme de la plus grande des trois masses.
+const SOMPI_PAR_GRAMME: u64 = 100;
+
+/// Transactions de gel d'un lot, frais ajustés à la masse réelle (v0.7 : une sortie par pièce).
+/// `tentative` (1, 2, …) multiplie le minimum du réseau pour passer devant un paiement en attente.
+/// Si le lot dépasse la masse standard (sorties proches du plancher KIP-9), il est coupé en deux.
+/// Coffre v0.6 : une seule sortie, frais forfaitaires comme avant.
+pub fn gel_txs(coeur: &Coeur, art: &SilAbiArtifact, lot: &[Piece], owner: &Keypair, dest: &Address, tentative: u64) -> Res<Vec<Transaction>> {
+    if lot.is_empty() {
+        return Ok(vec![]);
+    }
+    if coeur.retour.is_none() {
+        let total: u64 = lot.iter().map(|p| p.valeur).sum();
+        let frais = (2 * FEE * lot.len() as u64 * tentative).min(total / 2);
+        return Ok(vec![tx_gel(coeur, art, lot, owner, dest, frais)?.0]);
+    }
+    // Point fixe : les frais changent la masse de stockage, qui change les frais.
+    let mut frais = 0u64;
+    let mut essai = None;
+    for _ in 0..4 {
+        let (tx, entries) = tx_gel(coeur, art, lot, owner, dest, frais)?;
+        let m = masse::masses(&tx, &entries).ok_or("masse du gel incalculable")?;
+        let besoin = m.compute.max(m.storage).max(m.transient) * SOMPI_PAR_GRAMME * (1 + tentative);
+        essai = Some((tx, m));
+        if besoin <= frais {
+            break;
+        }
+        frais = besoin;
+    }
+    let (tx, m) = essai.expect("au moins un essai");
+    if m.standard() {
+        return Ok(vec![tx]);
+    }
+    if lot.len() == 1 {
+        return Err("pièce impossible à geler seule : masse au-delà de la limite du réseau".into());
+    }
+    let (a, b) = lot.split_at(lot.len() / 2);
+    let mut txs = gel_txs(coeur, art, a, owner, dest, tentative)?;
+    txs.extend(gel_txs(coeur, art, b, owner, dest, tentative)?);
+    Ok(txs)
 }
 
 /// Durée (unités DAA, ≈ 10 s) pendant laquelle l'adresse du coffre doit rester vide avant que le
@@ -490,7 +597,7 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
     let coeur = coeur_de(&xonly(owner), &agent_pk(agent));
     let art = coeur.artifact()?;
     let c = connect().await?;
-    let proprio = address(owner);
+    let proprio = adresse_retour(charger().as_ref(), &xonly(owner))?;
     let mut ids = vec![];
     let mut suivi = SuiviGel::default();
     let mut tentative = 0u64;
@@ -519,16 +626,15 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
             break; // huit tentatives : on rend la main, le propriétaire relance
         }
         tentative += 1;
-        for lot in &lots(&ps) {
-            let total: u64 = lot.iter().map(|p| p.valeur).sum();
-            let frais = (2 * FEE * lot.len() as u64 * tentative).min(total / 2);
-            let (tx, _) = tx_gel(&art, lot, owner, frais)?;
+        let txs: Vec<Transaction> =
+            lots(&ps).iter().map(|lot| gel_txs(&coeur, &art, lot, owner, &proprio, tentative)).collect::<Res<Vec<_>>>()?.concat();
+        for tx in &txs {
             let id = tx.id();
-            let envoi = match c.submit_transaction(garde_diffusion(&tx)?, false).await {
+            let envoi = match c.submit_transaction(garde_diffusion(tx)?, false).await {
                 Ok(_) => Ok(()),
                 Err(err) => {
                     println!("tentative {tentative} : {err} ; remplacement du paiement en attente");
-                    c.submit_transaction_replacement(garde_diffusion(&tx)?).await.map(|_| ()).map_err(|e| e.to_string())
+                    c.submit_transaction_replacement(garde_diffusion(tx)?).await.map(|_| ()).map_err(|e| e.to_string())
                 }
             };
             if let Err(err) = envoi {
@@ -537,7 +643,8 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
             }
             for _ in 0..30 {
                 if c.get_utxos_by_addresses(vec![proprio.clone()]).await?.iter().any(|u| u.outpoint.transaction_id == id) {
-                    println!("{} pièce(s) rapatriée(s) : {} TKAS, {}", lot.len(), (total - frais) as f64 / 1e8, explorer(&id.to_string()));
+                    let rendu: u64 = tx.outputs.iter().map(|o| o.value).sum();
+                    println!("{} pièce(s) rapatriée(s) vers {proprio} : {} TKAS, {}", tx.inputs.len(), rendu as f64 / 1e8, explorer(&id.to_string()));
                     ids.push(id.to_string());
                     break;
                 }
@@ -609,7 +716,7 @@ mod tests {
 
     fn coeur(c: i64, r: i64) -> Coeur {
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        Coeur { owner: xonly(&k(1)), agent: xonly(&k(2)), capacite: c, periode: r }
+        Coeur { owner: xonly(&k(1)), agent: xonly(&k(2)), capacite: c, periode: r, retour: Some(empreinte_retour(&address(&k(11)))) }
     }
 
     #[test]
@@ -633,7 +740,9 @@ mod tests {
     #[test]
     fn gel_par_lots_sous_la_masse_standard() {
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let art = coeur(50_000_000, 288_000).artifact().unwrap();
+        let c = coeur(50_000_000, 288_000);
+        let art = c.artifact().unwrap();
+        let dest = address(&k(11));
         let p = |i: u32, v: u64| Piece { outpoint: TransactionOutpoint::new(TransactionId::from_bytes([7; 32]), i), valeur: v, creation: Some(1) };
         let mut ps: Vec<Piece> = (0..500).map(|i| p(i, 5_000)).collect(); // poussière
         ps.extend((500..600).map(|i| p(i, coeur_plancher()))); // 100 pièces juste au plancher
@@ -641,23 +750,30 @@ mod tests {
         let l = lots(&ps);
         assert_eq!(l.iter().map(|x| x.len()).sum::<usize>(), 101, "la poussière est ignorée");
         assert_eq!(l[0][0].valeur, 3_000_000_000, "plus grosses pièces d'abord");
-        for lot in &l {
-            let (tx, entries) = tx_gel(&art, lot, &k(1), 2 * FEE * lot.len() as u64).unwrap();
-            let m = masse::masses(&tx, &entries).unwrap();
-            eprintln!("lot de {} pièces : calcul {} g, stockage {} g", lot.len(), m.compute, m.storage);
-            assert!(m.standard(), "lot de {} pièces non diffusable", lot.len());
+        let entrees = |tx: &Transaction| -> Vec<UtxoEntry> {
+            tx.inputs.iter().map(|i| UtxoEntry::new(ps.iter().find(|p| p.outpoint == i.previous_outpoint).unwrap().valeur, vault_spk(&art), 1, false, None)).collect()
+        };
+        // Toutes les tentatives d'escalade (R58) restent diffusables, quitte à couper le lot.
+        for tentative in 1..=8u64 {
+            for lot in &l {
+                for tx in gel_txs(&c, &art, lot, &k(1), &dest, tentative).unwrap() {
+                    let m = masse::masses(&tx, &entrees(&tx)).unwrap();
+                    if tentative == 1 {
+                        eprintln!("lot de {} pièces : calcul {} g, stockage {} g", tx.inputs.len(), m.compute, m.storage);
+                    }
+                    assert!(m.standard(), "tentative {tentative} : lot de {} pièces non diffusable", tx.inputs.len());
+                    assert_eq!(tx.inputs.len(), tx.outputs.len(), "une sortie par pièce");
+                    assert!(tx.outputs.iter().all(|o| o.script_public_key == pay_to_address_script(&dest)), "tout va à l'adresse de retour");
+                }
+            }
         }
-        // Et un lot plein de pièces au plancher reste diffusable.
-        let plein: Vec<Piece> = (0..LOT_GEL as u32).map(|i| p(i, coeur_plancher())).collect();
-        let (tx, entries) = tx_gel(&art, &plein, &k(1), 2 * FEE * LOT_GEL as u64).unwrap();
-        assert!(masse::masses(&tx, &entries).unwrap().standard());
     }
 
     #[test]
     fn achats_reconnus_sans_lignee() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { version: VERSION.into(), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
         assert!(suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10));
@@ -682,7 +798,7 @@ mod tests {
         let c = coeur(200_000_000, 864_000);
         let depot = TransactionId::from_bytes([1; 32]);
         let (note, inscrit) = (1_000u64, 997u64); // noté par l'outil ; réellement inscrit
-        let mut e = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
+        let mut e = EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
             apports: vec![Apport { txid: depot.to_string(), sompi: 1_000_000_000, daa: note }], vues: vec![], achats: vec![] };
         let pieces = vec![Piece { outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(inscrit) }];
         // L'agent paie 0,5 TKAS dès que le réseau le permet : à inscription + attente.
@@ -748,7 +864,7 @@ mod tests {
     fn suivre_face_aux_depots_de_tiers() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let neuf = || EtatCoeur { version: VERSION.into(), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let neuf = || EtatCoeur { version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
         let total = |e: &EtatCoeur| e.achats.iter().map(|a| a.sompi).sum::<u64>();
@@ -905,7 +1021,7 @@ mod tests {
     fn r62_regonflement_n_est_pas_un_achat() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { version: VERSION.into(), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         assert_eq!(pieces_du_mandat(&e), 2);
         let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
@@ -930,7 +1046,7 @@ mod tests {
     fn r62_courbe_promise_tenue_apres_regonflement() {
         let c = coeur(50_000_000, 36_000);
         let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 0);
-        let etat = |apports: Vec<Apport>| EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
+        let etat = |apports: Vec<Apport>| EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
         let v0 = 200_000_000u64;
         let mut apports = vec![Apport { txid: String::new(), sompi: v0, daa: 0 }];
         // L'agent dépense au maximum jusqu'à t_r, puis la pièce est regonflée de m.
@@ -945,6 +1061,20 @@ mod tests {
         }
     }
 
+    /// Adresse de retour saisie : une adresse du réseau de test valide ; sinon refus clair.
+    #[test]
+    fn retour_adresse_saisie_validee() {
+        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let bonne = address(&k(11)).to_string();
+        assert_eq!(valider_retour(&format!("  {bonne} ")).unwrap().to_string(), bonne, "espaces tolérés");
+        assert!(valider_retour("kaspatest:pas-une-adresse").is_err());
+        assert!(valider_retour("").is_err());
+        let principale = Address::new(Prefix::Mainnet, Version::PubKey, &xonly(&k(11))).to_string();
+        assert!(valider_retour(&principale).is_err(), "adresse du réseau principal refusée sur le testnet");
+        // Par défaut (rien d'enregistré) : l'adresse du propriétaire.
+        assert_eq!(adresse_retour(None, &xonly(&k(1))).unwrap(), address(&k(1)));
+    }
+
     /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
     #[test]
     fn plusieurs_pieces_rafale_et_budget_tenus() {
@@ -956,7 +1086,7 @@ mod tests {
         let parts = decouper(r.depot, r.pieces);
         assert_eq!(parts.iter().sum::<u64>(), r.depot);
         let pieces: Vec<Piece> = parts.iter().map(|v| Piece { outpoint: op, valeur: *v, creation: Some(0) }).collect();
-        let etat = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect(), vues: vec![], achats: vec![] };
         let v = Vue { coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
         // Au bout d'une période de recharge, k achats au plafond sont possibles d'affilée.
@@ -969,7 +1099,7 @@ mod tests {
     fn vue_courbe_et_risque() {
         let c = coeur(50_000_000, 288_000);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
-        let etat = EtatCoeur { version: VERSION.into(), capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: String::new(), sompi: 2_000_000_000, daa: 0 }], vues: vec![], achats: vec![] };
         let v = Vue { coeur: c, adresse: String::new(), pieces: vec![Piece { outpoint: op, valeur: 2_000_000_000, creation: Some(0) }], now: 0, etat: Some(etat) };
         assert_eq!(v.immediate(), 0, "un mandat neuf démarre à zéro");

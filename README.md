@@ -31,7 +31,8 @@ The budgets, vaults and payment modes underneath are the means; the guaranteed w
 **Status**
 
 - ✅ testnet-10
-- ✅ **stateless core v0.6**: 211 bytes, 4 parameters, one rule (wait in proportion to what you spend), enforced by the network's relative lock ([contract](contracts/coeur.sil))
+- ✅ **stateless core v0.7**: 289 bytes, 5 parameters, one rule for the agent (wait in proportion to what you spend), enforced by the network's relative lock ([contract](contracts/coeur.sil))
+- ✅ **return address**: even with the owner's key, vault funds can only go back to the vault or to the return address chosen at creation (by default the owner's treasury; optionally a Ledger, multisig or custodian address)
 - ✅ **curve promised at creation**: a mandate's total loss never exceeds `C × t / R`, capped at its capital, whatever the agent does; proven on paper and verified by tests against the real Kaspa script engine ([proof, in French](spec/borne-de-perte-v0.6.md), [comparison with v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - ✅ reproducible in one command: `./verify-proof.sh`
 - ✅ automated CI on every push, long fuzzing campaign every week
@@ -49,10 +50,11 @@ and software are compromised.
 
 The repository contains the vault contract, payment modes and a demo tool:
 
-- [`contracts/coeur.sil`](contracts/coeur.sil) (core v0.6, stateless): to spend `s`, the vault coin must be
+- [`contracts/coeur.sil`](contracts/coeur.sil) (core v0.7, stateless): to spend `s`, the vault coin must be
   at least `ceil(s × R / C)` DAA units old, which the network checks itself (relative lock). No counter, no
   agent-supplied time, no lineage: the address is the vault's identity. Four parameters (owner, agent,
-  capacity `C` = cap per purchase, period `R`), single-input spends, one payee, owner override. A new
+  capacity `C` = cap per purchase, period `R`) plus the return address, single-input spends, one payee;
+  the owner can freeze, withdraw or refill, but only to the vault itself or to the return address. A new
   mandate starts at zero and fills up over time; there is no burst beyond one purchase of `C`.
 - [`contracts/agent_budget.sil`](contracts/agent_budget.sil) (AgentBudget v0.5.1, previous core): kept so
   existing vaults can be frozen.

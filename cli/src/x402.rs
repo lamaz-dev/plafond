@@ -644,7 +644,7 @@ mod vendeur_attaque_hors_ligne {
         Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap()
     }
     fn coeur() -> crate::coeur::Coeur {
-        crate::coeur::Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: 50_000_000, periode: 36_000 }
+        crate::coeur::Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: 50_000_000, periode: 36_000, retour: None }
     }
     fn vendeur() -> Address {
         crate::address(&k(9))

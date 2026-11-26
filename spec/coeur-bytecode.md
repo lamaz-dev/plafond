@@ -1,5 +1,11 @@
 # Cœur v0.6 : le bytecode compilé, opcode par opcode
 
+> **v0.7 (26 nov. 2026).** Le cœur actuel ajoute l'adresse de retour (spec/borne-de-perte-v0.6.md §7) :
+> 289 octets avec les paramètres de référence (+78 : l'empreinte de 32 octets et la règle de
+> `ownerControl`), empreinte `b85e0c9d…` dans `contracts/EMPREINTES.txt`. Le chemin `pay`, analysé
+> ci-dessous, est inchangé ; coût mesuré : 11 unités de calcul pour `pay` comme pour `ownerControl`.
+> La lecture ci-dessous reste celle de la v0.6 (`contracts/archive/coeur-v0.6.sil`).
+
 Compilateur SilverScript figé à `7eb04634` (v1.0.2 ; bytecode identique octet pour octet à `443d519e`, vérifié le 26 nov. 2026), paramètres de référence :
 - propriétaire et agent : clés de test 1 et 2 ;
 - capacité 200 000 000 sompi (2 TKAS) ;

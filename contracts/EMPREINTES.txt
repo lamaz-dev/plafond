@@ -3,12 +3,15 @@ compilateur silverscript : 7eb04634bfbae5350c1808efc7e34c4efa7f93af
 source agent_budget.sil : 849ca5814d6fd359c806e522fa06479ac2ee43298f1a66e97a7e9b30ec0f8223
 source delivery_escrow.sil : 5efed001d10a4591525b09c1a0753abe913a680f98ea98600ee2c447a464a1c9
 source ardoise.sil : 28c2fd0cf518971ce5863da17abaa4e999a2ac68ea137d2039a6a9adbc544126
-source coeur.sil (v0.6, branche coeur-v0.6) : e06fa18cead6340f296af0e30c39d05fa76421a417893c28d734f25b675ec5ea
+source coeur.sil (v0.7, adresse de retour) : 817f910f77087108678e9541892bc208c5790927356a733a028ee94e50b7f894
+source archive/coeur-v0.6.sil (gel des anciens coffres) : e06fa18cead6340f296af0e30c39d05fa76421a417893c28d734f25b675ec5ea
 AgentBudget (paramètres de référence) : 577 octets, bytecode 24ff43d01e4a78f27224b6db4e1323999d20facfdaa05467afb5805d90ee5c09
   adresse P2SH testnet : kaspatest:pqj07s7sre983unjyjmdknsnywve6g86eld2q4r8476cqhvsaewqj9ekp2822
 DeliveryEscrow (paramètres de référence) : 263 octets, bytecode ff913ff347b263115aac8ac138d22686dbde27530783a62edfa50c4e1090f02d
   adresse P2SH testnet : kaspatest:prlez0lng7exxy264j9vzwxjy6rdhh382vrc8f3wm7jscnssjrcz60s87m0vs
 Ardoise (paramètres de référence) : 356 octets, bytecode 9776db472f44bcfae891944bcf7892f66c65e0b59f4fb2f490442d04792e96e7
   adresse P2SH testnet : kaspatest:pzthdk689azte7hgjx2yhnmcjtmxce0qkk05lvh5jpzz6pre96tww49xppcf0
+Coeur v0.7 (paramètres de référence) : 289 octets, bytecode b85e0c9df3a116287344ce7f0a11bc275758f14de64b62642fda39238b8122be
+  adresse P2SH testnet : kaspatest:pzu9urya7ws3v2rngn887zs3hsn4wk83fhnykcny9ldrjgutsy3tu20hj0ram
 Coeur v0.6 (paramètres de référence) : 211 octets, bytecode 6057a023b315e2a2d609829d336b7ba76147af1115443adff4f377fde6c948f2
   adresse P2SH testnet : kaspatest:pps90gprkv279gkkpxpf6vmt0wnkz3a0zy25gwkl7neh0l0xe9y0ywketasep

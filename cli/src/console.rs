@@ -212,11 +212,14 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
         "prochain_achat_plafond_secondes": delai_s((rg.plafond as u64).saturating_sub(FEE)),
         "solde_proprietaire_sompi": solde_proprio,
         "adresse_proprietaire": adresse,
+        // v0.7 : seule destination possible du gel et du retrait, même avec la clé du propriétaire.
+        "adresse_retour": crate::coffre::adresse_retour(v.etat.as_ref(), &xonly(owner)).map(|a| a.to_string()).ok(),
+        "retour_protege": v.coeur.retour.is_some() && v.etat.as_ref().is_some_and(|e| e.retour.is_some()),
         "historique": historique,
         "cours": cours,
         "technique": {
             "reseau": "Kaspa testnet-10",
-            "contrat": "Plafond, cœur v0.6 (sans mémoire, covenant SilverScript)",
+            "contrat": if v.coeur.retour.is_some() { "Plafond, cœur v0.7 (sans mémoire, adresse de retour, covenant SilverScript)" } else { "Plafond, cœur v0.6 (sans mémoire, covenant SilverScript)" },
             "adresse_coffre": v.adresse,
             "pieces": v.pieces.len(),
             "capacite_sompi": v.coeur.capacite,
@@ -1011,13 +1014,26 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     } else {
                         let mandat = regles_mandat(&v);
                         let duree = mandat.as_ref().ok().and_then(|(_, d)| *d);
-                        match mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r), enveloppe.as_ref())) {
+                        // Adresse de retour : vide = la trésorerie (par défaut) ; sinon validée AVANT de créer.
+                        let retour = match v["retour"].as_str().map(str::trim).filter(|a| !a.is_empty()) {
+                            None => Ok(None),
+                            Some(a) => crate::coffre::valider_retour(a).map(|adr| Some(adr.to_string())),
+                        };
+                        match retour.and_then(|ret| mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r), enveloppe.as_ref())).map(|a| (a, ret))) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
-                            Ok(a) => {
+                            Ok((mut a, ret)) => {
                                 if let Some(j) = duree {
                                     let _ = agents::fixer_echeance(&defaut, &a.id, Some(crate::double_auth::maintenant() + j as u64 * 86_400));
                                 }
-                                let r = agents::cle(&a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, agents::xonly_pub(&a, &agent_principal), || handle.block_on(deployer(&owner, &k))));
+                                if ret.is_some() {
+                                    let _ = agents::fixer_retour(&defaut, &a.id, ret.clone());
+                                    a.retour = ret;
+                                }
+                                let r = agents::cle(&a, &agent_principal).and_then(|k| {
+                                    avec_coffre(&a.etat, a.regles, agents::xonly_pub(&a, &agent_principal), || {
+                                        handle.block_on(crate::coffre::deployer_vers(&owner, &k, a.retour.as_deref()))
+                                    })
+                                });
                                 journal(json!({ "nouvel_agent": a.id, "coffre": r.as_ref().map_err(|e| e.to_string()) }));
                                 match r {
                                     Ok(txid) => json_rep(200, json!({ "agent": a.id, "transaction": txid, "explorateur": explorer(&txid) })),
@@ -1117,7 +1133,9 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                 ("POST", "/api/creer") => match (&cible, cle_cible) {
                     _ if v["confirmation"].as_str() != Some("CREER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
                     (Some(a), Some(Ok(k))) => {
-                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(deployer(&owner, &k)));
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || {
+                            handle.block_on(crate::coffre::deployer_vers(&owner, &k, a.retour.as_deref()))
+                        });
                         journal(json!({ "creer": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
                     }

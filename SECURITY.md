@@ -40,7 +40,15 @@ le routeur ou le serveur sont compromis :
   announced budget over any window of one period, and half of it immediately.
 - **Per-payment cap / Plafond par achat**, and the optional payee allowlist.
 - **Owner control / Contrôle du propriétaire.** Only the owner key opens `ownerControl`
-  (freeze and repatriate everything).
+  (freeze, withdraw, refill). Since core v0.7, even the owner key can only send a vault coin back to
+  the vault (refill, value never decreases) or to the **return address** fixed at creation, with at most
+  `capacity` of fees per coin. A stolen owner key therefore cannot send vault funds anywhere else.
+  If the return address is the owner's treasury (default), the thief could then empty that treasury,
+  which is not a vault: choose a return address whose key is not on the console computer (Ledger,
+  multisig, custodian) for full protection.
+  Depuis le cœur v0.7, même la clé du propriétaire ne peut renvoyer une pièce que vers le coffre
+  (rechargement) ou vers l'adresse de retour fixée à la création, au plus `capacity` de frais par
+  pièce. Protection complète : une adresse de retour dont la clé n'est pas sur l'ordinateur de la console.
 - **No hidden outputs, no payload, one lineage** (KIP-20).
 
 ## What the system does NOT guarantee / Ce que le système ne garantit pas

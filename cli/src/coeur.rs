@@ -1,4 +1,6 @@
-//! Cœur v0.6 : budget d'agent sans mémoire (contracts/coeur.sil), branche coeur-v0.6.
+//! Cœur v0.7 : budget d'agent sans mémoire (contracts/coeur.sil), avec adresse de retour.
+//! Les coffres v0.6 (contracts/archive/coeur-v0.6.sil, sans adresse de retour) restent gérés :
+//! `Coeur::retour == None` compile l'ancien script, pour les retrouver et les geler.
 //!
 //! Règle unique : dépenser `spent` (paiement + frais) exige que la pièce ait au moins
 //! ceil(spent × période / capacité) unités DAA d'âge, ce que le réseau vérifie lui-même
@@ -14,6 +16,8 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 use crate::{Res, bytecode, sign, vault_sigscript, vault_spk};
 
 pub const SOURCE: &str = include_str!("../../contracts/coeur.sil");
+/// Cœur v0.6, sans adresse de retour : seulement pour les coffres déjà créés.
+pub const SOURCE_V06: &str = include_str!("../../contracts/archive/coeur-v0.6.sil");
 /// Le verrou relatif de Kaspa ne compte que 32 bits (SEQUENCE_LOCK_TIME_MASK).
 pub const PERIODE_MAX: i64 = (1i64 << 32) - 1;
 /// Budgets de calcul déclarés (marge incluse), mesurés par `budget_de_calcul_suffisant`.
@@ -30,6 +34,8 @@ pub struct Coeur {
     pub agent: Vec<u8>,
     pub capacite: i64,
     pub periode: i64,
+    /// Empreinte blake2b (32 octets) du script de l'adresse de retour ; `None` : coffre v0.6.
+    pub retour: Option<Vec<u8>>,
 }
 
 /// Paramètres publics d'un coffre, tels qu'un vendeur les reçoit (clés en hexadécimal) : tout ce
@@ -40,13 +46,17 @@ pub struct Publics {
     pub agent: String,
     pub capacite: i64,
     pub periode: i64,
+    /// Empreinte de l'adresse de retour (hexadécimal) ; absente pour un coffre v0.6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retour: Option<String>,
 }
 
 impl Publics {
     pub fn coeur(&self) -> Res<Coeur> {
-        let c = Coeur { owner: hex::decode(&self.owner)?, agent: hex::decode(&self.agent)?, capacite: self.capacite, periode: self.periode };
-        if c.owner.len() != 32 || c.agent.len() != 32 {
-            return Err("clés du coffre invalides (32 octets attendus)".into());
+        let retour = self.retour.as_deref().map(hex::decode).transpose()?;
+        let c = Coeur { owner: hex::decode(&self.owner)?, agent: hex::decode(&self.agent)?, capacite: self.capacite, periode: self.periode, retour };
+        if c.owner.len() != 32 || c.agent.len() != 32 || c.retour.as_ref().is_some_and(|r| r.len() != 32) {
+            return Err("clés ou adresse de retour du coffre invalides (32 octets attendus)".into());
         }
         c.verifier()?;
         Ok(c)
@@ -72,7 +82,13 @@ impl Coeur {
     }
 
     pub fn publics(&self) -> Publics {
-        Publics { owner: hex::encode(&self.owner), agent: hex::encode(&self.agent), capacite: self.capacite, periode: self.periode }
+        Publics {
+            owner: hex::encode(&self.owner),
+            agent: hex::encode(&self.agent),
+            capacite: self.capacite,
+            periode: self.periode,
+            retour: self.retour.as_ref().map(hex::encode),
+        }
     }
 
     pub fn artifact(&self) -> Res<SilAbiArtifact> {
@@ -82,9 +98,16 @@ impl Coeur {
 
     /// Pour les tests de paramètres aberrants : le script doit les refuser seul.
     pub fn artifact_sans_verification(&self) -> Res<SilAbiArtifact> {
-        let args: Vec<ArtifactValue> =
+        let mut args: Vec<ArtifactValue> =
             vec![self.owner.clone().into(), self.agent.clone().into(), self.capacite.into(), self.periode.into()];
-        Ok(compile_to_sil_abi_artifact_with_options(SOURCE, &args, CompileOptions::default())?)
+        let source = match &self.retour {
+            Some(r) => {
+                args.push(r.clone().into());
+                SOURCE
+            }
+            None => SOURCE_V06,
+        };
+        Ok(compile_to_sil_abi_artifact_with_options(source, &args, CompileOptions::default())?)
     }
 
     /// Âge exigé (unités DAA) pour dépenser `spent`, paiement et frais compris.
@@ -160,7 +183,14 @@ mod tests {
         std::env::var("FUZZ_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(n)
     }
     fn coeur(c: i64, r: i64) -> Coeur {
-        Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: c, periode: r }
+        Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: c, periode: r, retour: Some(retour_hash()) }
+    }
+    /// Adresse de retour des tests : la clé 11 (distincte du propriétaire, de l'agent et du vendeur).
+    fn retour_spk() -> ScriptPublicKey {
+        pay_to_address_script(&crate::address(&k(11)))
+    }
+    fn retour_hash() -> Vec<u8> {
+        crate::sequestre::spk_hash(&retour_spk()).to_vec()
     }
     fn externe() -> ScriptPublicKey {
         pay_to_address_script(&crate::address(&k(10)))
@@ -232,7 +262,7 @@ mod tests {
         let tx = build_pay(&c, &art, TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), valeur, externe(), 50_000_000, 20_000, &k(2), None).unwrap();
         let entree = UtxoEntry::new(valeur, vault_spk(&art), 1_000, false, None);
         let unites = script(&tx, &entree).expect("paiement construit par l'outil accepté par le script");
-        eprintln!("cœur v0.6 : {} octets, paiement = {unites} unités de calcul", octets(&art));
+        eprintln!("cœur v0.7 : {} octets, paiement = {unites} unités de calcul", octets(&art));
         assert!(unites <= CB_PAY as u64, "budget insuffisant : {unites} > {CB_PAY}");
         let attente = tx.inputs[0].sequence;
         assert!(!consensus(&tx, &entree, 1_000 + attente - 1), "trop tôt d'une unité : refusé par le réseau");
@@ -294,13 +324,108 @@ mod tests {
         let art = c.artifact().unwrap();
         let v = 1_000_000_000u64;
         let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), vec![], 0, CB_OWNER);
-        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(v - 3_000_000, externe())], 0, Default::default(), 0, vec![]);
+        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(v - 3_000_000, retour_spk())], 0, Default::default(), 0, vec![]);
         let entree = UtxoEntry::new(v, vault_spk(&art), 1_000, false, None);
         let s = sign(&tx, std::slice::from_ref(&entree), 0, &k(1));
         tx.inputs[0].signature_script = vault_sigscript(&art, "ownerControl", &[s.into()]).unwrap();
         let unites = script(&tx, &entree).expect("gel accepté par le script");
         eprintln!("gel (ownerControl) = {unites} unités de calcul");
         assert!(unites <= CB_OWNER as u64, "budget du gel insuffisant : {unites} > {CB_OWNER}");
+    }
+
+    /// Script de l'entrée `idx` d'une transaction à plusieurs entrées (vrai moteur de Kaspa).
+    fn script_entree(tx: &Transaction, entries: &[UtxoEntry], idx: usize) -> Option<u64> {
+        let populated = PopulatedTransaction::new(tx, entries.to_vec());
+        let cov = CovenantsContext::from_tx(&populated).ok()?;
+        let cache = Cache::new(10);
+        let reused = SigHashReusedValuesUnsync::new();
+        let input = populated.inputs()[idx].clone();
+        let mut vm = TxScriptEngine::from_transaction_input(
+            &populated,
+            &input,
+            idx,
+            populated.utxo(idx).unwrap(),
+            EngineCtx::new(&cache).with_reused(&reused).with_covenants_ctx(&cov),
+            EngineFlags::default(),
+        );
+        vm.execute().ok()?;
+        Some(vm.used_script_units().0.div_ceil(kaspa_consensus_core::mass::units::SCRIPT_UNITS_PER_COMPUTE_BUDGET_UNIT))
+    }
+
+    /// Transaction `ownerControl` : `valeurs` = pièces du coffre (entrées 0..n), `sorties` libres,
+    /// signée par `signataire` pour chaque entrée du coffre.
+    fn tx_proprio(art: &SilAbiArtifact, valeurs: &[u64], sorties: Vec<TransactionOutput>, signataire: &Keypair) -> (Transaction, Vec<UtxoEntry>) {
+        let inputs = (0..valeurs.len())
+            .map(|i| TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), i as u32), vec![], 0, CB_OWNER))
+            .collect();
+        let entries: Vec<UtxoEntry> = valeurs.iter().map(|v| UtxoEntry::new(*v, vault_spk(art), 1_000, false, None)).collect();
+        let mut tx = Transaction::new(1, inputs, sorties, 0, Default::default(), 0, vec![]);
+        for i in 0..valeurs.len() {
+            let s = sign(&tx, &entries, i, signataire);
+            tx.inputs[i].signature_script = vault_sigscript(art, "ownerControl", &[s.into()]).unwrap();
+        }
+        (tx, entries)
+    }
+
+    fn toutes_acceptees(tx: &Transaction, entries: &[UtxoEntry]) -> bool {
+        (0..entries.len()).all(|i| script_entree(tx, entries, i).is_some())
+    }
+
+    /// v0.7 : la clé du propriétaire est volée. Le voleur ne peut envoyer la pièce que vers le coffre
+    /// ou vers l'adresse de retour, jamais chez lui ; ses frais sont bornés par la capacité.
+    #[test]
+    fn retour_cle_proprietaire_volee_ne_peut_rien_detourner() {
+        let cap = 50_000_000u64;
+        let c = coeur(cap as i64, 288_000);
+        let art = c.artifact().unwrap();
+        let v = 1_000_000_000u64;
+        let out = |val: u64, spk: ScriptPublicKey| TransactionOutput::new(val, spk);
+        // Vers l'adresse du voleur : refusé, quel que soit le montant.
+        for val in [v - 1_000_000, v, 1] {
+            let (tx, e) = tx_proprio(&art, &[v], vec![out(val, externe())], &k(1));
+            assert!(!toutes_acceptees(&tx, &e), "détournement vers une adresse étrangère accepté ({val})");
+        }
+        // Vers l'adresse de retour : accepté, frais jusqu'à la capacité incluse.
+        let (tx, e) = tx_proprio(&art, &[v], vec![out(v - cap, retour_spk())], &k(1));
+        let unites = script_entree(&tx, &e, 0).expect("gel vers l'adresse de retour accepté");
+        assert!(unites <= CB_OWNER as u64, "budget du gel : {unites} > {CB_OWNER}");
+        // Frais au-delà de la capacité : refusé (le voleur ne peut pas brûler la pièce en frais).
+        let (tx, e) = tx_proprio(&art, &[v], vec![out(v - cap - 1, retour_spk())], &k(1));
+        assert!(!toutes_acceptees(&tx, &e), "frais au-delà de la capacité acceptés");
+        // Rechargement : la pièce revient au coffre, au moins entière ; pas moins.
+        let (tx, e) = tx_proprio(&art, &[v], vec![out(v + 7, vault_spk(&art))], &k(1));
+        assert!(toutes_acceptees(&tx, &e), "rechargement refusé");
+        let (tx, e) = tx_proprio(&art, &[v], vec![out(v - 1, vault_spk(&art))], &k(1));
+        assert!(!toutes_acceptees(&tx, &e), "rechargement qui fait fondre la pièce accepté");
+        // Sans sortie correspondante : refusé.
+        let (tx, e) = tx_proprio(&art, &[v, v], vec![out(2 * v - 1_000, retour_spk())], &k(1));
+        assert!(!toutes_acceptees(&tx, &e), "deux pièces sur une seule sortie acceptées");
+        // Gel par lot : entrée i -> sortie i, toutes vers l'adresse de retour.
+        let (tx, e) = tx_proprio(&art, &[v, 2 * v], vec![out(v - 1_000, retour_spk()), out(2 * v - 1_000, retour_spk())], &k(1));
+        assert!(toutes_acceptees(&tx, &e), "gel par lot refusé");
+        // Lot où la seconde pièce part ailleurs : refusé.
+        let (tx, e) = tx_proprio(&art, &[v, v], vec![out(v - 1_000, retour_spk()), out(v - 1_000, externe())], &k(1));
+        assert!(!toutes_acceptees(&tx, &e), "seconde pièce détournée acceptée");
+        // Sorties supplémentaires libres (rendu du propriétaire lors d'un rechargement) : acceptées.
+        let (tx, e) = tx_proprio(&art, &[v], vec![out(v + 5, vault_spk(&art)), out(123_456, externe())], &k(1));
+        assert!(toutes_acceptees(&tx, &e), "rendu du propriétaire refusé");
+        // Signé par l'agent : refusé.
+        let (tx, e) = tx_proprio(&art, &[v], vec![out(v - 1_000, retour_spk())], &k(2));
+        assert!(!toutes_acceptees(&tx, &e), "ownerControl signé par l'agent accepté");
+    }
+
+    /// Les coffres v0.6 restent reconnus : sans adresse de retour, l'outil recompile EXACTEMENT
+    /// l'ancien script (mêmes octets, donc même adresse) pour les retrouver et les geler.
+    #[test]
+    fn retour_coffres_v06_toujours_reconnus() {
+        let c = Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: crate::CAPACITY, periode: crate::JOUR_DAA, retour: None };
+        let code = crate::bytecode(&c.artifact().unwrap());
+        let empreinte = hex::encode(blake2b_simd::Params::new().hash_length(32).hash(&code).as_bytes());
+        assert_eq!(empreinte, "6057a023b315e2a2d609829d336b7ba76147af1115443adff4f377fde6c948f2", "bytecode v0.6 inchangé");
+        // Et un coffre v0.6 se gèle toujours vers n'importe quelle adresse du propriétaire.
+        let art = c.artifact().unwrap();
+        let (tx, e) = tx_proprio(&art, &[1_000_000_000], vec![TransactionOutput::new(999_000_000, externe())], &k(1));
+        assert!(toutes_acceptees(&tx, &e));
     }
 
     #[test]
@@ -501,7 +626,8 @@ mod tests {
     /// Transaction de gel d'une pièce par le propriétaire (clé 1) ; le vrai moteur doit l'accepter.
     fn gel_accepte(art: &SilAbiArtifact, valeur: u64, cree: u64) -> bool {
         let input = TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([4; 32]), 0), vec![], 0, CB_OWNER);
-        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(valeur / 2, externe())], 0, Default::default(), 0, vec![]);
+        // Gel v0.7 : la pièce part vers l'adresse de retour, 1 sompi de frais (≤ capacité).
+        let mut tx = Transaction::new(1, vec![input], vec![TransactionOutput::new(valeur.saturating_sub(1).max(1), retour_spk())], 0, Default::default(), 0, vec![]);
         let entree = UtxoEntry::new(valeur, vault_spk(art), cree, false, None);
         let s = sign(&tx, std::slice::from_ref(&entree), 0, &k(1));
         tx.inputs[0].signature_script = vault_sigscript(art, "ownerControl", &[s.into()]).unwrap();
@@ -746,7 +872,7 @@ mod tests {
             }
             let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
             let x = 1u64 << 40;
-            let etat = crate::coffre::EtatCoeur { version: crate::coffre::VERSION.into(), capacite: cap, periode: r, agent: String::new(), cree_daa: x,
+            let etat = crate::coffre::EtatCoeur { version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
                 apports: vec![crate::coffre::Apport { txid: String::new(), sompi: v, daa: x }], vues: vec![], achats: vec![] };
             let vue = crate::coffre::Vue { coeur: c.clone(), adresse: String::new(),
                 pieces: vec![crate::coffre::Piece { outpoint: op, valeur: v, creation: Some(x) }], now: x.saturating_add(age), etat: Some(etat) };
@@ -1293,7 +1419,7 @@ mod bytecode {
     #[test]
     fn exporter_bytecode_de_reference() {
         let k = |b: u8| secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
-        let c = super::Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: crate::CAPACITY, periode: crate::JOUR_DAA };
+        let c = super::Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: crate::CAPACITY, periode: crate::JOUR_DAA, retour: None };
         let b = crate::bytecode(&c.artifact().unwrap());
         assert_eq!(b.len(), 211);
         if let Ok(f) = std::env::var("PLAFOND_EXPORT_BYTECODE") {
