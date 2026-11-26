@@ -67,6 +67,7 @@ jobs:
           cd tests/juge-kaspa-x402 && npm ci --ignore-scripts
           ../../cli/target/release/vault-cli relais-exemple | node juge.mjs
           node bout-en-bout.mjs ../../cli/target/release/vault-cli
+          node fournisseur-tests.mjs
 
   contrats:
     name: Tests des contrats sur le compilateur SilverScript figé

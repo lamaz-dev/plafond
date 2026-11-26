@@ -6,7 +6,8 @@
   "license": "ISC",
   "scripts": {
     "juge": "../../cli/target/debug/vault-cli relais-exemple | node juge.mjs",
-    "bout-en-bout": "node bout-en-bout.mjs"
+    "bout-en-bout": "node bout-en-bout.mjs",
+    "fournisseur": "node fournisseur-tests.mjs"
   },
   "dependencies": {
     "@kaspa-x402/core": "1.0.1",

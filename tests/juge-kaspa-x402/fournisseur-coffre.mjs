@@ -50,6 +50,9 @@ export class FournisseurCoffre {
   sourceKind = "vault-treasury";
   #tentatives = new Map();
   #reservees = new Map(); // outpoint → attemptId
+  // Une seule préparation à la fois : deux demandes simultanées ne lisent pas le même solde (deux
+  // recharges, porte-monnaie au-delà du plafond) et ne choisissent pas les mêmes pièces.
+  #file = Promise.resolve();
 
   /**
    * @param {object} o
@@ -74,7 +77,15 @@ export class FournisseurCoffre {
     return toutes.filter((u) => !u.covenantId && !this.#reservees.has(cle(u.outpoint)));
   }
 
-  async payExactTransaction(request) {
+  payExactTransaction(request) {
+    // Demandes traitées l'une après l'autre ; la même tentative envoyée deux fois (message en double)
+    // attend la première et reçoit le même artefact signé.
+    const suite = this.#file.then(() => this.#payer(request));
+    this.#file = suite.catch(() => {});
+    return suite;
+  }
+
+  async #payer(request) {
     // Une tentative = un seul artefact signé ; un changement de termes est refusé avant toute signature.
     const id = request.attemptId.toLowerCase();
     const deja = this.#tentatives.get(id);
@@ -87,7 +98,16 @@ export class FournisseurCoffre {
     let pieces = await this.#piecesLibres();
     const solde = pieces.reduce((s, u) => s + BigInt(u.amount), 0n);
     const besoin = BigInt(request.amount) + 2n * FRAIS_PAR_ENTREE; // marge pour deux entrées
-    const recharge = rechargeNecessaire(solde, besoin, this.plafond, this.maxParPaiement);
+    // Le plafond porte sur tout le porte-monnaie, pièces réservées comprises : un paiement remis à un
+    // vendeur qui ne l'a pas encore diffusé (ou qui le retient) reste de l'argent exposé.
+    const reserve = (await this.chaine.getUtxos([this.adresse]))
+      .filter((u) => !u.covenantId && this.#reservees.has(cle(u.outpoint)))
+      .reduce((s, u) => s + BigInt(u.amount), 0n);
+    const plafondLibre = this.plafond > reserve ? this.plafond - reserve : 0n;
+    if (solde < besoin && besoin > plafondLibre && besoin <= this.plafond) {
+      throw new Error("des paiements remis à des vendeurs ne sont pas encore réglés : réessayer quand ils seront confirmés ou expirés");
+    }
+    const recharge = rechargeNecessaire(solde, besoin, plafondLibre, this.maxParPaiement);
     if (recharge !== null) {
       await this.coffre.recharger(recharge, this.adresse);
       pieces = await this.#piecesLibres();
