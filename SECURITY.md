@@ -48,6 +48,8 @@ le routeur ou le serveur sont compromis :
 - recovery of a lost owner password or key file (there is no custodian; keep a backup) /
   la récupération d'un mot de passe ou d'un fichier de clé perdu (personne ne détient la clé ; faites une sauvegarde) ;
 - protection against compromise of the owner's own device / la protection contre la compromission de l'appareil du propriétaire ;
+- the secrecy of the agent key on the agent's machine: it is stored unencrypted there (see below); the loss stays capped by the contract /
+  le secret de la clé de l'agent sur sa machine : elle y est stockée sans chiffrement (voir plus bas) ; la perte reste plafonnée par le contrat ;
 - the KAS exchange rate: budgets are in KAS, fiat amounts are indicative / le cours du KAS : les budgets sont en KAS, les montants en euros sont indicatifs ;
 - the honesty or security of third-party vendors (paying does not guarantee delivery, except through the escrow) /
   l'honnêteté ou la sécurité des vendeurs tiers (payer ne garantit pas la livraison, sauf via le séquestre) ;
@@ -55,6 +57,73 @@ le routeur ou le serveur sont compromis :
   la disponibilité : un paiement peut être retardé ou refusé ; les fonds restent protégés ;
 - exact wall-clock time: the network counts DAA scores (target 10 per second, about 864,000 per 24 h) /
   l'heure exacte : le réseau compte des scores DAA (environ 864 000 par 24 h).
+
+## Keys and secrets on disk / Clés et secrets sur le disque
+
+How the tool stores what it must keep (behaviour of the tool, not a consensus guarantee).
+Comment l'outil conserve ce qu'il doit garder (comportement de l'outil, pas une garantie du consensus).
+
+**On the owner's computer (console) / Sur l'ordinateur du propriétaire (console)**
+
+- Owner key: encrypted with the owner's password (Argon2id + XChaCha20-Poly1305), never stored in clear.
+  Clé du propriétaire : chiffrée par son mot de passe, jamais en clair.
+- Agent keys kept by the console (an agent not yet connected, and the main agent): encrypted with the
+  same password, same derivation and same file format. A key left in clear by an earlier version is
+  encrypted the next time the account is opened, then the clear file is erased. Once an agent is
+  connected, the console erases its copy and keeps only the public key.
+  Clés d'agent gardées par la console (agent pas encore connecté, agent principal) : chiffrées par le
+  même mot de passe, même dérivation, même format. Une clé laissée en clair par une version précédente
+  est chiffrée à l'ouverture suivante du compte, puis le fichier en clair est effacé. Une fois l'agent
+  connecté, la console efface sa copie et ne garde que la clé publique.
+- Forgotten password: restoring the account from the 24 words sets a new password. Agent keys
+  encrypted under the old one can no longer be read: vaults stay visible, fundable and freezable
+  (public key only), but an agent that was not yet connected must be stopped and created again.
+  Mot de passe oublié : restaurer le compte depuis les 24 mots fixe un nouveau mot de passe. Les clés
+  d'agent chiffrées sous l'ancien ne sont plus lisibles : les coffres restent visibles, alimentables et
+  gelables (clé publique seule), mais un agent pas encore connecté doit être arrêté puis recréé.
+- Test and demo keys (no password): stored in clear, testnet only.
+  Clés de test et de démonstration (sans mot de passe) : en clair, réseau de test uniquement.
+- Console link: the link printed in the terminal carries a one-time ticket valid for two minutes, not
+  the session token. Press Enter in the terminal to get a new link; opening a new link closes the
+  previous session.
+  Lien de la console : le lien affiché dans le terminal porte un ticket à usage unique valable deux
+  minutes, pas le jeton de session. Appuyez sur Entrée dans le terminal pour obtenir un nouveau lien ;
+  ouvrir un nouveau lien ferme la session précédente.
+
+**On the agent's machine / Sur la machine de l'agent**
+
+- **The agent key is NOT encrypted there. This is an accepted limit.** The agent pays without a human:
+  nobody is present to type a password. The key file is readable by its user only. Whoever reads it
+  can spend, but never beyond what the contract allows (loss bound above), and the owner can freeze
+  the vault from the console at any time. Size the mandate accordingly.
+  **La clé de l'agent n'y est PAS chiffrée. C'est une limite assumée.** L'agent paie sans humain :
+  personne n'est là pour saisir un mot de passe. Le fichier de clé n'est lisible que par son
+  utilisateur. Qui le lit peut dépenser, mais jamais au-delà de ce que le contrat autorise (borne de
+  perte ci-dessus), et le propriétaire peut geler le coffre depuis la console à tout moment.
+  Dimensionnez le mandat en conséquence.
+- Agent secrets (API keys) are encrypted for the agent key: they are worth what that key file is worth.
+  Les secrets de l'agent (clés d'API) sont chiffrés pour la clé de l'agent : ils valent ce que vaut ce fichier.
+- Connection kit: `agent-installer` installs, checks that the key and every secret are readable, then
+  erases the kit file. If anything fails, the kit is kept so you can retry. Also delete the copy
+  downloaded on the owner's computer.
+  Kit de connexion : `agent-installer` installe, vérifie que la clé et chaque secret sont lisibles, puis
+  efface le fichier du kit. Au moindre échec, le kit est conservé pour réessayer. Supprimez aussi la
+  copie téléchargée sur l'ordinateur du propriétaire.
+
+**File permissions / Droits des fichiers**
+
+- Linux, macOS: sensitive files (keys, secrets) are created with mode 0600.
+  Linux, macOS : les fichiers sensibles (clés, secrets) sont créés avec les droits 0600.
+- Windows: there is no 0600. Sensitive files are created with a protected access list containing a
+  single entry, the current user (nothing inherited from the folder). An administrator of the computer
+  can still take ownership of any file, as on any system.
+  Windows : il n'y a pas de 0600. Les fichiers sensibles sont créés avec une liste d'accès protégée à
+  une seule entrée, l'utilisateur courant (rien n'est hérité du dossier). Un administrateur de
+  l'ordinateur peut toujours s'approprier un fichier, comme sur tout système.
+- Erasing a file overwrites it and then deletes it. On SSDs and copy-on-write file systems the old
+  content may physically remain.
+  Effacer un fichier le réécrit puis le supprime. Sur SSD ou système de fichiers à copie sur écriture,
+  l'ancien contenu peut subsister physiquement.
 
 ## Advisories / Avis de sécurité
 

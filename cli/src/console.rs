@@ -1325,7 +1325,6 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                 _ => json_rep(404, json!({ "erreur": "inconnu" })),
             }
         };
-        let _ = req.respond(rep);
         // Console lancée sans enveloppe : le mot de passe vient d'être vérifié, on en dérive l'enveloppe
         // des clés d'agent et on chiffre celles qui étaient encore en clair. Il n'est pas gardé.
         if let Some(mdp) = garde.mdp_verifie.take() {
@@ -1337,6 +1336,7 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                 }
             }
         }
+        let _ = req.respond(rep);
     }
 }
 
@@ -1607,6 +1607,10 @@ mod tests {
         assert_eq!(connexion::verifier(&dossier).unwrap(), vec![("OpenAI".to_string(), true)]);
         // 4. confirmation : la console efface sa copie de la clé et ne peut plus préparer de kit
         assert!(std::path::Path::new(&a.cle).exists(), "la console garde la clé tant que la remise n'est pas confirmée");
+        // console lancée avec une clé déjà déverrouillée (pas d'enveloppe au départ) : le premier mot de
+        // passe vérifié a servi à chiffrer la clé de l'agent, qui était en clair sur le disque
+        let garde_par_la_console = std::fs::read_to_string(&a.cle).unwrap();
+        assert!(garde_par_la_console.contains("argon2id") && !garde_par_la_console.contains(cle_agent.trim()), "clé de l'agent restée en clair côté console");
         let (statut, r) = poster(&base, "/api/connecter/confirmer", json!({ "agent": a.id, "confirmation": "CONNECTER" }));
         assert_eq!(statut, 200, "{r}");
         reponses += &r.to_string();
