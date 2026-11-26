@@ -70,6 +70,12 @@ jobs:
             chmod +x "$d/plafond" "$d/demo" "$d/${{ matrix.exe }}"
             tar czf "$d.tar.gz" "$d"
           fi
+      - name: Aucune clé ni aucun compte dans le paquet
+        run: |
+          d="plafond-${VERSION}-${{ matrix.nom }}"
+          if find "$d" \( -name compte -o -name demo-jetable -o -name '*.key' -o -name 'essai.json' -o -name 'proprietaire*.json' -o -name 'cles-test.json' \) | grep .; then
+            echo "paquet refusé : il contient un compte ou des clés"; exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: paquet-${{ matrix.nom }}
@@ -108,6 +114,8 @@ jobs:
 
           Download the file for your system, unpack it, then run \`plafond\` (Linux/macOS) or \`Plafond.bat\` (Windows).
           No Rust, no build step. Instructions inside: \`LISEZ-MOI.txt\`.
+
+          $(cat dist/nouveautes.md 2>/dev/null)
 
           | File |
           |---|

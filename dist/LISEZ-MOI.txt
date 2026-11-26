@@ -13,6 +13,10 @@ macOS   : ./plafond    ou    ./demo
 
 La console s'ouvre dans votre navigateur (http://127.0.0.1:8404). Laissez la fenêtre du terminal ouverte.
 Votre compte reste dans le dossier « compte », à côté de ce fichier : ni e-mail, ni serveur.
+Premier lancement de Plafond.bat : MODE ESSAI, sans mot de passe. Deux adresses s'affichent tout de suite :
+  votre trésorerie (à approvisionner) et une adresse de retour de test (où va l'argent quand vous gelez un agent).
+  Pour le parcours complet (mot de passe, 24 mots) : Paramètres > Sécurité > « Protéger ce compte ».
+  Ne partagez jamais votre dossier « compte » : il contient vos clés.
 Deux comptes, deux adresses : c'est normal.
   - Plafond.bat ouvre VOTRE compte (dossier « compte »). Son adresse s'affiche en haut de la console.
   - Demo.bat utilise un compte de démonstration séparé (dossier « demo-jetable »), avec sa propre adresse,
@@ -34,6 +38,10 @@ macOS:   ./plafond    or    ./demo
 
 The console opens in your browser (http://127.0.0.1:8404). Keep the terminal window open.
 Your account stays in the "compte" folder next to this file: no email, no server.
+First launch of Plafond.bat: TRIAL MODE, no password. Two addresses show right away:
+  your treasury (to fund) and a test return address (where money goes when you freeze an agent).
+  For the full flow (password, 24 words): Settings > Security > "Protect this account".
+  Never share your "compte" folder: it holds your keys.
 Two accounts, two addresses: that is expected.
   - Plafond.bat opens YOUR account ("compte" folder). Its address is shown at the top of the console.
   - Demo.bat uses a separate demo account ("demo-jetable" folder) with its own address, shown when funds are missing.
