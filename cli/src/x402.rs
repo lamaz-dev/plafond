@@ -391,12 +391,15 @@ fn lire_borne(r: ureq::Response) -> Res<String> {
 }
 
 fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode: Mode, max: Option<i64>) -> Res<Achat> {
-    println!("\n[AGENT] GET {url}");
+    println!("\n[AGENT] GET {}", crate::routeur::url_journal(url));
     let http = client_http();
     let challenge = match http.get(url).call() {
         Err(ureq::Error::Status(402, r)) => r.header("PAYMENT-REQUIRED").ok_or("402 sans PAYMENT-REQUIRED")?.to_string(),
         Ok(r) => return Ok(Achat { statut: r.status(), contenu: lire_borne(r)?, montant: 0, txid: None, refus: None }),
-        Err(e) => return Err(format!("requête : {e}").into()),
+        // R68 : le message d'erreur du client HTTP cite l'URL complète, paramètres compris (ils peuvent
+        // porter un secret) ; on n'en garde que la nature de l'échec.
+        Err(ureq::Error::Status(code, _)) => return Err(format!("requête : le vendeur a répondu {code}").into()),
+        Err(ureq::Error::Transport(t)) => return Err(format!("requête : {}", t.kind()).into()),
     };
     let pr: Value = serde_json::from_slice(&B64.decode(challenge)?)?;
     let req = pr["accepts"].as_array().and_then(|a| a.iter().find(|r| r["extra"]["binding"] == BINDING)).ok_or("aucune offre covenant-budget")?.clone();

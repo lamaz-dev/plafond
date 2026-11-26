@@ -235,7 +235,7 @@ impl Idempotence {
 }
 
 /// URL sans paramètres ni fragment pour le journal (ils peuvent contenir des secrets).
-fn url_journal(u: &str) -> String {
+pub(crate) fn url_journal(u: &str) -> String {
     u.split(['?', '#']).next().unwrap_or("").to_string()
 }
 
@@ -364,7 +364,7 @@ fn traiter_fetch(handle: &Handle, cfg: &Config, pol: &Politique, debit: &mut Deb
         return (429, json!({ "erreur": "trop de requêtes payantes par minute" }));
     }
     let max = v["max_sompi"].as_i64().map(|m| m.min(pol.max_requete)).unwrap_or(pol.max_requete);
-    println!("[ROUTEUR] l'agent demande {url}");
+    println!("[ROUTEUR] l'agent demande {}", url_journal(&url));
     match x402::acheter(handle, &cfg.owner_pk, &cfg.agent, &url, Some(max)) {
         Ok(a) => {
             let paiement = a.txid.as_ref().map(|t| json!({ "montant_sompi": a.montant, "transaction": t, "explorateur": explorer(t) }));
@@ -543,6 +543,56 @@ mod tests {
         assert!(matches!(r, Err(ureq::Error::Status(401, _))));
         serveur.unblock();
         boucle.join().unwrap();
+    }
+
+    /// R68 : les paramètres d'URL peuvent porter un secret (clé d'API du service acheté). Ils ne
+    /// doivent apparaître ni dans le journal du routeur, ni dans l'erreur renvoyée, même quand la
+    /// requête échoue (le message d'erreur du client HTTP cite l'URL complète).
+    #[test]
+    fn r68_parametres_d_url_jamais_dans_le_journal() {
+        use std::sync::Arc;
+        // vendeur local qui répond 500
+        let vendeur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port_vendeur = vendeur.server_addr().to_ip().unwrap().port();
+        let v2 = vendeur.clone();
+        let fil_vendeur = std::thread::spawn(move || {
+            for req in v2.incoming_requests() {
+                let _ = req.respond(tiny_http::Response::from_string("panne").with_status_code(500));
+            }
+        });
+        let journal = std::env::temp_dir().join(format!("routeur-r68-{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&journal);
+        let j2 = journal.to_string_lossy().into_owned();
+        let serveur = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let port = serveur.server_addr().to_ip().unwrap().port();
+        let s2 = serveur.clone();
+        let boucle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let cfg = Config { owner_pk: vec![1; 32], agent: Keypair::from_seckey_slice(secp256k1::SECP256K1, &[3; 32]).unwrap(), demo: None };
+            let pol = Politique { origines: vec![], max_requete: 1_000, demo: true };
+            let mut debit = Debit::new(30);
+            let mut idem = Idempotence::new();
+            servir(&s2, "Bearer cle-de-test-suffisamment-longue-0123456789", &mut idem, |_, _, req| traiter_fetch(rt.handle(), &cfg, &pol, &mut debit, req, &j2));
+        });
+        let secret = "CLE-SECRETE-DE-TEST-123";
+        let r = ureq::post(&format!("http://127.0.0.1:{port}/v1/fetch"))
+            .set("Authorization", "Bearer cle-de-test-suffisamment-longue-0123456789")
+            .send_string(&json!({ "url": format!("http://127.0.0.1:{port_vendeur}/donnees?api_key={secret}#f") }).to_string());
+        let corps = match r {
+            Err(ureq::Error::Status(502, r)) => r.into_string().unwrap(),
+            autre => panic!("502 attendu : {autre:?}"),
+        };
+        serveur.unblock();
+        vendeur.unblock();
+        boucle.join().unwrap();
+        fil_vendeur.join().unwrap();
+        let ecrit = std::fs::read_to_string(&journal).unwrap();
+        let _ = std::fs::remove_file(&journal);
+        assert!(ecrit.contains("/donnees"), "l'URL sans paramètres reste journalisée : {ecrit}");
+        assert!(!ecrit.contains(secret), "secret d'URL dans le journal du routeur : {ecrit}");
+        assert!(!corps.contains(secret), "secret d'URL dans l'erreur renvoyée : {corps}");
+        // ce que le routeur écrit sur sa sortie (reprise par les journaux système) suit la même règle
+        assert_eq!(url_journal(&format!("https://api.exemple.org/v1?cle={secret}")), "https://api.exemple.org/v1");
     }
 
     #[test]
