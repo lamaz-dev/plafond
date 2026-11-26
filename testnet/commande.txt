@@ -1,9 +1,13 @@
-# Race tests on testnet (audit plan, step 3), 26 Nov 2026
-# Two transactions spend the same vault coin at the same time; the network keeps one.
-deployer                       # v0.7 vault, return address = treasury
+# Race tests on testnet, second batch (26 Nov 2026): repeat to see both winners
+deployer
 pause 15
-course-recharge                # agent payment vs owner refill of the same coin
+course-recharge
+course-recharge
+course-recharge
+course-gel
+etat                           # vault empty, no false loss
+deployer
 pause 15
+course-gel
+course-gel                     # vault already empty: must say so, not fail the check
 etat
-course-gel                     # agent payment vs owner freeze of the same coin, then freeze to the end
-etat                           # vault empty
