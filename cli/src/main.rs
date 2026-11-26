@@ -54,6 +54,7 @@ mod retrouver;
 mod ardoise;
 mod coeur;
 mod coffre;
+mod course;
 mod risque;
 mod sobriete;
 
@@ -1503,6 +1504,13 @@ async fn main() -> Res<()> {
             let attaquant = keypair_from_env("ATTAQUANT_SK")?;
             if !attaques::batterie(&xonly(&owner), &agent, &attaquant, quoi).await? {
                 return Err("au moins une attaque n'a pas eu le résultat attendu".into());
+            }
+        }
+        "course-gel" | "course-recharge" => {
+            // Testnet uniquement : deux transactions sur la même pièce, en même temps (course.rs).
+            let ok = if cmd == "course-gel" { course::gel(&owner, &agent).await? } else { course::recharge(&owner, &agent).await? };
+            if !ok {
+                return Err("la course n'a pas eu le résultat attendu".into());
             }
         }
         "tableau" => {

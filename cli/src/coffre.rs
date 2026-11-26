@@ -13,7 +13,7 @@ pub const VERSION: &str = "coeur-v0.7";
 pub const VERSION_V06: &str = "coeur-v0.6";
 /// Marge (unités DAA, ≈ 2 s) entre l'âge lu et l'âge exigé : le bloc qui accepte le paiement est
 /// toujours un peu plus tard que la lecture.
-const MARGE: u64 = 20;
+pub const MARGE: u64 = 20;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Apport {
@@ -150,7 +150,7 @@ pub fn empreinte_retour(adr: &Address) -> Vec<u8> {
     crate::sequestre::spk_hash(&pay_to_address_script(adr)).to_vec()
 }
 
-fn enregistrer(e: &EtatCoeur) -> Res<()> {
+pub fn enregistrer(e: &EtatCoeur) -> Res<()> {
     let p = state_path();
     if let Some(dir) = std::path::Path::new(&p).parent() {
         fs::create_dir_all(dir)?;
@@ -204,7 +204,7 @@ pub async fn pieces(c: &KaspaRpcClient, art: &SilAbiArtifact) -> Res<Vec<Piece>>
 }
 
 /// Pièces du propriétaire choisies pour couvrir `montant` + frais.
-async fn financer(c: &KaspaRpcClient, owner: &Keypair, montant: u64) -> Res<(Vec<UtxoEntry>, Vec<TransactionInput>, u64)> {
+pub async fn financer(c: &KaspaRpcClient, owner: &Keypair, montant: u64) -> Res<(Vec<UtxoEntry>, Vec<TransactionInput>, u64)> {
     let utxos = c.get_utxos_by_addresses(vec![address(owner)]).await?;
     let (mut entries, mut inputs, mut total) = (vec![], vec![], 0u64);
     for u in utxos.into_iter().filter(|u| u.utxo_entry.block_daa_score != u64::MAX).take(20) {
