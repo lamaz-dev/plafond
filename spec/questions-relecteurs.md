@@ -26,3 +26,19 @@ Notées au fil du travail, à envoyer quand la relecture externe commencera.
    est-il la seule valeur possible hors confirmation ? (b) le gain de masse justifie-t-il un
    changement de contrat (le paiement minimal ≈ 0,02 KAS dépend surtout de la valeur des sorties,
    KIP-9, pas de la taille du script) ? Aucun changement de contrat n'est prévu sans mesure ni avis.
+
+## Relecture du cœur v0.9.1 (lignée KIP-20, retrait partiel)
+
+Notées le 27 nov. 2026 (`spec/red-team/retrait-2026-11-27.md`).
+
+4. **Pièce marquée d'une lignée neuve (W10).** Une entrée peut ouvrir une lignée neuve (genèse) sur
+   une sortie payée à une adresse ordinaire, et `OpAuthOutputCount` ne compte pas les genèses. La
+   sortie d'un gel ou d'un retrait peut donc arriver à l'adresse de retour avec un identifiant de
+   covenant. Un portefeuille courant (Kaspium, Ledger) ou une plateforme d'échange affiche-t-il et
+   dépense-t-il une telle pièce comme une autre ? Faut-il l'interdire dans le script
+   (`OpOutputCovenantId(i)` égal à l'identifiant nul) ?
+5. **Frais du retrait partiel au rythme du contrat.** L'entrée `ownerWithdraw` applique aux frais la
+   règle de `pay` (`f ≤ C`, âge `≥ ⌈f·R/C⌉`) pour qu'une clé de propriétaire volée ne puisse pas
+   brûler le coffre en frais. Voyez-vous une forme plus simple qui donne la même garantie ?
+6. **Dépense sans signature portant une lignée.** `absorb` et `recharger` ne sont pas signés. Les
+   nœuds relaient-ils ces transactions comme les autres (pas de règle de relais particulière) ?

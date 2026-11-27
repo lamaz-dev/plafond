@@ -1,6 +1,8 @@
 //! Cœur v0.7 : budget d'agent sans mémoire (contracts/archive/coeur-v0.7.sil), avec adresse de retour.
-//! Le cœur v0.9 (contracts/coeur.sil, rechargement sans clé et lignée KIP-20) est compilé par
-//! `Coeur::artifact_v09` et utilisé par src/lignee.rs ; l'outil ne le déploie pas encore.
+//! Le cœur v0.9.1 (contracts/coeur.sil : rechargement sans clé, lignée KIP-20, retrait partiel) est
+//! compilé par `Coeur::artifact_v091` et utilisé par src/lignee.rs.
+//! Le cœur v0.9 (contracts/archive/coeur-v0.9.sil, sans retrait partiel) reste compilé par
+//! `Coeur::artifact_v09` pour la comparaison « avant, après » ; il n'a jamais été déployé.
 //! Le cœur v0.8 (contracts/archive/coeur-v0.8.sil, rechargement sans clé, sans lignée) reste
 //! compilé par `Coeur::artifact_v08` pour son banc d'essai (src/sas.rs) ; il n'a jamais été déployé.
 //! Les coffres v0.6 (contracts/archive/coeur-v0.6.sil, sans adresse de retour) restent gérés :
@@ -21,10 +23,12 @@ use crate::{Res, bytecode, sign, vault_sigscript, vault_spk};
 
 /// Cœur v0.7 : celui que l'outil déploie aujourd'hui (coffres existants et nouveaux).
 pub const SOURCE: &str = include_str!("../../contracts/archive/coeur-v0.7.sil");
-/// Cœur v0.9 (contracts/coeur.sil) : v0.8 plus la lignée KIP-20 (le nombre de pièces du coffre ne
-/// peut plus augmenter). Utilisé par src/lignee.rs. Pas encore déployé par l'outil : à essayer
-/// d'abord sur le testnet.
-pub const SOURCE_V09: &str = include_str!("../../contracts/coeur.sil");
+/// Cœur v0.9.1 (contracts/coeur.sil) : v0.9 plus l'entrée `ownerWithdraw` (retrait partiel par le
+/// propriétaire, frais au rythme du contrat). Utilisé par src/lignee.rs.
+pub const SOURCE_V091: &str = include_str!("../../contracts/coeur.sil");
+/// Cœur v0.9, archivé à l'identique : v0.8 plus la lignée KIP-20 (le nombre de pièces du coffre ne
+/// peut plus augmenter), sans retrait partiel. Jamais déployé.
+pub const SOURCE_V09: &str = include_str!("../../contracts/archive/coeur-v0.9.sil");
 /// Cœur v0.8, archivé à l'identique : v0.7 plus l'entrée `absorb`, sans lignée (limite S3). Jamais
 /// déployé ; gardé avec son banc d'essai (src/sas.rs).
 pub const SOURCE_V08: &str = include_str!("../../contracts/archive/coeur-v0.8.sil");
@@ -140,6 +144,16 @@ impl Coeur {
         let args: Vec<ArtifactValue> =
             vec![self.owner.clone().into(), self.agent.clone().into(), self.capacite.into(), self.periode.into(), retour.into()];
         Ok(compile_to_sil_abi_artifact_with_options(SOURCE_V09, &args, CompileOptions::default())?)
+    }
+
+    /// Le même coffre en cœur v0.9.1 (v0.9 plus le retrait partiel) : autre script, donc autre
+    /// adresse. Mêmes cinq paramètres.
+    pub fn artifact_v091(&self) -> Res<SilAbiArtifact> {
+        self.verifier()?;
+        let retour = self.retour.clone().ok_or("le cœur v0.9.1 exige une adresse de retour")?;
+        let args: Vec<ArtifactValue> =
+            vec![self.owner.clone().into(), self.agent.clone().into(), self.capacite.into(), self.periode.into(), retour.into()];
+        Ok(compile_to_sil_abi_artifact_with_options(SOURCE_V091, &args, CompileOptions::default())?)
     }
 
     /// Âge exigé (unités DAA) pour dépenser `spent`, paiement et frais compris.

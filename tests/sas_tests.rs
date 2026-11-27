@@ -1,4 +1,4 @@
-//! Sas de rechargement v0.2 (contracts/sas.sil) avec le cœur v0.9 (contracts/coeur.sil) : comportement
+//! Sas de rechargement v0.2 (contracts/sas.sil) avec le cœur v0.9.1 (contracts/coeur.sil) : comportement
 //! des deux contrats ensemble contre le vrai moteur de script, compilateur figé. Chaque entrée de la
 //! transaction est exécutée. Banc complet (attaques nommées, sabotages, fuzzing) : cli/src/lignee.rs.
 //! Les pièces du coffre portent la lignée `LIGNEE` ; le sas est lié à cette lignée.

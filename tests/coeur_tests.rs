@@ -1,7 +1,8 @@
-//! Cœur v0.9 (budget sans mémoire, adresse de retour, rechargement sans clé, lignée KIP-20) :
-//! comportement du contrat contre le vrai moteur de script. Les règles de `pay` et `ownerControl`
-//! sont celles de la v0.7, celles de `absorb` celles de la v0.8 ; s'y ajoute la règle de lignée :
-//! une pièce de la lignée a au plus une héritière, sa propre sortie.
+//! Cœur v0.9.1 (budget sans mémoire, adresse de retour, rechargement sans clé, lignée KIP-20,
+//! retrait partiel) : comportement du contrat contre le vrai moteur de script. Les règles de `pay`
+//! et `ownerControl` sont celles de la v0.7, celles de `absorb` celles de la v0.8 ; la v0.9 a ajouté
+//! la règle de lignée (une pièce de la lignée a au plus une héritière, sa propre sortie) ; la v0.9.1
+//! ajoute l'entrée `ownerWithdraw` (retrait partiel, frais au rythme du contrat).
 //! Dans ces essais, les pièces du coffre portent la lignée `LIGNEE` et, sauf mention contraire, toute
 //! sortie à l'adresse du coffre est déclarée dans cette lignée (voir `sorties`).
 //! Le verrou relatif est donné par `sequence` : le script exige `sequence ≥ délai` (OpCheckSequenceVerify),
@@ -305,10 +306,58 @@ fn lignee_une_seule_heritiere() {
     assert!(!absorb_brut(&a, &[(V, None)], vec![liee(V + c, m.clone(), 0)], 0), "pièce sans lignée déclarée dans la lignée : refusé par le réseau");
 }
 
+/// v0.9.1 : retrait partiel. Le propriétaire reprend une partie d'une pièce vers l'adresse de
+/// retour (sortie 0) ; le reste revient au coffre, seule héritière (sortie 1). Une entrée, deux
+/// sorties. Les frais suivent la règle de `pay` : au plus la capacité, et au rythme du contrat.
+#[test]
+fn retrait_partiel() {
+    let a = art();
+    let (m, c, x) = (moi(&a), C as u64, Some(LIGNEE));
+    let w = attente(FEE);
+    let retrait = |outs: Vec<(u64, ScriptPublicKey)>, seq: u64| run(&a, 1, "ownerWithdraw", outs, seq);
+    assert!(retrait(vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], w), "retrait partiel à l'heure : accepté");
+    assert!(retrait(vec![(V - FEE - 1_000, retour()), (1_000, m.clone())], w), "presque tout repris : accepté");
+    assert!(retrait(vec![(V / 2, retour()), (V / 2, m.clone())], 0), "sans frais, sans attente : accepté");
+    assert!(retrait(vec![(V / 2, retour()), (V / 2 - c, m.clone())], R as u64), "frais à la capacité exacte après une période : accepté");
+    // Frais : capacité et rythme.
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], w - 1), "frais un cran trop tôt : refusé");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], 0), "frais sans attente : refusé");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], (1u64 << 63) | w), "verrou désactivé : refusé");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], 1u64 << 32), "sequence 2^32 (vue comme 0 par le réseau) : refusée");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - c - 1, m.clone())], R as u64 * 10), "frais au-delà de la capacité : refusé, quelle que soit l'attente");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - c, m.clone())], R as u64 - 1), "frais à la capacité un cran avant la période : refusé");
+    // Destination et signataire.
+    assert!(!retrait(vec![(V / 2, vendeur()), (V / 2 - FEE, m.clone())], w), "vers un tiers : refusé");
+    assert!(!retrait(vec![(V / 2, p2pk(&kp(1))), (V / 2 - FEE, m.clone())], w), "vers l'adresse ordinaire du propriétaire : refusé");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - FEE, vendeur())], w), "le reste vers un tiers : refusé");
+    assert!(!run(&a, 2, "ownerWithdraw", vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], R as u64), "signé par l'agent : refusé");
+    assert!(!run(&a, 9, "ownerWithdraw", vec![(V / 2, retour()), (V / 2 - FEE, m.clone())], R as u64), "signé par un tiers : refusé");
+    // Forme : une entrée, deux sorties, dans cet ordre.
+    assert!(!retrait(vec![(V / 2 - FEE, m.clone()), (V / 2, retour())], w), "sorties inversées : refusé");
+    assert!(!retrait(vec![(V - FEE, retour())], w), "sans reste : refusé (c'est un gel, par ownerControl)");
+    assert!(!retrait(vec![(V / 2, retour()), (V / 2 - FEE - 1_000, m.clone()), (1_000, vendeur())], R as u64), "troisième sortie : refusé");
+    assert!(!run_n(&a, 1, "ownerWithdraw", &[V, V], vec![(V, retour()), (V - FEE, m.clone())], R as u64), "deux pièces fusionnées : refusé");
+    // Lignée : le reste est la seule héritière ; rien d'autre n'entre dans la lignée.
+    let brut = |entree: Option<Hash>, outs: Vec<TransactionOutput>| run_brut(&a, 1, "ownerWithdraw", &[(V, entree)], outs, R as u64);
+    assert!(brut(x, vec![libre(V / 2, retour()), liee(V / 2 - FEE, m.clone(), 0)]), "témoin : forme légitime");
+    assert!(!brut(x, vec![liee(V / 2, retour(), 0), liee(V / 2 - FEE, m.clone(), 0)]), "retrait rattaché à la lignée (pièce de plus) : refusé");
+    assert!(!brut(x, vec![liee(V / 2, retour(), 0), libre(V / 2 - FEE, m.clone())]), "lignée déplacée à l'adresse de retour : refusé");
+    assert!(!brut(x, vec![libre(V / 2, retour()), libre(V / 2 - FEE, m.clone())]), "le reste sort de la lignée : refusé");
+    assert!(!brut(None, vec![libre(V / 2, retour()), libre(V / 2 - FEE, m.clone())]), "pièce hors lignée : pas de retrait partiel");
+    assert!(!brut(None, vec![libre(V / 2, retour()), liee(V / 2 - FEE, m.clone(), 0)]), "pièce hors lignée déclarée dans la lignée : refusé par le réseau");
+    // Réglages aberrants : jamais de frais pris sur la pièce.
+    for (cap, per) in [(0, R), (-C, R), (C, 0), (C, -R), (C, 1i64 << 32)] {
+        let a = art_avec(cap, per);
+        assert!(!run(&a, 1, "ownerWithdraw", vec![(V / 2, retour()), (V / 2 - FEE, moi(&a))], u32::MAX as u64), "capacité {cap}, période {per} : retrait avec frais refusé");
+    }
+}
+
 #[test]
 fn taille_du_coeur() {
     let a = art();
     let n = bytecode(&a).len();
-    eprintln!("Cœur v0.9 : {n} octets ; attente pour 0,5 KAS = {} DAA", attente(50_000_000 + FEE));
-    assert!(n < 400, "le cœur doit rester minimal ({n} octets)");
+    eprintln!("Cœur v0.9.1 : {n} octets ; attente pour 0,5 KAS = {} DAA", attente(50_000_000 + FEE));
+    // v0.9 : 376 octets. L'entrée `ownerWithdraw` en ajoute 201 (la clé du propriétaire et
+    // l'empreinte de l'adresse de retour y sont répétées : 66 octets à elles deux).
+    assert!(n < 600, "le cœur doit rester minimal ({n} octets)");
 }

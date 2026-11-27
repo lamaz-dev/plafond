@@ -29,13 +29,17 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
    - anchor the head of the audit chain on Kaspa at regular intervals, so the log is tamper-evident
      without trusting any third party;
    - per-agent spending reports for finance teams, and an export for SIEM tools.
-2. **Keyless refill airlock with a vault lineage** (core v0.9 + airlock v0.2, proven and tested offline against the real
-   script engine, see the [proof](spec/borne-de-perte-v0.9.md) and the [red-team note](spec/red-team/lignee-2026-11-27.md)).
+2. **Keyless refill airlock with a vault lineage** (core v0.9.1 + airlock v0.2, proven and tested offline against the real
+   script engine, see the [proof](spec/borne-de-perte-v0.9.md) and the red-team notes on the
+   [lineage](spec/red-team/lignee-2026-11-27.md) and the [partial withdrawal](spec/red-team/retrait-2026-11-27.md)).
    The open limit S3 of core v0.8 was settled in favour of a KIP-20 lineage: the number of vault coins is fixed at
-   creation, so the cap holds for the whole vault without any monitoring. Next: a testnet-10 trial (sequence in the
-   red-team note, including a real dust-coin attack), a decision on what freezing means for the deposit address (L2),
-   then wiring into the tool (creation by genesis, lineage filter everywhere, automatic top-up, freeze that also returns
-   pending deposits, deposit address the payer can verify). The tool keeps deploying core v0.7 until then.
+   creation, so the cap holds for the whole vault without any monitoring. Core v0.9.1 adds one entry, a partial
+   withdrawal by the owner (to the return address only, fees rate-limited like an agent payment). Decided: freezing
+   closes the vault for good (the lineage ends); one coin by default, more on request (the cap is multiplied by the
+   number of coins). Next: a testnet-10 trial (sequence in the red-team notes, including a real dust-coin attack and a
+   partial withdrawal), the airlock fee cap set from measured fees, then wiring into the tool (creation by genesis,
+   lineage filter everywhere, automatic top-up, add / take back / close, close that also returns pending deposits,
+   deposit address the payer can verify). The tool keeps deploying core v0.7 until then.
 3. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
 4. **Faster console refresh** (it currently re-reads the chain for each older agent).
 5. **Human security audit** of the contracts before any mainnet use.

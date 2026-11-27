@@ -1,6 +1,16 @@
 pragma silverscript ^0.1.0;
 
-// Cœur v0.9 — budget d'agent SANS MÉMOIRE, avec adresse de retour, rechargement sans clé et LIGNÉE.
+// Cœur v0.9.1 — budget d'agent SANS MÉMOIRE, avec adresse de retour, rechargement sans clé, LIGNÉE
+// et retrait partiel.
+//
+// v0.9.1 (27 nov. 2026) : UNE entrée de plus, `ownerWithdraw`. Le propriétaire reprend une partie
+// d'une pièce sans fermer le coffre : la pièce reste dans la lignée, plus petite, et la différence
+// ne peut aller QU'À l'adresse de retour. Les entrées `pay`, `ownerControl` et `absorb` sont celles
+// de la v0.9, à l'identique (contracts/archive/coeur-v0.9.sil). Forme imposée, la même que `pay` :
+// une entrée, deux sorties ; donc ni fusion de pièces, ni pièce ajoutée à la lignée, ni sortie
+// partagée avec une autre entrée. Les frais sont pris sur la pièce et comptés AU RYTHME du contrat,
+// comme une dépense de l'agent : une clé de propriétaire volée ne peut pas vider le coffre en frais
+// à coups de petits retraits (spec/borne-de-perte-v0.9.md, §9 ; spec/red-team/retrait-2026-11-27.md).
 //
 // v0.9 (27 nov. 2026) : le coffre est une LIGNÉE de pièces (identifiant de covenant, KIP-20), suivie
 // par le réseau. Une seule règle de plus, répétée dans chaque entrée :
@@ -14,8 +24,8 @@ pragma silverscript ^0.1.0;
 //     verser. Le propriétaire peut seulement la renvoyer à l'adresse de retour.
 // Le script reste sans état : il ne contient pas l'identifiant de la lignée, il lit celui de la pièce
 // qu'il dépense. Les règles de v0.7 (pay, ownerControl) et de v0.8 (absorb) sont inchangées.
-// Versions précédentes, à l'identique : contracts/archive/coeur-v0.8.sil, coeur-v0.7.sil (coffres
-// déployés par l'outil), coeur-v0.6.sil.
+// Versions précédentes, à l'identique : contracts/archive/coeur-v0.9.sil, coeur-v0.8.sil,
+// coeur-v0.7.sil (coffres déployés par l'outil), coeur-v0.6.sil.
 //
 // v0.8 (27 nov. 2026) : entrée `absorb`, sans signature. N'importe qui peut REGONFLER une pièce du
 // coffre : elle revient à la même adresse, grossie d'au moins `capacity`. Rien ne sort, aucune pièce
@@ -35,7 +45,8 @@ pragma silverscript ^0.1.0;
 //
 // Borne prouvée (spec/borne-de-perte-v0.9.md) : sur toute fenêtre de D unités DAA, un coffre créé
 // avec k pièces perd au plus k × (capacity + capacity × D / period), quels que soient les dépôts,
-// les rechargements et les pièces envoyées par des tiers.
+// les rechargements, les retraits partiels et les pièces envoyées par des tiers. « Perd » compte
+// les paiements de l'agent, leurs frais ET les frais des retraits partiels.
 //
 // Ce que le script ne vérifie pas parce que le réseau le garantit déjà : les sorties ne dépassent
 // jamais les entrées (donc 0 ≤ paiement ≤ spent), la pièce a vraiment l'âge annoncé, et une sortie
@@ -46,6 +57,8 @@ pragma silverscript ^0.1.0;
 //  - ownerControl : le propriétaire gèle, retire ou recharge ; la pièce ne va qu'au coffre (dans la
 //                   lignée) ou à l'adresse de retour (hors lignée, au plus `capacity` de frais).
 //  - absorb       : sans clé ; la pièce revient au coffre, dans la lignée, grossie d'au moins `capacity`.
+//  - ownerWithdraw : le propriétaire reprend une partie de la pièce vers l'adresse de retour ; le
+//                   reste revient au coffre, dans la lignée ; frais au rythme du contrat (v0.9.1).
 
 contract Coeur(
     pubkey ownerKey, // propriétaire : contrôle total
@@ -128,5 +141,38 @@ contract Coeur(
         require(tx.outputs[i].value >= tx.inputs[i].value + capacity);
         // Lignée (v0.9) : une seule héritière, cette sortie. Une pièce hors lignée ne se regonfle pas.
         require(OpAuthOutputCount(i) == 1 && OpAuthOutputIdx(i, 0) == i);
+    }
+
+    // Retrait partiel (v0.9.1). Même forme que `pay`, avec deux différences : c'est le propriétaire
+    // qui signe, et la sortie 0 est OBLIGATOIREMENT l'adresse de retour. Le montant repris est
+    // libre (c'est l'argent du propriétaire, il va chez lui) ; seuls les frais sont une perte.
+    //   sortie 0 : l'adresse de retour, hors lignée ;
+    //   sortie 1 : le reste, à la même adresse, seule héritière de la pièce.
+    // Une entrée, deux sorties : pas de fusion de deux pièces, pas de dépôt du sas ni d'autre pièce
+    // dans la même transaction, aucune sortie vers un tiers, aucune sortie comptée deux fois.
+    // Une pièce hors lignée n'a pas d'héritière possible : elle ne se retire qu'en entier
+    // (`ownerControl`).
+    // Les frais (ce qui ne va ni au coffre ni à l'adresse de retour) obéissent à la règle de `pay` :
+    // au plus `capacity`, et la pièce doit avoir attendu ceil(frais × period / capacity). Sans cela,
+    // une clé de propriétaire volée brûlerait le coffre en frais, retrait après retrait. La pièce qui
+    // reste repart d'un âge nul : un retrait ne donne aucune avance à l'agent.
+    entry ownerWithdraw(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+
+        // Mêmes gardes que `pay` : le délai reste < 2^32 et son calcul ne déborde pas.
+        require(period < 4294967296 && capacity <= 9223372036854775807 / period);
+
+        require(tx.inputs.length == 1 && tx.outputs.length == 2);
+
+        int j = this.activeInputIndex;
+        require(blake2b(tx.outputs[0].scriptPubKey) == retourSpkHash); // le retrait : adresse de retour
+        require(tx.outputs[1].scriptPubKey == tx.inputs[j].scriptPubKey); // le reste revient au coffre
+
+        // Lignée : une seule héritière, la sortie 1 (le reste). La sortie 0 quitte la lignée.
+        require(OpAuthOutputCount(j) == 1 && OpAuthOutputIdx(j, 0) == 1);
+
+        int frais = tx.inputs[j].value - tx.outputs[0].value - tx.outputs[1].value;
+        require(frais <= capacity);
+        require(this.ageDaa >= (frais * period + capacity - 1) / capacity);
     }
 }

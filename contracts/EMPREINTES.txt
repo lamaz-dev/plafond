@@ -3,8 +3,9 @@ compilateur silverscript : 7eb04634bfbae5350c1808efc7e34c4efa7f93af
 source agent_budget.sil : 849ca5814d6fd359c806e522fa06479ac2ee43298f1a66e97a7e9b30ec0f8223
 source delivery_escrow.sil : 5efed001d10a4591525b09c1a0753abe913a680f98ea98600ee2c447a464a1c9
 source ardoise.sil : 28c2fd0cf518971ce5863da17abaa4e999a2ac68ea137d2039a6a9adbc544126
-source coeur.sil (v0.9, rechargement sans clé et lignée KIP-20) : 82b97c1d731795c2d40af49fa7a4cddd187affaac07f187cd08725751b06905a
+source coeur.sil (v0.9.1, rechargement sans clé, lignée KIP-20 et retrait partiel) : 7f41a36d65a3cd3ecc929f76afe655896ff5ac8e2f5d418f02ec091149f2e9a6
 source sas.sil (v0.2, sas de rechargement lié à la lignée) : 0679fd33a12a710e328752a456fa4e7eeb61d716139b3807b86de01fdc0426ed
+source archive/coeur-v0.9.sil (lignée KIP-20, sans retrait partiel ; jamais déployé) : 82b97c1d731795c2d40af49fa7a4cddd187affaac07f187cd08725751b06905a
 source archive/coeur-v0.8.sil (rechargement sans clé, sans lignée ; jamais déployé) : 02c204bd016063b73da9d3b720cd168b35a95c9486913151422c7afa0e7434c5
 source archive/sas-v0.1.sil (sas du cœur v0.8 ; jamais déployé) : 0ce27f68a43a5c1928f204dadf8c6fc93aa7ff225ce0f2fd0ab20ff4e8c83520
 source archive/coeur-v0.7.sil (coffres déployés par l'outil) : 817f910f77087108678e9541892bc208c5790927356a733a028ee94e50b7f894
@@ -15,10 +16,12 @@ DeliveryEscrow (paramètres de référence) : 263 octets, bytecode ff913ff347b26
   adresse P2SH testnet : kaspatest:prlez0lng7exxy264j9vzwxjy6rdhh382vrc8f3wm7jscnssjrcz60s87m0vs
 Ardoise (paramètres de référence) : 356 octets, bytecode 9776db472f44bcfae891944bcf7892f66c65e0b59f4fb2f490442d04792e96e7
   adresse P2SH testnet : kaspatest:pzthdk689azte7hgjx2yhnmcjtmxce0qkk05lvh5jpzz6pre96tww49xppcf0
+Coeur v0.9.1 (paramètres de référence) : 577 octets, bytecode 1f0ef2637f0e94eed6ee1bd79417a49d87526bacd1ed8709764558ea7aee0062
+  adresse P2SH testnet : kaspatest:pq0saunr0u8ffmkkacda09qh5jwcw5nt4ng7mpcfwez436n6acqxy3k35jhm5
+Sas v0.2 (coffre v0.9.1 de référence, lignée du vecteur KIP-20) : 227 octets, bytecode 0b7451baec2e9dffeaca3624a1bb1b10c05bfe40942b92575c7a31317df5d95c
+  adresse P2SH testnet : kaspatest:pq9hg5d6ashfmll2egmzfgdmrvgvqkl7gz2zhyjht3arzvta7hv4czng4gtmw
 Coeur v0.9 (paramètres de référence) : 376 octets, bytecode 38a3fea6d065c665ca4202f345ba4ebcd0423ef5d7b679dfec32ce17fee201f3
   adresse P2SH testnet : kaspatest:pqu28l4x6pjuvew2ggp0x3d6f67dqs377htmv7wlasevu9l7ugqlxrztkf24q
-Sas v0.2 (coffre v0.9 de référence, lignée du vecteur KIP-20) : 227 octets, bytecode 76631af71ea31c6e5a17c8feee108a1f1dec2e96a5f7d195226ce7e3bd8f527a
-  adresse P2SH testnet : kaspatest:ppmxxxhhr633cmj6zly0amss3g03mmpwj6jl05v4yfkw0caa3af85sjz88evv
 Coeur v0.8 (paramètres de référence) : 333 octets, bytecode 849d197be4edcd6843463214fa900e15b2649637af33aca32439b95bbb4f3181
   adresse P2SH testnet : kaspatest:pzzf6xtmunku66zrgcepf75spc2myeykx7hn8t9rysumjkamfuccz0ep0ssr5
 Sas v0.1 (coffre v0.8 de référence) : 190 octets, bytecode 5e7e5292aa7d78ee3db09da31ce7a8c038e869eb179f0f322b2c47996b682984

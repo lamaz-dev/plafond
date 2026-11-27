@@ -19,6 +19,19 @@
 > 32 octets de l'identifiant). La v0.8 et le sas v0.1 sont archivés à l'identique (empreintes
 > `849d197b…` et `5e7e5292…` inchangées). L'outil déploie toujours la v0.7.
 
+> **v0.9.1 (27 nov. 2026, nuit).** `contracts/coeur.sil` ajoute l'entrée `ownerWithdraw` (retrait
+> partiel ; preuve `spec/borne-de-perte-v0.9.md` §9) : 577 octets avec les paramètres de référence
+> (+201), empreinte `1f0ef263…`. Les octets 0 à 371 sont ceux de la v0.9 (les trois entrées
+> inchangées) ; la nouvelle entrée occupe les octets 372 à 570 : sélecteur, signature du
+> propriétaire (clé répétée, 33 octets), garde de débordement, `OpTxInputCount 1`, `OpTxOutputCount
+> 2`, `0 OpTxOutputSpk OpBlake2b <empreinte de l'adresse de retour> OpEqual`, `1 OpTxOutputSpk` égal
+> au script de l'entrée, `OpAuthOutputCount 1`, `0 OpAuthOutputIdx 1`, frais = `OpTxInputAmount − 0
+> OpTxOutputAmount − 1 OpTxOutputAmount`, `≤ C`, puis le même calcul de délai que `pay`, le même
+> contrôle `[0, 2^32)` ajouté par le compilateur et `OpCheckSequenceVerify`. Coût mesuré : 11 unités
+> de calcul. La v0.9 est archivée à l'identique (empreinte `38a3fea6…` inchangée). Reproduire :
+> `PLAFOND_EXPORT_BYTECODE_V091=/tmp/c.hex cargo test --release lignee::tests::transactions_de_l_outil`
+> puis `python3 ../tools/desassembler.py /tmp/c.hex`.
+
 Compilateur SilverScript figé à `7eb04634` (v1.0.2 ; bytecode identique octet pour octet à `443d519e`, vérifié le 26 nov. 2026), paramètres de référence :
 - propriétaire et agent : clés de test 1 et 2 ;
 - capacité 200 000 000 sompi (2 TKAS) ;
