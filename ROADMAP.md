@@ -29,11 +29,14 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
    - anchor the head of the audit chain on Kaspa at regular intervals, so the log is tamper-evident
      without trusting any third party;
    - per-agent spending reports for finance teams, and an export for SIEM tools.
-2. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
-3. **Faster console refresh** (it currently re-reads the chain for each older agent).
-4. **Human security audit** of the contracts before any mainnet use.
-5. **Mainnet deployment** after the audit. Covenants are already live on Kaspa mainnet (Toccata, June 30, 2026); the gate is our own audit, not the network.
-6. **Covenant payer profile for Kaspa x402**: the vault pays the vendor directly (proposal to be discussed with
+2. **Keyless refill airlock** (core v0.8 + airlock contract, proven and tested offline against the real script engine,
+   see [proof §8](spec/borne-de-perte-v0.6.md) and the [red-team note](spec/red-team/sas-2026-11-27.md)): decide on the
+   open limit S3, wire it into the tool (deploy, automatic top-up, freeze that also empties the airlock), then a testnet trial.
+3. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
+4. **Faster console refresh** (it currently re-reads the chain for each older agent).
+5. **Human security audit** of the contracts before any mainnet use.
+6. **Mainnet deployment** after the audit. Covenants are already live on Kaspa mainnet (Toccata, June 30, 2026); the gate is our own audit, not the network.
+7. **Covenant payer profile for Kaspa x402**: the vault pays the vendor directly (proposal to be discussed with
    the Kaspa x402 maintainers).
 
 ## On hold

@@ -51,3 +51,25 @@ il ne demandait jamais plus de 1,2 fois la dépense permise, avec un délai calc
 Il annonce maintenant aussi tout l'âge réel de la pièce et demande jusqu'à 3 fois la dépense
 permise. Les quatre sabotages sont alors détectés par les seuls contrôles de borne : fenêtres, et
 courbe de perte nette sauf pour l'arrondi, qui ne coûte qu'une unité par paiement.
+
+
+## Cœur v0.8 (`absorb`) et sas de rechargement (27 nov. 2026)
+
+Sabotages automatisés : `cli/src/sas.rs`, test `chaque_regle_sabotee_est_detectee`. Le source est
+modifié, recompilé, et la même liste de 25 attaques est rejouée ; l'attaque attendue doit passer.
+
+| Mutation | Résultat |
+|---|---|
+| sas : retirer « deux entrées » | détectée (deux dépôts, un seul compté) |
+| sas : retirer « une sortie » | détectée (frais détournés vers un tiers) |
+| sas : retirer l'empreinte du coffre | détectée (autre coffre) |
+| sas : retirer `sortie ≥ v + d − maxFrais` | détectée (dépôt brûlé en frais) |
+| sas : retirer « sortie au script de l'entrée 0 » | **survit, attendu** : règle doublée par le script du coffre (preuve §8.5) |
+| sas, `retour` : retirer la signature | détectée (retour signé par l'agent) |
+| sas, `retour` : retirer l'adresse de retour | détectée (retour vers un tiers) |
+| sas, `retour` : retirer la borne de frais | détectée |
+| `absorb` : retirer « même script » | détectée (pièce prise) |
+| `absorb` : retirer la valeur minimale | détectée (pièce brûlée) |
+| `absorb` : `≥ v` au lieu de `≥ v + C` | détectée (gêne gratuite) |
+| `absorb` : retirer `capacity > 0` | détectée (`absorb_refuse_avec_une_capacite_aberrante`) |
+

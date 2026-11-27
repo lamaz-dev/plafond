@@ -6,6 +6,12 @@
 > ci-dessous, est inchangé ; coût mesuré : 11 unités de calcul pour `pay` comme pour `ownerControl`.
 > La lecture ci-dessous reste celle de la v0.6 (`contracts/archive/coeur-v0.6.sil`).
 
+> **v0.8 (27 nov. 2026).** `contracts/coeur.sil` ajoute l'entrée sans clé `absorb` (preuve §8) :
+> 333 octets avec les paramètres de référence (+44), empreinte `849d197b…`. Les entrées `pay` et
+> `ownerControl` ont le même source que la v0.7 ; coût mesuré de `absorb` : 1 unité de calcul (aucune
+> signature). Le sas (`contracts/sas.sil`) fait 190 octets, empreinte `5e7e5292…`. L'outil déploie
+> toujours la v0.7 (`contracts/archive/coeur-v0.7.sil`, empreinte `b85e0c9d…` inchangée).
+
 Compilateur SilverScript figé à `7eb04634` (v1.0.2 ; bytecode identique octet pour octet à `443d519e`, vérifié le 26 nov. 2026), paramètres de référence :
 - propriétaire et agent : clés de test 1 et 2 ;
 - capacité 200 000 000 sompi (2 TKAS) ;

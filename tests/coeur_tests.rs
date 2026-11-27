@@ -1,4 +1,5 @@
-//! Cœur v0.7 (budget sans mémoire, adresse de retour) : comportement du contrat contre le vrai moteur de script.
+//! Cœur v0.8 (budget sans mémoire, adresse de retour, rechargement sans clé) : comportement du contrat
+//! contre le vrai moteur de script. Les entrées `pay` et `ownerControl` sont celles de la v0.7.
 //! Le verrou relatif est donné par `sequence` : le script exige `sequence ≥ délai` (OpCheckSequenceVerify),
 //! et le réseau exige que la pièce ait réellement cet âge (check_sequence_lock, testé côté outil).
 mod common;
@@ -186,10 +187,53 @@ fn delai_tronque_a_32_bits_impossible() {
     assert!(!run(&a, 2, "pay", vec![(s - FEE, vendeur()), (V - s, moi(&a))], u32::MAX as u64), "et rien d'autre ne passe");
 }
 
+/// Exécute l'entrée `idx` d'une transaction dont toutes les entrées sont des pièces du coffre
+/// dépensées par `absorb` (aucune signature).
+fn absorb_n(a: &SilAbiArtifact, valeurs: &[u64], outs: Vec<(u64, ScriptPublicKey)>, idx: usize) -> bool {
+    let mut ss = encode_entry_sig_script(a, "absorb", &[]).unwrap();
+    ss.extend(push_redeem_script(&bytecode(a)));
+    let inputs = (0..valeurs.len())
+        .map(|i| TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), i as u32), ss.clone(), 0, 1000))
+        .collect();
+    let outputs = outs.into_iter().map(|(v, s)| TransactionOutput { value: v, script_public_key: s, covenant: None }).collect();
+    let tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+    let utxos: Vec<UtxoEntry> = valeurs.iter().map(|v| UtxoEntry::new(*v, moi(a), 0, false, None)).collect();
+    execute_input_with_covenants(tx, utxos, idx).is_ok()
+}
+
+#[test]
+fn regonflement_sans_cle() {
+    // v0.8 : sans signature, la pièce ne peut que revenir au coffre, grossie d'au moins la capacité.
+    let a = art();
+    let c = C as u64;
+    assert!(absorb_n(&a, &[V], vec![(V + c, moi(&a))], 0), "pièce grossie de la capacité : acceptée");
+    assert!(absorb_n(&a, &[V], vec![(V + 10 * c, moi(&a))], 0), "pièce grossie davantage : acceptée");
+    assert!(!absorb_n(&a, &[V], vec![(V + c - 1, moi(&a))], 0), "un sompi sous le minimum : refusé");
+    assert!(!absorb_n(&a, &[V], vec![(V, moi(&a))], 0), "regonflement nul (gêne gratuite) : refusé");
+    assert!(!absorb_n(&a, &[V], vec![(V - FEE, moi(&a))], 0), "pièce qui fond : refusé");
+    assert!(!absorb_n(&a, &[V], vec![(V + c, vendeur())], 0), "vers un tiers : refusé");
+    assert!(!absorb_n(&a, &[V], vec![(V + c, retour())], 0), "vers l'adresse de retour sans signature : refusé");
+    assert!(!absorb_n(&a, &[V], vec![(c, vendeur()), (V + c, moi(&a))], 0), "sortie d'un autre indice : refusé");
+    assert!(!absorb_n(&a, &[V], vec![], 0), "sans sortie : refusé");
+    // Entrée i -> sortie i : pas de fusion de deux pièces.
+    assert!(absorb_n(&a, &[V, V], vec![(V + c, moi(&a)), (V + c, moi(&a))], 0) && absorb_n(&a, &[V, V], vec![(V + c, moi(&a)), (V + c, moi(&a))], 1), "deux pièces, deux sorties : accepté");
+    assert!(!absorb_n(&a, &[V, V], vec![(2 * V + 2 * c, moi(&a))], 1), "deux pièces sur une sortie : refusé pour la seconde");
+    assert!(!absorb_n(&a, &[V, V], vec![(V + c, moi(&a)), (V, moi(&a))], 1), "seconde pièce non grossie : refusé");
+    // Une sortie supplémentaire (rendu de celui qui apporte les fonds) reste libre.
+    assert!(absorb_n(&a, &[V], vec![(V + c, moi(&a)), (123_456, vendeur())], 0), "rendu de l'apporteur : accepté");
+    // Réglages aberrants : jamais de regonflement sans clé.
+    for cap in [0, -1, -C] {
+        let a = art_avec(cap, R);
+        for v in [V, V + 1, (V as i64 + cap) as u64, V + c] {
+            assert!(!absorb_n(&a, &[V], vec![(v, moi(&a))], 0), "capacité {cap} : absorb refusé");
+        }
+    }
+}
+
 #[test]
 fn taille_du_coeur() {
     let a = art();
     let n = bytecode(&a).len();
-    eprintln!("Cœur v0.6 : {n} octets ; attente pour 0,5 KAS = {} DAA", attente(50_000_000 + FEE));
-    assert!(n < 300, "le cœur doit rester minimal ({n} octets)");
+    eprintln!("Cœur v0.8 : {n} octets ; attente pour 0,5 KAS = {} DAA", attente(50_000_000 + FEE));
+    assert!(n < 350, "le cœur doit rester minimal ({n} octets)");
 }

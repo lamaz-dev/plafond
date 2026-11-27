@@ -65,6 +65,7 @@ static MEMOIRE: sobriete::Plafonne = sobriete::Plafonne;
 mod relais;
 mod passerelle;
 mod routeur;
+mod sas;
 mod sequestre;
 mod x402;
 
@@ -505,6 +506,9 @@ pub fn empreintes() -> Res<String> {
         retour: Some(sequestre::spk_hash(&refund).to_vec()),
     };
     let coeur = coeur_ref.artifact()?;
+    // Cœur v0.8 et son sas, mêmes réglages de référence (plafond de frais du sas par défaut).
+    let coeur_v08 = coeur_ref.artifact_v08()?;
+    let sas_ref = sas::Sas::pour(&coeur_ref, sas::FRAIS_MAX_DEFAUT)?.artifact()?;
     let coeur_v06 = coeur::Coeur { retour: None, ..coeur_ref }.artifact()?;
     let mut r = String::new();
     r.push_str("# Empreintes reproductibles (blake2b-256). Régénérer : vault-cli empreintes > contracts/EMPREINTES.txt\n");
@@ -512,12 +516,16 @@ pub fn empreintes() -> Res<String> {
     r.push_str(&format!("source agent_budget.sil : {}\n", b2(SOURCE.as_bytes())));
     r.push_str(&format!("source delivery_escrow.sil : {}\n", b2(sequestre::SOURCE.as_bytes())));
     r.push_str(&format!("source ardoise.sil : {}\n", b2(ardoise::SOURCE.as_bytes())));
-    r.push_str(&format!("source coeur.sil (v0.7, adresse de retour) : {}\n", b2(coeur::SOURCE.as_bytes())));
+    r.push_str(&format!("source coeur.sil (v0.8, rechargement sans clé) : {}\n", b2(coeur::SOURCE_V08.as_bytes())));
+    r.push_str(&format!("source sas.sil (v0.1, sas de rechargement) : {}\n", b2(sas::SOURCE.as_bytes())));
+    r.push_str(&format!("source archive/coeur-v0.7.sil (coffres déployés par l'outil) : {}\n", b2(coeur::SOURCE.as_bytes())));
     r.push_str(&format!("source archive/coeur-v0.6.sil (gel des anciens coffres) : {}\n", b2(coeur::SOURCE_V06.as_bytes())));
     for (name, a) in [
         ("AgentBudget (paramètres de référence)", &vault),
         ("DeliveryEscrow (paramètres de référence)", &escrow),
         ("Ardoise (paramètres de référence)", &tab),
+        ("Coeur v0.8 (paramètres de référence)", &coeur_v08),
+        ("Sas v0.1 (coffre v0.8 de référence)", &sas_ref),
         ("Coeur v0.7 (paramètres de référence)", &coeur),
         ("Coeur v0.6 (paramètres de référence)", &coeur_v06),
     ] {

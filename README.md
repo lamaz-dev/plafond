@@ -31,7 +31,8 @@ The budgets, vaults and payment modes underneath are the means; the guaranteed w
 **Status**
 
 - ✅ testnet-10
-- ✅ **stateless core v0.7**: 289 bytes, 5 parameters, one rule for the agent (wait in proportion to what you spend), enforced by the network's relative lock ([contract](contracts/coeur.sil))
+- ✅ **stateless core v0.7**: 289 bytes, 5 parameters, one rule for the agent (wait in proportion to what you spend), enforced by the network's relative lock ([contract](contracts/archive/coeur-v0.7.sil))
+- next: **keyless refill airlock** (proven and tested offline, not deployed yet): core v0.8 (333 bytes) and a 190-byte airlock address; money sent there can only top up an existing vault coin or go back to the return address ([core v0.8](contracts/coeur.sil), [airlock](contracts/sas.sil), [proof §8](spec/borne-de-perte-v0.6.md), [red-team note](spec/red-team/sas-2026-11-27.md))
 - ✅ **return address**: even with the owner's key, vault funds can only go back to the vault or to the return address chosen at creation (by default the owner's treasury; optionally a Ledger, multisig or custodian address)
 - ✅ **curve promised at creation**: a mandate's total loss never exceeds `C × t / R`, capped at its capital, whatever the agent does; proven on paper and verified by tests against the real Kaspa script engine ([proof, in French](spec/borne-de-perte-v0.6.md), [comparison with v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - ✅ reproducible in one command: `./verify-proof.sh`
@@ -51,7 +52,7 @@ and software are compromised.
 
 The repository contains the vault contract, payment modes and a demo tool:
 
-- [`contracts/coeur.sil`](contracts/coeur.sil) (core v0.7, stateless): to spend `s`, the vault coin must be
+- [`contracts/archive/coeur-v0.7.sil`](contracts/archive/coeur-v0.7.sil) (core v0.7, stateless): to spend `s`, the vault coin must be
   at least `ceil(s × R / C)` DAA units old, which the network checks itself (relative lock). No counter, no
   agent-supplied time, no lineage: the address is the vault's identity. Four parameters (owner, agent,
   capacity `C` = cap per purchase, period `R`) plus the return address, single-input spends, one payee;

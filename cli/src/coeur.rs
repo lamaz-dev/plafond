@@ -1,4 +1,6 @@
-//! Cœur v0.7 : budget d'agent sans mémoire (contracts/coeur.sil), avec adresse de retour.
+//! Cœur v0.7 : budget d'agent sans mémoire (contracts/archive/coeur-v0.7.sil), avec adresse de retour.
+//! Le cœur v0.8 (contracts/coeur.sil, rechargement sans clé) est compilé par `Coeur::artifact_v08`
+//! et utilisé par src/sas.rs ; l'outil ne le déploie pas encore.
 //! Les coffres v0.6 (contracts/archive/coeur-v0.6.sil, sans adresse de retour) restent gérés :
 //! `Coeur::retour == None` compile l'ancien script, pour les retrouver et les geler.
 //!
@@ -15,7 +17,11 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 
 use crate::{Res, bytecode, sign, vault_sigscript, vault_spk};
 
-pub const SOURCE: &str = include_str!("../../contracts/coeur.sil");
+/// Cœur v0.7 : celui que l'outil déploie aujourd'hui (coffres existants et nouveaux).
+pub const SOURCE: &str = include_str!("../../contracts/archive/coeur-v0.7.sil");
+/// Cœur v0.8 (contracts/coeur.sil) : v0.7 plus l'entrée `absorb`, rechargement sans clé par le sas
+/// (src/sas.rs). Pas encore déployé par l'outil : à essayer d'abord sur le testnet.
+pub const SOURCE_V08: &str = include_str!("../../contracts/coeur.sil");
 /// Cœur v0.6, sans adresse de retour : seulement pour les coffres déjà créés.
 pub const SOURCE_V06: &str = include_str!("../../contracts/archive/coeur-v0.6.sil");
 /// Le verrou relatif de Kaspa ne compte que 32 bits (SEQUENCE_LOCK_TIME_MASK).
@@ -108,6 +114,16 @@ impl Coeur {
             None => SOURCE_V06,
         };
         Ok(compile_to_sil_abi_artifact_with_options(source, &args, CompileOptions::default())?)
+    }
+
+    /// Le même coffre en cœur v0.8 (entrée `absorb` en plus) : autre script, donc autre adresse.
+    /// Exige une adresse de retour (les mêmes cinq paramètres que la v0.7).
+    pub fn artifact_v08(&self) -> Res<SilAbiArtifact> {
+        self.verifier()?;
+        let retour = self.retour.clone().ok_or("le cœur v0.8 exige une adresse de retour")?;
+        let args: Vec<ArtifactValue> =
+            vec![self.owner.clone().into(), self.agent.clone().into(), self.capacite.into(), self.periode.into(), retour.into()];
+        Ok(compile_to_sil_abi_artifact_with_options(SOURCE_V08, &args, CompileOptions::default())?)
     }
 
     /// Âge exigé (unités DAA) pour dépenser `spent`, paiement et frais compris.

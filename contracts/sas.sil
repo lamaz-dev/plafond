@@ -1,0 +1,46 @@
+pragma silverscript ^0.1.0;
+
+// Sas de rechargement v0.1 (27 nov. 2026) — une adresse où l'on dépose de l'argent pour UN coffre.
+//
+// Celui qui paie (service d'achat par carte, conservateur, portefeuille) envoie simplement des KAS à
+// l'adresse du sas. Aucune clé ne peut ensuite détourner ce dépôt : il ne peut que
+//   - regonfler une pièce existante du coffre (recharger, SANS clé : n'importe qui peut le faire,
+//     les frais sont pris sur le dépôt et bornés par `maxFrais`), ou
+//   - revenir à l'adresse de retour du coffre (retour, clé du propriétaire).
+// Plafond ne détient jamais l'argent : le sas n'a pas de clé de dépense.
+//
+// Le sas est lié à un coffre par l'empreinte de son script (`coffreSpkHash`). Le script d'un cœur
+// v0.8 ne change jamais (pas d'état), donc cette empreinte désigne ce coffre et lui seul.
+//
+// Preuve : spec/borne-de-perte-v0.6.md, §8. Analyse d'attaque : spec/red-team/sas-2026-11-27.md.
+
+contract Sas(
+    byte[32] coffreSpkHash, // empreinte blake2b du script du coffre (cœur v0.8) à recharger
+    byte[32] retourSpkHash, // empreinte blake2b du script de l'adresse de retour (celle du coffre)
+    pubkey ownerKey,        // propriétaire : ne peut que renvoyer le dépôt à l'adresse de retour
+    int maxFrais            // frais maximum prélevés sur un dépôt, en sompi
+) {
+    // Forme imposée : entrée 0 = une pièce du coffre, entrée 1 = ce dépôt, UNE sortie = la pièce du
+    // coffre regonflée. Deux entrées, pas plus : ni fusion de deux pièces du coffre, ni deux dépôts
+    // qui se partageraient le même crédit. Une sortie, pas plus : aucune pièce ajoutée au coffre,
+    // rien vers un tiers. Si ce dépôt était l'entrée 0, l'entrée 0 ne serait pas le coffre : refus.
+    // La pièce du coffre (entrée 0) obéit à son propre script : `absorb` (sans clé, la pièce doit
+    // grossir d'au moins `capacity`) ou `ownerControl` (propriétaire, pour un petit dépôt).
+    entry recharger() {
+        require(tx.inputs.length == 2 && tx.outputs.length == 1);
+        byte[] coffre = tx.inputs[0].scriptPubKey;
+        require(blake2b(coffre) == coffreSpkHash);
+        require(tx.outputs[0].scriptPubKey == coffre);
+        require(tx.outputs[0].value >= tx.inputs[0].value + tx.inputs[1].value - maxFrais);
+    }
+
+    // Entrée i -> sortie i, comme le gel du coffre : les dépôts en attente et les pièces du coffre
+    // peuvent être renvoyés ensemble, chacun vers sa propre sortie.
+    entry retour(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        require(blake2b(tx.outputs[i].scriptPubKey) == retourSpkHash);
+        require(tx.outputs[i].value >= tx.inputs[i].value - maxFrais);
+    }
+}

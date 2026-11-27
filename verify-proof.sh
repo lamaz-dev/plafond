@@ -32,7 +32,10 @@ etape "5. Blanchiment entre frères : la courbe promise tient" teste coeur::test
 etape "6. La borne C + C·D/R est atteinte : elle est serrée" teste coeur::tests::borne_simple_atteinte_et_jamais_depassee
 etape "7. Deux paiements dans un même bloc : impossible" teste coeur::tests::enchainement_dans_un_meme_bloc_impossible
 etape "8. Outil conforme, budget de calcul suffisant" teste coeur::tests::budget_de_calcul_suffisant_et_outil_conforme
-etape "9. Suite complète (dont l'ancien coffre v0.5.1, séquestre, ardoise)" cargo test -q --release
+etape "9. Sas (cœur v0.8) : le dépôt ne va qu'au coffre ou au retour" teste sas::tests::le_depot_ne_peut_que_regonfler_le_coffre_ou_revenir
+etape "10. Sas : chaque règle sabotée est détectée" teste sas::tests::chaque_regle_sabotee_est_detectee
+etape "11. Sas : agent avide, rechargements et gênes sous la borne" teste sas::tests::sas_et_agent_avide_sous_la_borne
+etape "12. Suite complète (dont l'ancien coffre v0.5.1, séquestre, ardoise)" cargo test -q --release
 
 echo
 if [ "$echec" = 0 ]; then

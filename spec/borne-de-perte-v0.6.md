@@ -3,9 +3,12 @@
 Statut : prototype sur branche, à côté de la v0.5.1 (`spec/borne-de-perte.md`), qui reste la
 version de `main`. Comparaison et choix : `spec/comparaison-v0.5.1-v0.6.md`.
 
-Contrat : `contracts/coeur.sil`, v0.7 depuis le 26 nov. 2026 (289 octets avec les paramètres de
-référence, 5 paramètres) ; la règle de l'agent (`pay`) est identique à la v0.6 (211 octets, 4 paramètres,
-`contracts/archive/coeur-v0.6.sil`), seule l'entrée du propriétaire change (§7).
+Contrat déployé par l'outil : cœur v0.7 (`contracts/archive/coeur-v0.7.sil`, 289 octets avec les
+paramètres de référence, 5 paramètres) ; la règle de l'agent (`pay`) est identique à la v0.6 (211 octets,
+4 paramètres, `contracts/archive/coeur-v0.6.sil`), seule l'entrée du propriétaire change (§7).
+Depuis le 27 nov. 2026, `contracts/coeur.sil` est le cœur v0.8 (333 octets) : la v0.7 plus l'entrée
+sans clé `absorb`, pour le sas de rechargement `contracts/sas.sil` (190 octets), §8. Pas encore déployé
+par l'outil.
 Tests : `tests/coeur_tests.rs` (compilateur figé), `cli/src/coeur.rs` (moteur + modèle du consensus).
 
 ## 1. Ce que l'on promet
@@ -214,3 +217,152 @@ entrée vérifiée), `retour_coffres_v06_toujours_reconnus` (bytecode v0.6 incha
 `tests/coeur_tests.rs::le_proprietaire_ne_peut_rien_envoyer_ailleurs` (compilateur figé),
 `coffre::tests::gel_par_lots_sous_la_masse_standard` (gel v0.7 : une sortie par pièce, frais à la
 masse, lots coupés si nécessaire, toutes les tentatives d'escalade diffusables).
+
+## 8. v0.8 : rechargement sans clé (entrée `absorb` et sas de rechargement)
+
+But : ajouter de l'argent au coffre d'un agent **sans la clé du propriétaire** et sans que Plafond
+détienne quoi que ce soit. Celui qui paie (achat par carte, conservateur) envoie des KAS à une adresse,
+le **sas** ; cet argent ne peut ensuite que regonfler une pièce existante du coffre, ou revenir à
+l'adresse de retour.
+
+Deux scripts : le cœur v0.8 (`contracts/coeur.sil`) = cœur v0.7 + l'entrée `absorb` ; le sas
+(`contracts/sas.sil`), paramètres `coffreSpkHash` (blake2b du script du coffre), `retourSpkHash`,
+`ownerKey`, `maxFrais`. Notations : `C` capacité, `F` = `maxFrais`.
+
+### 8.1 Ce que disent les scripts (lecture directe)
+
+**Lemme A (`absorb`).** Si une pièce du coffre de valeur `v` est dépensée par `absorb` comme entrée
+d'indice `i`, alors `C > 0`, la transaction a une sortie d'indice `i`, au script du coffre, de valeur
+`≥ v + C`. Aucune signature n'est demandée.
+
+**Lemme B (`recharger`).** Si un dépôt du sas de valeur `d` est dépensé par `recharger` dans une
+transaction `T`, alors `T` a exactement deux entrées et une sortie ; l'entrée 0 est une pièce du coffre
+(valeur `v`) ; le dépôt est l'entrée 1 ; la sortie est au script du coffre et vaut `≥ v + d − F`.
+
+*Démonstration.* Le script exige `|inputs| = 2`, `|outputs| = 1`, `blake2b(inputs[0].spk) =
+coffreSpkHash`, `outputs[0].spk = inputs[0].spk`, `outputs[0].value ≥ inputs[0].value + inputs[1].value
+− F`. Le dépôt ne peut pas être l'entrée 0 : il faudrait `blake2b(spk du sas) = coffreSpkHash`, or le
+script du sas contient `coffreSpkHash` : ce serait un point fixe de blake2b (une préimage choisie),
+exclu. Le dépôt est donc l'entrée 1 et `inputs[1].value = d`. Par résistance aux secondes préimages,
+l'entrée 0 a exactement le script du coffre. ∎
+
+**Lemme C (`retour`).** Si un dépôt de valeur `d` est dépensé par `retour` comme entrée `i`, la
+transaction est signée par la clé du propriétaire et sa sortie `i` est à l'adresse de retour, de
+valeur `≥ d − F`.
+
+Un script de cœur v0.8 ne change jamais (pas d'état) : l'empreinte inscrite dans le sas désigne ce
+coffre (ces clés, cette capacité, cette période, cette adresse de retour) et aucun autre.
+
+### 8.2 Théorème du sas : le dépôt ne va nulle part ailleurs
+
+**Théorème.** Un dépôt `d` au sas ne peut être dépensé que de deux façons :
+1. versé dans **une pièce existante** du coffre, qui passe de `v` à `≥ v + d − F` : le nombre de pièces
+   du coffre ne change pas (une consommée, une créée), rien ne va à un tiers, au plus `F` part en frais ;
+2. renvoyé à l'adresse de retour (`≥ d − F`), avec la signature du propriétaire.
+
+Le dépôt ne peut ni créer une pièce de plus, ni fusionner deux pièces du coffre, ni payer un vendeur,
+ni aller à un autre script. Ceci vaut pour tout signataire, y compris l'agent et un voleur de la clé
+du propriétaire.
+
+*Démonstration.* Le sas n'a que deux entrées de script (toute autre finit par `OpReturn`) : lemmes B
+et C. Dans le cas B, la transaction a une seule sortie : pas de seconde pièce, pas de tiers. Elle a deux
+entrées, dont le dépôt : une seule pièce du coffre est consommée, donc pas de fusion. La pièce du
+coffre (entrée 0) doit elle-même être dépensée par une entrée de son script : `pay` est exclu
+(il exige une seule entrée) ; `absorb` exige en plus `sortie ≥ v + C` ; `ownerControl` exige la
+signature du propriétaire et, la sortie étant au coffre, `sortie ≥ v`. ∎
+
+Conséquences pratiques :
+- sans clé, un dépôt est versable dès que `d ≥ C + frais réels` (la pièce doit grossir de `C`) ;
+- un dépôt plus petit attend le propriétaire (versement cosigné par `ownerControl`, ou `retour`) ;
+- les frais sont pris sur le dépôt : celui qui déclenche le versement n'a besoin d'aucun fonds.
+
+### 8.3 La borne de perte tient, et ne dépend pas de l'argent ajouté
+
+**Ce que le propriétaire peut perdre au sas :** au plus `F` par dépôt (frais), d'après 8.2.
+
+**Côté agent.** `pay` est inchangé. Appelons *emplacement* la suite des pièces qui se succèdent par
+continuation de `pay`, par `absorb` ou par rechargement `ownerControl` : chaque transaction consomme
+la pièce de l'emplacement et en recrée exactement une (lemme A, §7, forme de `pay`), créée au score
+de la transaction (§2, règle 2). Soit un emplacement dont la pièce a l'âge `g` au score `a`.
+
+**Théorème (emplacement).** Sur toute fenêtre `[a, a + D]`, ce que `pay` fait sortir d'un emplacement
+vaut au plus `min(C, C·g/R) + C·D/R`, **quels que soient le nombre et le montant des regonflements**.
+
+*Démonstration.* Chaque paiement `sᵢ` au score `tᵢ` dépense une pièce créée au score `cᵢ`, avec
+`sᵢ ≤ C·(tᵢ − cᵢ)/R` et `sᵢ ≤ C` (§3). La pièce dépensée par le paiement `i` a été créée par
+l'événement précédent de l'emplacement (paiement `i − 1` ou regonflement), donc `cᵢ ≥ tᵢ₋₁`. Les
+intervalles `(cᵢ, tᵢ]` sont disjoints et, sauf le premier, contenus dans `[a, a + D]` : la somme
+télescope comme au §3. Un regonflement ne fait que **raccourcir** un intervalle (il remet l'âge à
+zéro) : il ne peut qu'abaisser la somme. ∎
+
+C'est l'argument du regonflement R62 (§3), sans la signature : `absorb` fait strictement moins que le
+rechargement par `ownerControl` (il exige `+C` au lieu de `+0`), et aucune des deux entrées ne fait
+sortir d'argent. La courbe du §1b tient à l'identique : un dépôt versé est un apport, racine d'âge nul
+à la date du versement (pas de rafale).
+
+**Ce qui ne tient PAS par le contrat (limite S3).** Le théorème parle des emplacements, et n'importe qui
+peut en créer un en envoyant de l'argent à l'adresse du coffre (c'était déjà vrai en v0.6). Le sas ne
+distingue pas une pièce d'origine d'une pièce de tiers : un attaquant actif peut faire verser un
+dépôt dans SA pièce. Le dépôt n'ajoute alors pas de pièce, mais l'ancienne pièce du propriétaire
+garde son solde et son rythme à côté : pendant qu'il lui reste du solde, le coffre a un emplacement
+financé de plus (excès borné par `min(solde restant, C + C·D/R)` par dépôt détourné). La courbe du
+§1b, elle, tient toujours. Détail, coût et parades : `spec/red-team/sas-2026-11-27.md`.
+
+### 8.4 La gêne a un prix, versé au propriétaire
+
+Regonfler remet l'âge de la pièce à zéro : l'agent doit attendre de nouveau avant de payer. C'était
+déjà possible pour le propriétaire (§7) ; avec `absorb`, n'importe qui peut le faire, mais :
+
+**Proposition.** Pour empêcher un achat de prix `p` (frais compris) sur une pièce, il faut la
+regonfler au moins une fois toutes les `⌈p·R/C⌉` unités DAA, et chaque regonflement sans clé ajoute
+au moins `C` à la pièce. Bloquer les achats de prix `p` coûte donc au moins `C` par `⌈p·R/C⌉` unités
+et par pièce, soit `C²/(p·R)` par unité : **au moins `C/R`, le débit entier du budget de l'agent**,
+pour ne bloquer que les achats au plafond, et `C/p` fois plus pour bloquer les achats de prix `p`.
+Tout ce qui est versé appartient au propriétaire (il le récupère par le gel).
+
+*Démonstration.* Lemme A pour le prix ; pour le rythme, un paiement `p` passe dès que la pièce
+atteint l'âge `⌈p·R/C⌉` (§3.1 du rapport Red Team du 26 nov.). ∎
+
+Exemple (0,5 KAS par achat, période d'une heure) : bloquer les achats de 0,05 KAS coûte 5 KAS par
+heure et par pièce, donnés au propriétaire. Le gel n'est pas empêché pour autant : celui qui
+regonfle pour doubler un gel paie `C` à chaque bloc gagné, et pendant ce temps la pièce, d'âge nul,
+ne laisse rien sortir.
+
+### 8.5 Règles du sas et de `absorb`, une par une
+
+Chaque règle a été sabotée tour à tour (`sas::tests::chaque_regle_sabotee_est_detectee`).
+
+| Règle | Porteuse ? | Sans elle |
+|---|---|---|
+| sas : deux entrées | oui | un second dépôt dans la même transaction part entièrement en frais |
+| sas : une sortie | oui | la marge de frais `F` va dans la poche d'un tiers au lieu d'être seulement brûlable, ou crée une pièce de plus au coffre (d'au plus `F`) |
+| sas : entrée 0 = le coffre (empreinte) | oui | le dépôt regonfle n'importe quel script |
+| sas : sortie au script de l'entrée 0 | non (doublée par le script du coffre) | rien : `absorb` et `ownerControl` imposent déjà la destination ; gardée pour ne pas dépendre de la lecture du cœur |
+| sas : `sortie ≥ v + d − F` | oui | le dépôt part en frais |
+| sas, `retour` : signature du propriétaire | oui | n'importe qui renvoie chaque dépôt à l'adresse de retour : le rechargement est empêché pour le prix des frais |
+| sas, `retour` : adresse de retour | oui | la clé du propriétaire (volée) détourne les dépôts |
+| sas, `retour` : `sortie ≥ d − F` | oui | la clé du propriétaire (volée) brûle les dépôts |
+| `absorb` : sortie `i` au même script | oui | n'importe qui prend la pièce |
+| `absorb` : `sortie ≥ v + C` | oui | n'importe qui brûle la pièce en frais |
+| `absorb` : le `+ C` | oui (prix de la gêne) | la gêne devient gratuite |
+| `absorb` : `capacity > 0` | oui pour des réglages aberrants | avec une capacité négative, la pièce fond (R63 : garde explicite) |
+| `absorb` : `i < |outputs|` | garde explicite (R63) | la lecture hors bornes est un « comportement indéfini » du compilateur |
+
+### 8.6 Validation automatique
+
+| Test | Ce qu'il vérifie |
+|---|---|
+| `sas::tests::le_depot_ne_peut_que_regonfler_le_coffre_ou_revenir` | 11 transactions légitimes acceptées, 25 attaques nommées refusées, chaque entrée exécutée par le vrai moteur |
+| `sas::tests::chaque_regle_sabotee_est_detectee` | 11 sabotages : chaque règle porteuse retirée laisse passer l'attaque attendue |
+| `sas::tests::sas_et_agent_avide_sous_la_borne` | fuzzing : agent avide ou tricheur, rechargements par le sas, gênes ; toujours une pièce, théorème de l'emplacement, frais du sas bornés, valeur expliquée au sompi |
+| `sas::tests::rechargement_sans_cle` | transactions de l'outil : acceptées, budgets de calcul, masse standard |
+| `sas::tests::gene_payante_et_donnee_au_proprietaire` | la proposition du §8.4, chiffrée |
+| `sas::tests::coffres_v07_inchanges_et_sans_absorb` | bytecode et source v0.7 identiques, coffres v0.7 gelables, pas d'entrée sans clé |
+| `sas::tests::absorb_refuse_avec_une_capacite_aberrante` | garde `capacity > 0` |
+| `sas::tests::limite_depot_verse_dans_la_piece_d_un_tiers` | la limite S3, figée et chiffrée |
+| `sas::tests::piece_marquee_par_un_tiers_reste_utilisable` | un identifiant de covenant posé par un tiers ne bloque pas la pièce |
+| `tests/coeur_tests.rs::regonflement_sans_cle`, `tests/sas_tests.rs` | les mêmes règles sur le compilateur figé |
+
+Hypothèses : celles du §2 (verrou relatif, score des pièces créées, sorties ≤ entrées) et la résistance
+de blake2b aux secondes préimages. Non vérifié : un versement réel sur le testnet (règles de relais
+du mempool pour une dépense sans signature).
