@@ -1,6 +1,6 @@
-# Relay review (26 Nov 2026): real x402 payment through the vault, after the vault budget has built up
+# Enterprise gateway (27 Nov 2026): one agent paying through the gateway, a refused overspend, then an emergency stop
 deployer
-pause 2900                     # a new vault releases its budget over time: wait until it can refill the relay wallet
-essai-relais
+pause 900                      # a new vault releases its budget over time
+essai-passerelle
 recuperer
 etat
