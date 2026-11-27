@@ -1,0 +1,107 @@
+pragma silverscript ^0.1.0;
+
+// Cœur v0.8 — budget d'agent SANS MÉMOIRE, avec adresse de retour et rechargement sans clé.
+//
+// v0.8 (27 nov. 2026) : entrée `absorb`, sans signature. N'importe qui peut REGONFLER une pièce du
+// coffre : elle revient à la même adresse, grossie d'au moins `capacity`. Rien ne sort, aucune pièce
+// n'est ajoutée, et la pièce repart d'un âge nul. C'est ce qui permet au sas de rechargement
+// (contracts/sas.sil) de verser un dépôt dans le coffre sans la clé du propriétaire.
+// Les entrées `pay` et `ownerControl` sont identiques à la v0.7, à l'octet près dans le source.
+// La v0.7 reste dans contracts/archive/coeur-v0.7.sil (coffres déjà créés), la v0.6 à côté.
+//
+// v0.7 (26 nov. 2026) : l'argent d'un coffre ne peut sortir que vers les vendeurs (pay, au rythme
+// permis) ou, par la clé du propriétaire, vers le coffre lui-même (rechargement) ou vers l'adresse
+// de retour fixée à la création (gel, retrait). Même si la clé du propriétaire est volée, l'argent
+// ne peut aller nulle part ailleurs.
+//
+// Règle unique : pour dépenser `spent` sompi (paiement + frais), la pièce du coffre doit avoir
+// attendu au moins ceil(spent × period / capacity) unités DAA depuis sa création.
+// Le délai est contrôlé par le réseau lui-même (verrou relatif : OpCheckSequenceVerify dans le
+// script, règle de consensus check_sequence_lock) : il n'y a ni compteur, ni horodatage fourni par
+// l'agent, ni état à faire suivre, ni lignée (KIP-20). Le script ne change jamais : l'adresse du
+// coffre est son identité.
+//
+// Borne prouvée (spec/borne-de-perte-v0.6.md, §8 pour `absorb`) : sur toute fenêtre de D unités
+// DAA, une pièce déposée par le propriétaire et toutes ses descendantes perdent au plus
+// capacity + capacity × D / period.
+//
+// Ce que le script ne vérifie pas parce que le réseau le garantit déjà : les sorties ne dépassent
+// jamais les entrées (donc 0 ≤ paiement ≤ spent), et la pièce a vraiment l'âge annoncé.
+// Les frais sont comptés dans `spent` : la borne tient quels qu'ils soient.
+//
+//  - pay          : l'agent paie UN bénéficiaire ; le reste revient à la même adresse.
+//  - ownerControl : le propriétaire gèle, retire ou recharge ; la pièce ne va qu'au coffre ou à
+//                   l'adresse de retour (au plus `capacity` de frais par pièce).
+//  - absorb       : sans clé ; la pièce revient au coffre, grossie d'au moins `capacity`.
+
+contract Coeur(
+    pubkey ownerKey, // propriétaire : contrôle total
+    pubkey agentKey, // agent : ne peut que payer, au rythme permis
+    int capacity,    // dépense maximale d'un seul paiement (frais compris), en sompi
+    int period,      // unités DAA pour regagner toute la capacité (864 000 ≈ 1 jour)
+    byte[32] retourSpkHash // empreinte blake2b du script de l'adresse de retour (gel, retrait)
+) {
+    entry pay(sig agentSig) {
+        require(checkSig(agentSig, agentKey));
+
+        // Le verrou relatif ne compte que 32 bits : le délai exigé doit rester < 2^32. Le compilateur
+        // l'impose déjà (délai ∈ [0, 2^32) avant OpCheckSequenceVerify, spec/coeur-bytecode.md) ;
+        // cette garde le double, par prudence : spent ≤ capacity donne un délai ≤ period < 2^32.
+        // Porteur : capacity × period ne déborde pas, le calcul du délai reste exact.
+        // (Capacité ou période nulle ou négative : aucun paiement possible, sans danger.)
+        require(period < 4294967296 && capacity <= 9223372036854775807 / period);
+
+        // Une seule entrée : sinon deux pièces du coffre seraient fusionnées et la valeur de
+        // l'une partirait en frais sans être comptée (R26). Deux sorties : un seul bénéficiaire,
+        // ce qui rend chaque dépense attribuable à un vendeur (moteur de risque, M4).
+        require(tx.inputs.length == 1 && tx.outputs.length == 2);
+
+        byte[] moi = tx.inputs[this.activeInputIndex].scriptPubKey;
+        require(tx.outputs[1].scriptPubKey == moi); // le reste revient au coffre
+        // Non porteur de la borne (voir la preuve) : l'agent ne fragmente pas le coffre, donc
+        // seules les actions du propriétaire ajoutent des pièces et le moteur de risque compte juste.
+        require(tx.outputs[0].scriptPubKey != moi);
+
+        int spent = tx.inputs[this.activeInputIndex].value - tx.outputs[1].value; // paiement + frais
+        require(spent <= capacity);
+
+        // Le cœur : attendre en proportion de ce qu'on dépense.
+        require(this.ageDaa >= (spent * period + capacity - 1) / capacity);
+    }
+
+    // Entrée i -> sortie i : chaque pièce a sa propre sortie, ce qui permet le gel par lots sans
+    // que deux pièces se partagent une sortie ; les autres sorties (rendu du propriétaire lors
+    // d'un rechargement) restent libres.
+    entry ownerControl(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        byte[] moi = tx.inputs[i].scriptPubKey;
+        int valeur = tx.inputs[i].value;
+        if (tx.outputs[i].scriptPubKey == moi) {
+            // Rechargement : la pièce revient au coffre, au moins entière.
+            require(tx.outputs[i].value >= valeur);
+        } else {
+            // Gel ou retrait : uniquement vers l'adresse de retour, frais bornés par la capacité.
+            require(blake2b(tx.outputs[i].scriptPubKey) == retourSpkHash);
+            require(tx.outputs[i].value >= valeur - capacity);
+        }
+    }
+
+    // Rechargement sans clé (v0.8). Entrée i -> sortie i, comme ownerControl : deux pièces du coffre
+    // ne peuvent pas se partager une sortie, donc pas de fusion. Rien ne sort du coffre : la pièce
+    // revient à la même adresse, plus grosse.
+    // Le minimum (`capacity`, le prix maximal d'un achat) est le prix de la gêne : regonfler remet
+    // l'âge de la pièce à zéro et retarde l'agent ; celui qui le fait pour nuire doit donc DONNER au
+    // propriétaire au moins `capacity` à chaque fois (spec/borne-de-perte-v0.6.md, §8).
+    // `capacity > 0` : avec une capacité négative, la règle laisserait fondre la pièce (R63 : ne pas
+    // compter sur un autre refus pour des réglages aberrants).
+    entry absorb() {
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        require(capacity > 0);
+        require(tx.outputs[i].scriptPubKey == tx.inputs[i].scriptPubKey);
+        require(tx.outputs[i].value >= tx.inputs[i].value + capacity);
+    }
+}

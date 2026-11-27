@@ -1,5 +1,9 @@
-//! Sas de rechargement (contracts/sas.sil) : une adresse sans clé de dépense où l'on dépose de
-//! l'argent pour UN coffre (cœur v0.8, contracts/coeur.sil).
+//! Sas de rechargement v0.1 (contracts/archive/sas-v0.1.sil) : une adresse sans clé de dépense où
+//! l'on dépose de l'argent pour UN coffre (cœur v0.8, contracts/archive/coeur-v0.8.sil).
+//!
+//! ARCHIVÉ : remplacé par le cœur v0.9 et le sas v0.2 à lignée KIP-20 (src/lignee.rs), qui ferment
+//! la limite S3 figée ici par `limite_depot_verse_dans_la_piece_d_un_tiers`. Ce banc reste pour
+//! comparer les deux versions ; rien de ce fichier n'a été déployé.
 //!
 //! Un dépôt au sas ne peut que regonfler une pièce existante du coffre (`recharger`, sans clé :
 //! la pièce du coffre est dépensée par son entrée `absorb`) ou revenir à l'adresse de retour
@@ -18,7 +22,7 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 use crate::coeur::Coeur;
 use crate::{FEE, Res, sign, vault_sigscript, vault_spk};
 
-pub const SOURCE: &str = include_str!("../../contracts/sas.sil");
+pub const SOURCE: &str = include_str!("../../contracts/archive/sas-v0.1.sil");
 /// Budgets de calcul déclarés (marge incluse), mesurés par `tests::rechargement_sans_cle`.
 /// `absorb` et `recharger` ne vérifient aucune signature.
 pub const CB_ABSORB: u16 = 2;

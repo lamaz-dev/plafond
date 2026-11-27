@@ -12,6 +12,13 @@
 > signature). Le sas (`contracts/sas.sil`) fait 190 octets, empreinte `5e7e5292…`. L'outil déploie
 > toujours la v0.7 (`contracts/archive/coeur-v0.7.sil`, empreinte `b85e0c9d…` inchangée).
 
+> **v0.9 (27 nov. 2026, soir).** `contracts/coeur.sil` ajoute la règle de lignée KIP-20 dans chaque
+> entrée (`OpAuthOutputCount`, `OpAuthOutputIdx` ; preuve `spec/borne-de-perte-v0.9.md`) : 376 octets
+> avec les paramètres de référence (+43), empreinte `38a3fea6…`. Coûts mesurés : `pay` 11 unités de
+> calcul, `absorb` 1. Le sas v0.2 (`contracts/sas.sil`, lié à la lignée) fait 227 octets (+37 : les
+> 32 octets de l'identifiant). La v0.8 et le sas v0.1 sont archivés à l'identique (empreintes
+> `849d197b…` et `5e7e5292…` inchangées). L'outil déploie toujours la v0.7.
+
 Compilateur SilverScript figé à `7eb04634` (v1.0.2 ; bytecode identique octet pour octet à `443d519e`, vérifié le 26 nov. 2026), paramètres de référence :
 - propriétaire et agent : clés de test 1 et 2 ;
 - capacité 200 000 000 sompi (2 TKAS) ;

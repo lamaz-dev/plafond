@@ -29,9 +29,13 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
    - anchor the head of the audit chain on Kaspa at regular intervals, so the log is tamper-evident
      without trusting any third party;
    - per-agent spending reports for finance teams, and an export for SIEM tools.
-2. **Keyless refill airlock** (core v0.8 + airlock contract, proven and tested offline against the real script engine,
-   see [proof §8](spec/borne-de-perte-v0.6.md) and the [red-team note](spec/red-team/sas-2026-11-27.md)): decide on the
-   open limit S3, wire it into the tool (deploy, automatic top-up, freeze that also empties the airlock), then a testnet trial.
+2. **Keyless refill airlock with a vault lineage** (core v0.9 + airlock v0.2, proven and tested offline against the real
+   script engine, see the [proof](spec/borne-de-perte-v0.9.md) and the [red-team note](spec/red-team/lignee-2026-11-27.md)).
+   The open limit S3 of core v0.8 was settled in favour of a KIP-20 lineage: the number of vault coins is fixed at
+   creation, so the cap holds for the whole vault without any monitoring. Next: a testnet-10 trial (sequence in the
+   red-team note, including a real dust-coin attack), a decision on what freezing means for the deposit address (L2),
+   then wiring into the tool (creation by genesis, lineage filter everywhere, automatic top-up, freeze that also returns
+   pending deposits, deposit address the payer can verify). The tool keeps deploying core v0.7 until then.
 3. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
 4. **Faster console refresh** (it currently re-reads the chain for each older agent).
 5. **Human security audit** of the contracts before any mainnet use.

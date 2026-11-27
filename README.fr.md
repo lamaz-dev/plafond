@@ -36,7 +36,7 @@ Les budgets, coffres et modes de paiement sont les moyens ; le pire scénario ga
 
 - ✅ testnet-10
 - ✅ **cœur v0.7, sans mémoire** : 289 octets, 5 paramètres, une seule règle pour l'agent (attendre en proportion de ce qu'on dépense), imposée par le verrou relatif du réseau ([contrat](contracts/archive/coeur-v0.7.sil))
-- à venir : **sas de rechargement sans clé** (prouvé et testé hors ligne, pas encore déployé) : cœur v0.8 (333 octets) et une adresse de sas de 190 octets ; l'argent qu'on y envoie ne peut que regonfler une pièce existante du coffre ou revenir à l'adresse de retour ([cœur v0.8](contracts/coeur.sil), [sas](contracts/sas.sil), [preuve §8](spec/borne-de-perte-v0.6.md), [note Red Team](spec/red-team/sas-2026-11-27.md))
+- à venir : **sas de rechargement sans clé, coffre à lignée** (prouvé et testé hors ligne, pas encore déployé) : cœur v0.9 (376 octets) et une adresse de sas de 227 octets. Le coffre est une lignée de pièces (KIP-20) dont le nombre est fixé à la création et ne peut plus jamais augmenter : le plafond tient pour le coffre entier, sur toute fenêtre, même sous attaque active ; l'argent envoyé au sas ne peut que regonfler une pièce de cette lignée ou revenir à l'adresse de retour, et une pièce de poussière envoyée à l'adresse du coffre ne peut ni recevoir un dépôt ni être dépensée par l'agent ([cœur v0.9](contracts/coeur.sil), [sas](contracts/sas.sil), [preuve](spec/borne-de-perte-v0.9.md), [note Red Team](spec/red-team/lignee-2026-11-27.md) ; étape précédente, sans lignée : [cœur v0.8](contracts/archive/coeur-v0.8.sil), [note](spec/red-team/sas-2026-11-27.md))
 - ✅ **adresse de retour** : même avec la clé du propriétaire, l'argent d'un coffre ne peut revenir qu'au coffre ou à l'adresse de retour choisie à la création (par défaut la trésorerie ; au choix un Ledger, une multisignature ou un conservateur)
 - ✅ **courbe promise à la création** : la perte totale d'un mandat ne dépasse jamais `C × t / R`, plafonnée au capital, quoi que fasse l'agent ; démontrée sur papier et vérifiée par tests contre le vrai moteur de Kaspa ([preuve](spec/borne-de-perte-v0.6.md), [comparaison avec la v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - 🧪 ardoise (prototype) : micropaiements répétés chez un vendeur, signés hors chaîne par l'agent et réglés en une seule transaction ; contrat de 35 lignes et tests contre le vrai moteur, commandes de l'outil à venir ([contrat](contracts/ardoise.sil))
@@ -59,7 +59,7 @@ Kaspa (covenant SilverScript), pas par un logiciel.
 ## Architecture
 
 ```
-contracts/   archive/coeur-v0.7.sil (le coffre déployé), coeur.sil (v0.8) et sas.sil (rechargement sans clé, pas encore déployés), DeliveryEscrow (paiement à la livraison), Ardoise ; ancien AgentBudget v0.5.1
+contracts/   archive/coeur-v0.7.sil (le coffre déployé), coeur.sil (v0.9, lignée) et sas.sil (rechargement sans clé, pas encore déployés), DeliveryEscrow (paiement à la livraison), Ardoise ; ancien AgentBudget v0.5.1
 tests/       tests des contrats dans le moteur de script de Kaspa ; l'outil a 94 tests, dont le fuzzing de la borne
 cli/         outil en ligne de commande : déployer, payer, récupérer, démo x402 sur le testnet-10
 spec/        spécification du profil x402 « covenant-budget » (paiement direct depuis le coffre)

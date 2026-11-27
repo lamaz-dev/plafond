@@ -6,9 +6,12 @@ version de `main`. Comparaison et choix : `spec/comparaison-v0.5.1-v0.6.md`.
 Contrat déployé par l'outil : cœur v0.7 (`contracts/archive/coeur-v0.7.sil`, 289 octets avec les
 paramètres de référence, 5 paramètres) ; la règle de l'agent (`pay`) est identique à la v0.6 (211 octets,
 4 paramètres, `contracts/archive/coeur-v0.6.sil`), seule l'entrée du propriétaire change (§7).
-Depuis le 27 nov. 2026, `contracts/coeur.sil` est le cœur v0.8 (333 octets) : la v0.7 plus l'entrée
-sans clé `absorb`, pour le sas de rechargement `contracts/sas.sil` (190 octets), §8. Pas encore déployé
-par l'outil.
+Le cœur v0.8 (333 octets, `contracts/archive/coeur-v0.8.sil`) ajoute l'entrée sans clé `absorb`, pour
+le sas de rechargement v0.1 (190 octets, `contracts/archive/sas-v0.1.sil`), §8. Jamais déployé.
+Depuis le 27 nov. 2026 au soir, `contracts/coeur.sil` est le cœur v0.9 (376 octets) : la v0.8 plus la
+lignée KIP-20, qui ferme la limite S3 du §8.3 et donne une borne pour le coffre entier ; sa preuve est
+dans `spec/borne-de-perte-v0.9.md`, qui s'appuie sur les §2, §3, §7 et §8 de ce document. Pas encore
+déployé par l'outil.
 Tests : `tests/coeur_tests.rs` (compilateur figé), `cli/src/coeur.rs` (moteur + modèle du consensus).
 
 ## 1. Ce que l'on promet
@@ -225,8 +228,8 @@ détienne quoi que ce soit. Celui qui paie (achat par carte, conservateur) envoi
 le **sas** ; cet argent ne peut ensuite que regonfler une pièce existante du coffre, ou revenir à
 l'adresse de retour.
 
-Deux scripts : le cœur v0.8 (`contracts/coeur.sil`) = cœur v0.7 + l'entrée `absorb` ; le sas
-(`contracts/sas.sil`), paramètres `coffreSpkHash` (blake2b du script du coffre), `retourSpkHash`,
+Deux scripts : le cœur v0.8 (`contracts/archive/coeur-v0.8.sil`) = cœur v0.7 + l'entrée `absorb` ; le
+sas v0.1 (`contracts/archive/sas-v0.1.sil`), paramètres `coffreSpkHash` (blake2b du script du coffre), `retourSpkHash`,
 `ownerKey`, `maxFrais`. Notations : `C` capacité, `F` = `maxFrais`.
 
 ### 8.1 Ce que disent les scripts (lecture directe)
@@ -307,6 +310,7 @@ dépôt dans SA pièce. Le dépôt n'ajoute alors pas de pièce, mais l'ancienne
 garde son solde et son rythme à côté : pendant qu'il lui reste du solde, le coffre a un emplacement
 financé de plus (excès borné par `min(solde restant, C + C·D/R)` par dépôt détourné). La courbe du
 §1b, elle, tient toujours. Détail, coût et parades : `spec/red-team/sas-2026-11-27.md`.
+**Fermé en v0.9 par la lignée** : `spec/borne-de-perte-v0.9.md`, §4 et §5.
 
 ### 8.4 La gêne a un prix, versé au propriétaire
 
@@ -337,7 +341,7 @@ Chaque règle a été sabotée tour à tour (`sas::tests::chaque_regle_sabotee_e
 | sas : deux entrées | oui | un second dépôt dans la même transaction part entièrement en frais |
 | sas : une sortie | oui | la marge de frais `F` va dans la poche d'un tiers au lieu d'être seulement brûlable, ou crée une pièce de plus au coffre (d'au plus `F`) |
 | sas : entrée 0 = le coffre (empreinte) | oui | le dépôt regonfle n'importe quel script |
-| sas : sortie au script de l'entrée 0 | non (doublée par le script du coffre) | rien : `absorb` et `ownerControl` imposent déjà la destination ; gardée pour ne pas dépendre de la lecture du cœur |
+| sas : sortie au script de l'entrée 0 | **oui** (corrigé le 27 nov. au soir ; d'abord annoncée non porteuse) | la clé du propriétaire envoie une pièce du coffre et un dépôt, fusionnés, à l'adresse de retour sans passer par `retour` (même clé, même destination : pas de vol) ; vu par le banc v0.9, `spec/red-team/lignee-2026-11-27.md` L6 |
 | sas : `sortie ≥ v + d − F` | oui | le dépôt part en frais |
 | sas, `retour` : signature du propriétaire | oui | n'importe qui renvoie chaque dépôt à l'adresse de retour : le rechargement est empêché pour le prix des frais |
 | sas, `retour` : adresse de retour | oui | la clé du propriétaire (volée) détourne les dépôts |

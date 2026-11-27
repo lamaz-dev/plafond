@@ -66,6 +66,7 @@ mod relais;
 mod passerelle;
 mod routeur;
 mod sas;
+mod lignee;
 mod sequestre;
 mod x402;
 
@@ -96,6 +97,9 @@ const FUND: u64 = 500_000_000; // 5 TKAS déposés dans le coffre
 const LANE: i64 = 0;
 /// 24 h en score DAA (10 DAA/s sur le testnet-10).
 pub const JOUR_DAA: i64 = 864_000;
+/// Lignée de référence pour l'empreinte du sas v0.2 : identifiant du vecteur de test officiel de
+/// KIP-20 (kaspanet/kips#49), recalculé par `fuzz::identifiant_de_covenant_conforme_au_vecteur_kip20`.
+const LIGNEE_REF: &str = "c86366cec738e9a1578b2d871ee493dcaabfd79156810f13f3b62429859e394e";
 
 /// Règles d'un coffre, calculées à partir des trois réglages de l'utilisateur : combien l'agent peut
 /// dépenser, sur quelle période, et combien au plus par achat. Cœur v0.6 : la capacité C est le
@@ -506,7 +510,12 @@ pub fn empreintes() -> Res<String> {
         retour: Some(sequestre::spk_hash(&refund).to_vec()),
     };
     let coeur = coeur_ref.artifact()?;
-    // Cœur v0.8 et son sas, mêmes réglages de référence (plafond de frais du sas par défaut).
+    // Cœur v0.9 (lignée KIP-20) et son sas v0.2, mêmes réglages de référence. Lignée de référence :
+    // l'identifiant du vecteur de test officiel de KIP-20 (kaspanet/kips#49, voir fuzz.rs).
+    let coeur_v09 = coeur_ref.artifact_v09()?;
+    let lignee_ref = Hash::from_bytes(<[u8; 32]>::try_from(hex::decode(LIGNEE_REF)?.as_slice()).expect("32 octets"));
+    let sas_v02 = lignee::Sas::pour(&coeur_ref, lignee_ref, lignee::FRAIS_MAX_DEFAUT)?.artifact()?;
+    // Cœur v0.8 et son sas v0.1 (archives, sans lignée), mêmes réglages de référence.
     let coeur_v08 = coeur_ref.artifact_v08()?;
     let sas_ref = sas::Sas::pour(&coeur_ref, sas::FRAIS_MAX_DEFAUT)?.artifact()?;
     let coeur_v06 = coeur::Coeur { retour: None, ..coeur_ref }.artifact()?;
@@ -516,14 +525,18 @@ pub fn empreintes() -> Res<String> {
     r.push_str(&format!("source agent_budget.sil : {}\n", b2(SOURCE.as_bytes())));
     r.push_str(&format!("source delivery_escrow.sil : {}\n", b2(sequestre::SOURCE.as_bytes())));
     r.push_str(&format!("source ardoise.sil : {}\n", b2(ardoise::SOURCE.as_bytes())));
-    r.push_str(&format!("source coeur.sil (v0.8, rechargement sans clé) : {}\n", b2(coeur::SOURCE_V08.as_bytes())));
-    r.push_str(&format!("source sas.sil (v0.1, sas de rechargement) : {}\n", b2(sas::SOURCE.as_bytes())));
+    r.push_str(&format!("source coeur.sil (v0.9, rechargement sans clé et lignée KIP-20) : {}\n", b2(coeur::SOURCE_V09.as_bytes())));
+    r.push_str(&format!("source sas.sil (v0.2, sas de rechargement lié à la lignée) : {}\n", b2(lignee::SOURCE.as_bytes())));
+    r.push_str(&format!("source archive/coeur-v0.8.sil (rechargement sans clé, sans lignée ; jamais déployé) : {}\n", b2(coeur::SOURCE_V08.as_bytes())));
+    r.push_str(&format!("source archive/sas-v0.1.sil (sas du cœur v0.8 ; jamais déployé) : {}\n", b2(sas::SOURCE.as_bytes())));
     r.push_str(&format!("source archive/coeur-v0.7.sil (coffres déployés par l'outil) : {}\n", b2(coeur::SOURCE.as_bytes())));
     r.push_str(&format!("source archive/coeur-v0.6.sil (gel des anciens coffres) : {}\n", b2(coeur::SOURCE_V06.as_bytes())));
     for (name, a) in [
         ("AgentBudget (paramètres de référence)", &vault),
         ("DeliveryEscrow (paramètres de référence)", &escrow),
         ("Ardoise (paramètres de référence)", &tab),
+        ("Coeur v0.9 (paramètres de référence)", &coeur_v09),
+        ("Sas v0.2 (coffre v0.9 de référence, lignée du vecteur KIP-20)", &sas_v02),
         ("Coeur v0.8 (paramètres de référence)", &coeur_v08),
         ("Sas v0.1 (coffre v0.8 de référence)", &sas_ref),
         ("Coeur v0.7 (paramètres de référence)", &coeur),

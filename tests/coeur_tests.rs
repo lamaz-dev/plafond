@@ -1,5 +1,9 @@
-//! Cœur v0.8 (budget sans mémoire, adresse de retour, rechargement sans clé) : comportement du contrat
-//! contre le vrai moteur de script. Les entrées `pay` et `ownerControl` sont celles de la v0.7.
+//! Cœur v0.9 (budget sans mémoire, adresse de retour, rechargement sans clé, lignée KIP-20) :
+//! comportement du contrat contre le vrai moteur de script. Les règles de `pay` et `ownerControl`
+//! sont celles de la v0.7, celles de `absorb` celles de la v0.8 ; s'y ajoute la règle de lignée :
+//! une pièce de la lignée a au plus une héritière, sa propre sortie.
+//! Dans ces essais, les pièces du coffre portent la lignée `LIGNEE` et, sauf mention contraire, toute
+//! sortie à l'adresse du coffre est déclarée dans cette lignée (voir `sorties`).
 //! Le verrou relatif est donné par `sequence` : le script exige `sequence ≥ délai` (OpCheckSequenceVerify),
 //! et le réseau exige que la pièce ait réellement cet âge (check_sequence_lock, testé côté outil).
 mod common;
@@ -7,8 +11,10 @@ use blake2b_simd::Params;
 use common::{bytecode, compile_contract, encode_entry_sig_script, execute_input_with_covenants, push_redeem_script};
 use kaspa_consensus_core::hashing::sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash};
 use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
+use kaspa_consensus_core::Hash;
 use kaspa_consensus_core::tx::{
-    PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint, TransactionOutput, UtxoEntry,
+    CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint, TransactionOutput,
+    UtxoEntry,
 };
 use kaspa_txscript::pay_to_script_hash_script;
 use secp256k1::{Keypair, Message};
@@ -51,15 +57,34 @@ fn art() -> SilAbiArtifact {
 fn moi(a: &SilAbiArtifact) -> ScriptPublicKey {
     pay_to_script_hash_script(&bytecode(a))
 }
+/// Lignée du coffre d'essai (identifiant de covenant porté par ses pièces).
+const LIGNEE: Hash = Hash::from_bytes([0xA1; 32]);
+fn liee(valeur: u64, spk: ScriptPublicKey, entree: u16) -> TransactionOutput {
+    TransactionOutput { value: valeur, script_public_key: spk, covenant: Some(CovenantBinding { authorizing_input: entree, covenant_id: LIGNEE }) }
+}
+fn libre(valeur: u64, spk: ScriptPublicKey) -> TransactionOutput {
+    TransactionOutput { value: valeur, script_public_key: spk, covenant: None }
+}
+/// Forme ordinaire : une sortie à l'adresse du coffre reste dans la lignée, autorisée par l'entrée
+/// de même indice (entrée i -> sortie i), ou par l'entrée 0 s'il n'y a pas d'entrée de cet indice
+/// (le reste d'un paiement, sortie 1 d'une transaction à une entrée).
+fn sorties(a: &SilAbiArtifact, outs: Vec<(u64, ScriptPublicKey)>, n_entrees: usize) -> Vec<TransactionOutput> {
+    let m = moi(a);
+    outs.into_iter().enumerate().map(|(j, (v, s))| if s == m { liee(v, s, if j < n_entrees { j as u16 } else { 0 }) } else { libre(v, s) }).collect()
+}
 
 /// Exécute l'entrée 0. `valeurs` : valeur de chaque pièce du coffre en entrée (toutes à la même adresse).
 fn run_n(a: &SilAbiArtifact, signer: u8, entry: &str, valeurs: &[u64], outs: Vec<(u64, ScriptPublicKey)>, seq: u64) -> bool {
-    let inputs = (0..valeurs.len())
+    let outputs = sorties(a, outs, valeurs.len());
+    run_brut(a, signer, entry, &valeurs.iter().map(|v| (*v, Some(LIGNEE))).collect::<Vec<_>>(), outputs, seq)
+}
+/// Forme libre : lignée de chaque pièce en entrée et de chaque sortie choisies par l'essai.
+fn run_brut(a: &SilAbiArtifact, signer: u8, entry: &str, entrees: &[(u64, Option<Hash>)], outputs: Vec<TransactionOutput>, seq: u64) -> bool {
+    let inputs = (0..entrees.len())
         .map(|i| TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), i as u32), vec![], seq, 1000))
         .collect();
-    let outputs = outs.into_iter().map(|(v, s)| TransactionOutput { value: v, script_public_key: s, covenant: None }).collect();
     let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
-    let utxos: Vec<UtxoEntry> = valeurs.iter().map(|v| UtxoEntry::new(*v, moi(a), 0, false, None)).collect();
+    let utxos: Vec<UtxoEntry> = entrees.iter().map(|(v, l)| UtxoEntry::new(*v, moi(a), 0, false, *l)).collect();
     let r = SigHashReusedValuesUnsync::new();
     let h = calc_schnorr_signature_hash(&PopulatedTransaction::new(&tx, utxos.clone()), 0, SIG_HASH_ALL, &r);
     let mut sig = kp(signer).sign_schnorr(Message::from_digest_slice(h.as_bytes().as_slice()).unwrap()).as_ref().to_vec();
@@ -190,20 +215,24 @@ fn delai_tronque_a_32_bits_impossible() {
 /// Exécute l'entrée `idx` d'une transaction dont toutes les entrées sont des pièces du coffre
 /// dépensées par `absorb` (aucune signature).
 fn absorb_n(a: &SilAbiArtifact, valeurs: &[u64], outs: Vec<(u64, ScriptPublicKey)>, idx: usize) -> bool {
+    let outputs = sorties(a, outs, valeurs.len());
+    absorb_brut(a, &valeurs.iter().map(|v| (*v, Some(LIGNEE))).collect::<Vec<_>>(), outputs, idx)
+}
+fn absorb_brut(a: &SilAbiArtifact, entrees: &[(u64, Option<Hash>)], outputs: Vec<TransactionOutput>, idx: usize) -> bool {
     let mut ss = encode_entry_sig_script(a, "absorb", &[]).unwrap();
     ss.extend(push_redeem_script(&bytecode(a)));
-    let inputs = (0..valeurs.len())
+    let inputs = (0..entrees.len())
         .map(|i| TransactionInput::new_with_compute_budget(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), i as u32), ss.clone(), 0, 1000))
         .collect();
-    let outputs = outs.into_iter().map(|(v, s)| TransactionOutput { value: v, script_public_key: s, covenant: None }).collect();
     let tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
-    let utxos: Vec<UtxoEntry> = valeurs.iter().map(|v| UtxoEntry::new(*v, moi(a), 0, false, None)).collect();
+    let utxos: Vec<UtxoEntry> = entrees.iter().map(|(v, l)| UtxoEntry::new(*v, moi(a), 0, false, *l)).collect();
     execute_input_with_covenants(tx, utxos, idx).is_ok()
 }
 
 #[test]
 fn regonflement_sans_cle() {
-    // v0.8 : sans signature, la pièce ne peut que revenir au coffre, grossie d'au moins la capacité.
+    // v0.8 : sans signature, la pièce ne peut que revenir au coffre, grossie d'au moins la capacité
+    // (et, depuis la v0.9, dans la lignée : `sorties` le déclare).
     let a = art();
     let c = C as u64;
     assert!(absorb_n(&a, &[V], vec![(V + c, moi(&a))], 0), "pièce grossie de la capacité : acceptée");
@@ -230,10 +259,56 @@ fn regonflement_sans_cle() {
     }
 }
 
+/// v0.9 : une pièce de la lignée a au plus une héritière, sa propre sortie. Le nombre de pièces du
+/// coffre ne peut pas augmenter, quelle que soit la clé ; une pièce hors lignée (envoyée par un
+/// tiers à l'adresse du coffre) n'est ni dépensable par l'agent, ni regonflable.
+#[test]
+fn lignee_une_seule_heritiere() {
+    let a = art();
+    let (m, c, w) = (moi(&a), C as u64, R as u64);
+    let x = Some(LIGNEE);
+    let autre = Hash::from_bytes([0xB2; 32]);
+    let liee_a = |v: u64, s: ScriptPublicKey, id: Hash| TransactionOutput { value: v, script_public_key: s, covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id: id }) };
+
+    // pay : le reste (sortie 1) est la seule héritière.
+    let pay = |entree: Option<Hash>, outs: Vec<TransactionOutput>| run_brut(&a, 2, "pay", &[(V, entree)], outs, w);
+    assert!(pay(x, vec![libre(c - FEE, vendeur()), liee(V - c, m.clone(), 0)]), "paiement dans la lignée : accepté");
+    assert!(!pay(x, vec![libre(c - FEE, vendeur()), libre(V - c, m.clone())]), "le reste sort de la lignée : refusé");
+    assert!(!pay(x, vec![liee(c - FEE, vendeur(), 0), liee(V - c, m.clone(), 0)]), "bénéficiaire rattaché à la lignée : refusé");
+    assert!(!pay(x, vec![liee(c - FEE, vendeur(), 0), libre(V - c, m.clone())]), "lignée déplacée sur le bénéficiaire : refusé");
+    assert!(!pay(None, vec![libre(c - FEE, vendeur()), libre(V - c, m.clone())]), "pièce sans lignée (poussière d'un tiers) : l'agent ne peut pas la dépenser");
+    assert!(!pay(None, vec![libre(c - FEE, vendeur()), liee(V - c, m.clone(), 0)]), "pièce sans lignée déclarée dans la lignée : refusé par le réseau");
+    // Une autre lignée à la même adresse (genèse d'un tiers, avec son argent) est un autre coffre :
+    // elle se dépense dans SA lignée, jamais dans celle du coffre.
+    assert!(pay(Some(autre), vec![libre(c - FEE, vendeur()), liee_a(V - c, m.clone(), autre)]), "autre lignée : dépensable dans sa propre lignée");
+    assert!(!pay(Some(autre), vec![libre(c - FEE, vendeur()), liee(V - c, m.clone(), 0)]), "autre lignée rebaptisée : refusé par le réseau");
+
+    // ownerControl : même avec la clé du propriétaire, pas de pièce de plus dans la lignée.
+    let ctrl = |entree: Option<Hash>, outs: Vec<TransactionOutput>| run_brut(&a, 1, "ownerControl", &[(V, entree)], outs, 0);
+    assert!(ctrl(x, vec![liee(V, m.clone(), 0)]), "rechargement dans la lignée : accepté");
+    assert!(!ctrl(x, vec![libre(V, m.clone())]), "rechargement hors lignée : refusé");
+    assert!(!ctrl(x, vec![liee(V, m.clone(), 0), liee(1_000, m.clone(), 0)]), "seconde pièce dans la lignée : refusé");
+    assert!(!ctrl(x, vec![liee(V, m.clone(), 0), liee(1_000, vendeur(), 0)]), "pièce de la lignée vers un tiers : refusé");
+    assert!(!ctrl(x, vec![libre(V, m.clone()), liee(1_000, m.clone(), 0)]), "la lignée part sur une autre sortie : refusé");
+    assert!(ctrl(x, vec![libre(V - FEE, retour())]), "gel : la pièce quitte la lignée");
+    assert!(!ctrl(x, vec![liee(V - FEE, retour(), 0)]), "gel : la lignée suit la pièce à l'adresse de retour : refusé");
+    assert!(!ctrl(x, vec![libre(V - FEE, retour()), liee(1_000, m.clone(), 0)]), "gel : une héritière reste au coffre : refusé");
+    assert!(ctrl(None, vec![libre(V - FEE, retour())]), "pièce sans lignée : le propriétaire la rapatrie");
+    assert!(!ctrl(None, vec![libre(V, m.clone())]), "pièce sans lignée : pas de rechargement");
+
+    // absorb : sans clé, la pièce reste dans la lignée, seule.
+    assert!(absorb_brut(&a, &[(V, x)], vec![liee(V + c, m.clone(), 0)], 0), "regonflement dans la lignée : accepté");
+    assert!(!absorb_brut(&a, &[(V, x)], vec![libre(V + c, m.clone())], 0), "regonflement hors lignée : refusé");
+    assert!(!absorb_brut(&a, &[(V, x)], vec![liee(V + c, m.clone(), 0), liee(c, m.clone(), 0)], 0), "seconde pièce dans la lignée : refusé");
+    assert!(!absorb_brut(&a, &[(V, x)], vec![libre(V + c, m.clone()), liee(c, m.clone(), 0)], 0), "la lignée part sur une autre sortie : refusé");
+    assert!(!absorb_brut(&a, &[(V, None)], vec![libre(V + c, m.clone())], 0), "pièce sans lignée : pas de regonflement");
+    assert!(!absorb_brut(&a, &[(V, None)], vec![liee(V + c, m.clone(), 0)], 0), "pièce sans lignée déclarée dans la lignée : refusé par le réseau");
+}
+
 #[test]
 fn taille_du_coeur() {
     let a = art();
     let n = bytecode(&a).len();
-    eprintln!("Cœur v0.8 : {n} octets ; attente pour 0,5 KAS = {} DAA", attente(50_000_000 + FEE));
-    assert!(n < 350, "le cœur doit rester minimal ({n} octets)");
+    eprintln!("Cœur v0.9 : {n} octets ; attente pour 0,5 KAS = {} DAA", attente(50_000_000 + FEE));
+    assert!(n < 400, "le cœur doit rester minimal ({n} octets)");
 }

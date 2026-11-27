@@ -73,3 +73,27 @@ modifié, recompilé, et la même liste de 25 attaques est rejouée ; l'attaque 
 | `absorb` : `≥ v` au lieu de `≥ v + C` | détectée (gêne gratuite) |
 | `absorb` : retirer `capacity > 0` | détectée (`absorb_refuse_avec_une_capacite_aberrante`) |
 
+
+## Cœur v0.9 (lignée KIP-20) et sas v0.2 (27 nov. 2026, soir)
+
+Sabotages automatisés : `cli/src/lignee.rs`, test `chaque_regle_sabotee_est_detectee`. Le source est
+modifié, recompilé, et la liste de 61 attaques est rejouée ; l'attaque attendue doit passer, et les
+15 transactions légitimes doivent toujours passer. Les 11 mutations de la v0.8 sont rejouées sur les
+nouveaux contrats (toutes détectées), avec une correction : « sortie au script de l'entrée 0 » ne
+survit plus (attaque ajoutée : gel du coffre et dépôt fusionnés vers l'adresse de retour).
+
+| Mutation | Résultat |
+|---|---|
+| sas : retirer `OpInputCovenantId(0) == lignee` | détectée (S3 : poussière portant une fausse lignée) |
+| sas : retirer l'empreinte du coffre | détectée (lignée du coffre sous le script d'un tiers : dépôt volé) |
+| sas : retirer « sortie au script de l'entrée 0 » | détectée (dépôt fusionné vers l'adresse de retour, sans l'entrée `retour`) |
+| `pay` : retirer la règle de lignée | détectée (l'agent paie avec une poussière sans lignée ; bénéficiaire rattaché à la lignée) |
+| `pay` : garder le compte, retirer l'indice | détectée (l'agent déplace la lignée sur le bénéficiaire) |
+| `pay` : garder l'indice, retirer le compte | **survit, attendu** : avec deux sorties, l'indice implique le compte (preuve v0.9, §7) |
+| `absorb` : retirer la règle de lignée | détectée (seconde pièce de la lignée au coffre ; poussière regonflée sans clé) |
+| `absorb` : garder le compte, retirer l'indice | détectée (la lignée part sur une autre sortie) |
+| `absorb` : garder l'indice, retirer le compte | détectée (pièce de la lignée vers un tiers) |
+| `ownerControl`, retour au coffre : retirer la règle de lignée | détectée (clé du propriétaire : seconde pièce dans la lignée) |
+| `ownerControl`, retour au coffre : garder le compte, retirer l'indice | détectée (la lignée part sur une autre sortie) |
+| `ownerControl`, retour au coffre : garder l'indice, retirer le compte | détectée (pièce de la lignée vers un tiers) |
+| `ownerControl`, adresse de retour : retirer « aucune héritière » | détectée (une héritière reste au coffre ; la lignée suit la pièce à l'adresse de retour) |
