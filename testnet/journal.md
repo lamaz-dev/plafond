@@ -1395,3 +1395,73 @@ Solde du propriétaire : 988.26047999 TKAS (16 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-27 04:39 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.7) : 5 TKAS en 4 pièce(s) à l'adresse kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90
+Adresse de retour (gel, retrait) : kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+Transaction : https://tn10.kaspa.stream/transactions/dcfc8504a8115fa7771d3f9b4ddb787a605b6912b069be5c22213c1bdf7bc9bf
+
+$ vault-cli pause 2000
+(pause de 2000 s)
+
+$ passerelle d'entreprise (démo) + agent Python + arrêt d'urgence
+Agent de démonstration préparé dans /tmp/passerelle/recherche (clé de l'agent seulement)
+Budget de l'agent : 1.10311108 TKAS disponibles, 0.485 TKAS max par paiement
+
+=== 1. L'agent achète une donnée (0,2 TKAS) à travers la passerelle ===
+Contenu : Météo du réseau Kaspa : 10 blocs/s, mempool calme, frais bas.
+Payé 0.2 TKAS depuis le coffre de l'agent : https://tn10.kaspa.stream/transactions/e44af11bc22dd5ee5d2110724e12a8b841a063fd7831c80f8bb920b57ffb3195
+
+=== 2. Le vendeur demande 1 TKAS, au-dessus du plafond de l'agent ===
+Refusé avant tout paiement : prix 100000000 sompi supérieur au plafond demandé (48500000)
+
+=== 3. Arrêt d'urgence par l'administrateur ===
+Arrêt : HTTP 200 {'agent': 'recherche', 'arrete': True, 'arrets': ['recherche']}
+Agent arrêté, achat refusé : 423 : agent arrêté par l'administrateur
+Reprise : HTTP 200
+
+=== 4. Journal d'audit chaîné ===
+Tête du journal : {'lignes': 8, 'tete_sha256': 'c9c4ee2c43053aaa93349217e0db216b3ada2e028021a8d189e1e722d987d67d'}
+
+VERDICT : la passerelle a payé ce qui était permis, refusé le reste, et l'arrêt d'urgence a tenu.
+--- journal de la passerelle ---
+[PASSERELLE] à l'écoute sur http://127.0.0.1:8403 : 1 agent(s), arrêts : {}
+[PASSERELLE] journal vérifié : 0 ligne(s), tête 0000000000000000000000000000000000000000000000000000000000000000
+
+[AGENT] GET http://127.0.0.1:8402/meteo-kaspa
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+[VENDEUR] /meteo-kaspa : paiement requis (0.2 TKAS)
+[AGENT] 402 reçu : 0.2 TKAS à payer à kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+[AGENT] paiement signé depuis le coffre, envoi au vendeur
+[VENDEUR] autorisation valide : signée par la clé agent du coffre pour cette requête
+[VENDEUR] coffre authentique et solvable : script Plafond recompilé = pièce on-chain
+[VENDEUR] paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/e44af11bc22dd5ee5d2110724e12a8b841a063fd7831c80f8bb920b57ffb3195
+[AGENT] ✅ contenu reçu : « Météo du réseau Kaspa : 10 blocs/s, mempool calme, frais bas. »
+[AGENT] reçu de paiement : transaction e44af11bc22dd5ee5d2110724e12a8b841a063fd7831c80f8bb920b57ffb3195
+
+[AGENT] GET http://127.0.0.1:8402/rapport-premium
+[VENDEUR] /rapport-premium : paiement requis (1 TKAS)
+[AGENT] 402 reçu : 1 TKAS à payer à kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+[AGENT] je refuse : prix supérieur au plafond de cette requête
+[PASSERELLE] ARRÊT : recherche
+[PASSERELLE] reprise : recherche
+--- vérification du journal d'audit chaîné ---
+Journal intact : 8 ligne(s), chaîne continue.
+Tête de chaîne (à comparer avec la copie conservée ailleurs) : c9c4ee2c43053aaa93349217e0db216b3ada2e028021a8d189e1e722d987d67d
+
+$ vault-cli recuperer
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+4 pièce(s) rapatriée(s) vers kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz : 4.76858 TKAS, https://tn10.kaspa.stream/transactions/00bd3995ecf737d7b3ff37e5e3e6feae7d2b1f964430086105bc834ce2a0377e
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 634206680
+Solde du propriétaire : 988.15405999 TKAS (17 UTXO)
+Coffre : pas encore déployé
+
+```
