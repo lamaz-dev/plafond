@@ -45,51 +45,11 @@ fn json_rep(statut: u16, v: Value) -> tiny_http::Response<std::io::Cursor<Vec<u8
     reponse(statut, "application/json; charset=utf-8", v.to_string().into_bytes())
 }
 
-/// Cours indicatifs du KAS dans plusieurs unités de lecture, mis en cache 5 minutes ; absents si
-/// l'API ne répond pas. USDT, USDC, BTC, ETH et SOL sont calculés à partir de leur propre cours en
-/// dollars (aucune parité supposée).
-struct Cours {
-    valeur: Option<Value>,
-    lu: Option<Instant>,
-}
-
-impl Cours {
-    fn lire(&mut self) -> Option<Value> {
-        if self.lu.is_some_and(|t| t.elapsed() < Duration::from_secs(300)) {
-            return self.valeur.clone();
-        }
-        self.lu = Some(Instant::now());
-        let v = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa,tether,usd-coin,bitcoin,ethereum,solana&vs_currencies=usd,eur,jpy,gbp")
-            .call()
-            .ok()
-            .and_then(|r| r.into_string().ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
-        self.valeur = v.and_then(|v| {
-            let usd = |id: &str| v[id]["usd"].as_f64().filter(|x| *x > 0.0);
-            let kas = usd("kaspa")?;
-            let mut c = json!({ "usd": kas, "eur": v["kaspa"]["eur"].as_f64()?, "source": "CoinGecko (indicatif)" });
-            for f in ["jpy", "gbp"] {
-                if let Some(x) = v["kaspa"][f].as_f64() {
-                    c[f] = json!(x);
-                }
-            }
-            for (cle, id) in [("usdt", "tether"), ("usdc", "usd-coin"), ("btc", "bitcoin"), ("eth", "ethereum"), ("sol", "solana")] {
-                if let Some(x) = usd(id) {
-                    c[cle] = json!(kas / x);
-                }
-            }
-            Some(c)
-        });
-        self.valeur.clone()
-    }
-}
+use crate::financement::Cours;
 
 /// Tarif de référence d'une requête standard (frais inclus), pour exprimer les budgets en requêtes.
 fn tarif_reference() -> i64 {
-    std::env::var("TARIF_REQUETE_SOMPI").ok().and_then(|v| v.parse().ok()).filter(|t| *t > 0).unwrap_or(40_000_000)
+    std::env::var("TARIF_REQUETE_SOMPI").ok().and_then(|v| v.parse().ok()).filter(|t| *t > 0).unwrap_or(crate::financement::TARIF_REFERENCE_SOMPI as i64)
 }
 
 /// QR code (SVG en URI data:) d'une adresse, généré localement, sans service tiers.

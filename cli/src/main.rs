@@ -63,6 +63,7 @@ mod sobriete;
 #[global_allocator]
 static MEMOIRE: sobriete::Plafonne = sobriete::Plafonne;
 mod relais;
+mod financement;
 mod passerelle;
 mod routeur;
 mod sas;
