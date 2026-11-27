@@ -189,6 +189,10 @@ fn charger_agent(dossier: &Path) -> Res<(Vec<u8>, Keypair, Option<Regles>, Strin
         return Err("agent.json : clé publique du propriétaire invalide".into());
     }
     let regles: Option<Regles> = serde_json::from_value(meta["regles"].clone()).unwrap_or(None);
+    // Clé lisible par d'autres comptes de la machine : refus (elle signe les dépenses du coffre).
+    if !crate::prive::est_prive(&dossier.join("agent.key")).map_err(|e| format!("{}/agent.key : {e}", dossier.display()))? {
+        return Err(format!("{}/agent.key est lisible par d'autres utilisateurs : réservez-le au compte de la passerelle (chmod 600)", dossier.display()).into());
+    }
     let hexa = zeroize::Zeroizing::new(std::fs::read_to_string(dossier.join("agent.key")).map_err(|e| format!("{}/agent.key : {e}", dossier.display()))?);
     let cle = Keypair::from_seckey_slice(secp256k1::SECP256K1, &zeroize::Zeroizing::new(hex::decode(hexa.trim())?))?;
     let etat = dossier.join("etat-coffre.json").to_string_lossy().into_owned();
@@ -524,7 +528,7 @@ mod tests {
         std::fs::create_dir_all(d).unwrap();
         let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
         std::fs::write(d.join("agent.json"), json!({ "proprietaire": hex::encode(xonly(&k(1))), "regles": null }).to_string()).unwrap();
-        std::fs::write(d.join("agent.key"), hex::encode([octet; 32])).unwrap();
+        crate::prive::ecrire(&d.join("agent.key"), hex::encode([octet; 32]).as_bytes()).unwrap();
     }
 
     fn banc(nom: &str) -> Banc {
@@ -723,6 +727,17 @@ mod tests {
         assert!(essai(json!({ "admin_cle_sha256": ad, "agents": [] })).is_some());
         // le fichier ne contient que des empreintes : la clé elle-même n'y figure jamais
         assert!(essai(json!({ "admin_cle_sha256": ad, "agents": [agent(&e, json!(["https://x.org"]))] })).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cle_d_agent_lisible_par_d_autres_refusee() {
+        use std::os::unix::fs::PermissionsExt;
+        let b = banc("droits");
+        let cle = b._dossier.join("a").join("agent.key");
+        std::fs::set_permissions(&cle, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let e = Passerelle::depuis_fichier(&b.config, Box::new(|_: &Agent, _: &str, _: i64| Err("x".into())), Box::new(|_: &Agent| Ok(json!({})))).err().unwrap().to_string();
+        assert!(e.contains("lisible par d'autres"), "{e}");
     }
 
     #[test]
