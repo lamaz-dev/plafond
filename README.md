@@ -9,7 +9,7 @@
 
 <p align="center">Plafond tells you how much your AI agents can lose at most, right now and over the next 24 hours, and the Kaspa network enforces it, even if an agent is hacked.</p>
 
-<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Website</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Download</a> · <a href="DEMO.md">Run the demo</a> · <a href="ROADMAP.md">Roadmap</a> · <a href="SECURITY.md">Security</a></p>
+<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Website</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Download</a> · <a href="GATEWAY.md">Gateway</a> · <a href="DEMO.md">Run the demo</a> · <a href="ROADMAP.md">Roadmap</a> · <a href="SECURITY.md">Security</a></p>
 
 # Plafond
 
@@ -36,6 +36,7 @@ The budgets, vaults and payment modes underneath are the means; the guaranteed w
 - ✅ **curve promised at creation**: a mandate's total loss never exceeds `C × t / R`, capped at its capital, whatever the agent does; proven on paper and verified by tests against the real Kaspa script engine ([proof, in French](spec/borne-de-perte-v0.6.md), [comparison with v0.5.1](spec/comparaison-v0.5.1-v0.6.md))
 - ✅ reproducible in one command: `./verify-proof.sh`
 - ✅ automated CI on every push, long fuzzing campaign every week
+- ✅ **enterprise gateway**: one entry point for many agents, no owner key, API keys stored as fingerprints, persistent emergency stop, hash-chained audit log ([GATEWAY.md](GATEWAY.md))
 - ⚠️ not independently reviewed, not audited
 - ⚠️ no mainnet deployment; do not use with real funds
 

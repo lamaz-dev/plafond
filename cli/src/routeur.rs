@@ -42,14 +42,14 @@ use crate::*;
 
 pub const PORT: u16 = 8403;
 
-fn reponse(statut: u16, corps: Value) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn reponse(statut: u16, corps: Value) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
     tiny_http::Response::from_string(corps.to_string())
         .with_status_code(statut)
         .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap())
 }
 
 /// Budget disponible maintenant, lu sur le nœud (pièces du coffre et leur âge).
-async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
+pub(crate) async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> {
     let c = connect().await?;
     let v = coffre::vue(&c, owner_pk, &xonly(agent)).await;
     liberer(&c).await?;
@@ -80,7 +80,7 @@ async fn agent_compromis(owner_pk: &[u8], agent: &Keypair, service: &Address, mo
     })
 }
 
-fn lire_json(req: &mut tiny_http::Request) -> Result<Value, String> {
+pub(crate) fn lire_json(req: &mut tiny_http::Request) -> Result<Value, String> {
     let mut corps = String::new();
     req.as_reader().take(64 * 1024).read_to_string(&mut corps).map_err(|_| "corps illisible")?;
     serde_json::from_str(&corps).map_err(|_| "JSON invalide".to_string())

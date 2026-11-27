@@ -63,6 +63,7 @@ mod sobriete;
 #[global_allocator]
 static MEMOIRE: sobriete::Plafonne = sobriete::Plafonne;
 mod relais;
+mod passerelle;
 mod routeur;
 mod sequestre;
 mod x402;
@@ -1217,6 +1218,46 @@ async fn main() -> Res<()> {
         };
         println!("Clé publique x-only : {}", hex::encode(&publique));
         println!("Adresse du propriétaire (à alimenter depuis KasWare ou Kastle) : {}", Address::new(Prefix::Testnet, Version::PubKey, &publique));
+        return Ok(());
+    }
+    if cmd == "passerelle-cle" {
+        // Nouvelle clé d'API (agent ou administration) : la clé s'affiche une seule fois, seule son
+        // empreinte va dans la configuration.
+        let (cle, empreinte) = passerelle::nouvelle_cle()?;
+        println!("Clé (à remettre à l'agent ou à l'administrateur, elle ne sera plus affichée) :\n  {cle}");
+        println!("Empreinte SHA-256 (à copier dans la configuration de la passerelle) :\n  {empreinte}");
+        return Ok(());
+    }
+    if cmd == "passerelle-verifier" {
+        let chemin = args.get(2).ok_or("chemin du journal manquant")?;
+        let (n, tete) = passerelle::verifier_journal(std::path::Path::new(chemin))?;
+        println!("Journal intact : {n} ligne(s), chaîne continue.");
+        println!("Tête de chaîne (à comparer avec la copie conservée ailleurs) : {}", hex::encode(tete));
+        return Ok(());
+    }
+    if cmd == "passerelle-agent-demo" {
+        // Réseau de test seulement : prépare le dossier d'un agent (comme agent-installer) à partir des
+        // clés de démonstration, pour essayer la passerelle sans console. La clé du propriétaire n'y
+        // est PAS écrite : seulement sa clé publique.
+        let dossier = std::path::PathBuf::from(args.get(2).ok_or("dossier de l'agent manquant")?);
+        let (owner, agent) = (charger_proprietaire()?, keypair_from_env("AGENT_SK")?);
+        fs::create_dir_all(&dossier)?;
+        fs::write(dossier.join("agent.json"), serde_json::json!({ "proprietaire": hex::encode(xonly(&owner)), "regles": serde_json::Value::Null }).to_string())?;
+        prive::ecrire(&dossier.join("agent.key"), hex::encode(agent.secret_bytes()).as_bytes())?;
+        if let Ok(e) = fs::read(etat_par_defaut()) {
+            fs::write(dossier.join("etat-coffre.json"), e)?;
+        }
+        println!("Agent de démonstration préparé dans {} (clé de l'agent seulement)", dossier.display());
+        return Ok(());
+    }
+    if cmd == "passerelle" {
+        // Passerelle d'entreprise (voir passerelle.rs) : plusieurs agents, jamais la clé d'un propriétaire.
+        if env::var("VAULT_PHRASE").is_ok() || env::var("OWNER_SK").is_ok() || env::var("PROPRIETAIRE_CLE").is_ok() {
+            return Err("passerelle : la clé du propriétaire ne doit jamais être fournie (seules les clés des agents, installées par agent-installer)".into());
+        }
+        let config = std::path::PathBuf::from(args.get(2).ok_or("fichier de configuration de la passerelle manquant")?);
+        let h = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || passerelle::lancer(h, &config).map_err(|e| e.to_string())).await??;
         return Ok(());
     }
     if cmd == "routeur" {

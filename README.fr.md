@@ -9,7 +9,7 @@
 
 <p align="center">Plafond vous dit combien vos agents IA peuvent perdre au maximum, maintenant et sur les prochaines 24 heures, et le réseau Kaspa l'impose, même si un agent est piraté.</p>
 
-<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Site</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Télécharger</a> · <a href="DEMO.fr.md">Lancer la démo</a> · <a href="ROADMAP.md">Feuille de route</a> · <a href="SECURITY.md">Sécurité</a></p>
+<p align="center"><a href="https://lamaz-dev.github.io/plafond/">Site</a> · <a href="https://github.com/lamaz-dev/plafond/releases/latest">Télécharger</a> · <a href="GATEWAY.fr.md">Passerelle</a> · <a href="DEMO.fr.md">Lancer la démo</a> · <a href="ROADMAP.md">Feuille de route</a> · <a href="SECURITY.md">Sécurité</a></p>
 
 # Plafond
 
@@ -42,6 +42,7 @@ Les budgets, coffres et modes de paiement sont les moyens ; le pire scénario ga
 - ✅ moteur de risque : perte maximale immédiate, sur 24 h, par agent et par vendeur, avec ce que la garantie ne couvre pas ([spécification](spec/moteur-de-risque.md)), affiché dans la console et vérifié par test contre le vrai moteur de Kaspa
 - ✅ reproductible en une commande : `./verify-proof.sh`
 - ✅ CI automatique à chaque envoi, campagne longue de fuzzing chaque semaine
+- ✅ **passerelle d'entreprise** : un point d'entrée pour plusieurs agents, jamais la clé du propriétaire, clés d'API stockées en empreinte, arrêt d'urgence persistant, journal d'audit chaîné ([GATEWAY.fr.md](GATEWAY.fr.md))
 - ⚠️ pas encore relu de façon indépendante, non audité
 - ⚠️ aucun déploiement mainnet : ne pas utiliser avec des fonds réels
 

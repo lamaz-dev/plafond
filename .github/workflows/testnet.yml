@@ -65,6 +65,27 @@ jobs:
                   unset ROUTEUR_CLE ROUTEUR_DEMO
                   echo ""
                   continue ;;
+                essai-passerelle)
+                  echo "\$ passerelle d'entreprise (démo) + agent Python + arrêt d'urgence"
+                  G=/tmp/passerelle; rm -rf $G; mkdir -p $G
+                  ./cli/target/release/vault-cli passerelle-agent-demo $G/recherche 2>&1
+                  AK=$(./cli/target/release/vault-cli passerelle-cle | sed -n 2p | tr -d ' ')
+                  AE=$(printf '%s' "$AK" | sha256sum | cut -d' ' -f1)
+                  GK=$(./cli/target/release/vault-cli passerelle-cle | sed -n 2p | tr -d ' ')
+                  GE=$(printf '%s' "$GK" | sha256sum | cut -d' ' -f1)
+                  printf '{"demo":true,"vendeur_demo":true,"journal":"journal.jsonl","admin_cle_sha256":"%s","agents":[{"nom":"recherche","dossier":"recherche","cle_api_sha256":"%s"}]}' "$GE" "$AE" > $G/passerelle.json
+                  env -u VAULT_PHRASE ./cli/target/release/vault-cli passerelle $G/passerelle.json > /tmp/passerelle.log 2>&1 &
+                  PPID_G=$!
+                  for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8403/ && break; sleep 1; done
+                  PASSERELLE_URL=http://127.0.0.1:8403 AGENT_CLE="$AK" ADMIN_CLE="$GK" python3 sdk/python/exemples/demo_passerelle.py 2>&1 || echo "(code de sortie $?)"
+                  kill $PPID_G 2>/dev/null; sleep 1
+                  echo "--- journal de la passerelle ---"; grep -v "Connecté" /tmp/passerelle.log | tail -20
+                  echo "--- vérification du journal d'audit chaîné ---"
+                  ./cli/target/release/vault-cli passerelle-verifier $G/journal.jsonl 2>&1 || echo "(code de sortie $?)"
+                  cp $G/recherche/etat-coffre.json testnet/etat-coffre.json 2>/dev/null || true
+                  unset AK GK AE GE
+                  echo ""
+                  continue ;;
                 essai-relais)
                   echo "\$ node tests/juge-kaspa-x402/essai-testnet.mjs"
                   node tests/juge-kaspa-x402/essai-testnet.mjs "$PWD/cli/target/release/vault-cli" 2>&1 || echo "(code de sortie $?)"
