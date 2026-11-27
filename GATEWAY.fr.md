@@ -18,6 +18,7 @@ permettent déjà.**
 | **Journal d'audit chaîné** | Chaque ligne porte l'empreinte SHA-256 de la précédente. Une ligne modifiée, supprimée ou insérée casse la chaîne : la passerelle refuse de démarrer et `passerelle-verifier` désigne la ligne. La tête de chaîne est exposée pour être recopiée dans un SIEM : c'est ce qui empêche de réécrire tout le journal d'un coup. |
 | **Rien payé sans trace** | La demande est journalisée *avant* le paiement. Si le journal ne peut pas être écrit, le paiement est refusé. Les paramètres d'URL ne sont jamais journalisés (ils peuvent contenir des secrets). |
 | **Tout refusé par défaut** | Clé inconnue, agent arrêté, vendeur hors de la liste de l'agent, http, adresse interne ou de métadonnées cloud, URL ambiguë : refusés avant tout appel réseau. Hors démo, chaque agent doit avoir une liste de vendeurs explicite. |
+| **Clés d'agent privées** | La passerelle refuse de démarrer si le fichier de clé d'un agent est lisible par d'autres comptes de la machine. |
 | **Agents isolés** | Chaque agent a son coffre, sa liste de vendeurs, son plafond par requête, sa limite de débit et son cache d'idempotence. Un agent ne peut ni payer depuis le coffre d'un autre, ni rejouer ses réponses. |
 
 Les requêtes sont traitées une par une : deux achats ne lisent jamais le même état de coffre en même temps.

@@ -17,6 +17,7 @@ The gateway is built on one rule: **a compromised gateway must not cost more tha
 | **Hash-chained audit log** | Every line carries the SHA-256 of the previous one. A modified, deleted or inserted line breaks the chain: the gateway refuses to start and `passerelle-verifier` names the line. The head of the chain is exposed so it can be copied to a SIEM: that is what prevents rewriting the whole log at once. |
 | **Nothing paid without a trace** | The request is logged *before* the payment. If the log cannot be written, the payment is refused. URL query strings are never logged (they can carry secrets). |
 | **Deny by default** | Unknown key, stopped agent, vendor outside the agent's list, http, internal or cloud-metadata address, ambiguous URL: refused before any network call. Outside demo mode, every agent must have an explicit vendor list. |
+| **Private agent keys** | The gateway refuses to start if an agent key file is readable by other users of the machine. |
 | **Isolation between agents** | Each agent has its own vault, vendor list, per-request cap, rate limit and idempotency cache. One agent cannot pay from, or replay, another's. |
 
 Requests are processed one at a time: two purchases never read the same vault state concurrently.
