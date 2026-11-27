@@ -43,13 +43,17 @@ b = vault.budget()
 print(f"Budget de l'agent : {b.disponible_kas} TKAS disponibles, {b.max_par_paiement_sompi / 1e8} TKAS max par paiement")
 
 titre("1. L'agent achète une donnée (0,2 TKAS) à travers la passerelle")
-r = vault.fetch(f"{VENDEUR}/meteo-kaspa", max_kas=0.5)
-print(f"Contenu : {r.contenu}")
-if r.paiement:
-    print(f"Payé {r.paiement.montant_kas} TKAS depuis le coffre de l'agent : {r.paiement.explorateur}")
-else:
+try:
+    r = vault.fetch(f"{VENDEUR}/meteo-kaspa", max_kas=0.5)
+    print(f"Contenu : {r.contenu}")
+    if r.paiement:
+        print(f"Payé {r.paiement.montant_kas} TKAS depuis le coffre de l'agent : {r.paiement.explorateur}")
+    else:
+        ok = False
+        print("ÉCHEC : aucun paiement")
+except PaiementRefuse as e:
     ok = False
-    print("ÉCHEC : aucun paiement")
+    print(f"ÉCHEC : achat refusé ({e.message})")
 
 titre("2. Le vendeur demande 1 TKAS, au-dessus du plafond de l'agent")
 try:

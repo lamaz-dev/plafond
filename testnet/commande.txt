@@ -1,6 +1,7 @@
-# Enterprise gateway (27 Nov 2026): one agent paying through the gateway, a refused overspend, then an emergency stop
+# Enterprise gateway, second run (27 Nov 2026): the first run refused the purchase because the new vault had not
+# released enough budget yet ("available in 606 s"). Wait longer, then pay, refuse an overspend, emergency stop.
 deployer
-pause 900                      # a new vault releases its budget over time
+pause 2000                     # a new vault releases its budget over time
 essai-passerelle
 recuperer
 etat
