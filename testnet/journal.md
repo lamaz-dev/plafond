@@ -1344,3 +1344,54 @@ VERDICT : le vendeur public Kaspa x402 a accepté et réglé le paiement du coff
 $ vault-cli recuperer
 4 pièce(s) rapatriée(s) : 4.56257999 TKAS, https://tn10.kaspa.stream/transactions/251e725d6c9aaf4dd89b753bfcdc6ebb12614dbad4
 ```
+
+## 2026-11-27 04:17 UTC
+
+```
+$ vault-cli deployer
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.7) : 5 TKAS en 4 pièce(s) à l'adresse kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90
+Adresse de retour (gel, retrait) : kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+Transaction : https://tn10.kaspa.stream/transactions/ab45dee1fdb8d418abd72e6dd28ef0c6b368e152b2b583e39e2fa81337374561
+
+$ vault-cli pause 900
+(pause de 900 s)
+
+$ passerelle d'entreprise (démo) + agent Python + arrêt d'urgence
+Agent de démonstration préparé dans /tmp/passerelle/recherche (clé de l'agent seulement)
+Budget de l'agent : 0.50061108 TKAS disponibles, 0.485 TKAS max par paiement
+
+=== 1. L'agent achète une donnée (0,2 TKAS) à travers la passerelle ===
+Traceback (most recent call last):
+  File "/home/runner/work/plafond/plafond/sdk/python/exemples/demo_passerelle.py", line 46, in <module>
+    r = vault.fetch(f"{VENDEUR}/meteo-kaspa", max_kas=0.5)
+  File "/home/runner/work/plafond/plafond/sdk/python/exemples/../kaspa_vault/__init__.py", line 132, in fetch
+    raise PaiementRefuse(402, v.get("refus") or "paiement refusé")
+kaspa_vault.PaiementRefuse: 402 : hors du budget du coffre : plafond par paiement ou budget disponible dépassé (disponible dans 606 s)
+(code de sortie 1)
+--- journal de la passerelle ---
+[PASSERELLE] à l'écoute sur http://127.0.0.1:8403 : 1 agent(s), arrêts : {}
+[PASSERELLE] journal vérifié : 0 ligne(s), tête 0000000000000000000000000000000000000000000000000000000000000000
+
+[AGENT] GET http://127.0.0.1:8402/meteo-kaspa
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+[VENDEUR] /meteo-kaspa : paiement requis (0.2 TKAS)
+[AGENT] 402 reçu : 0.2 TKAS à payer à kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+[AGENT] je refuse moi-même : prix hors du budget disponible de mon coffre (disponible dans 606 s)
+--- vérification du journal d'audit chaîné ---
+Journal intact : 3 ligne(s), chaîne continue.
+Tête de chaîne (à comparer avec la copie conservée ailleurs) : 1e772cbf1bc82e5fe7ae203829f3afd8d1d517ad6e78c93ae04bd02bdd47ded7
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+4 pièce(s) rapatriée(s) vers kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz : 4.98358 TKAS, https://tn10.kaspa.stream/transactions/c1fbe9d09434afcb8b24937bd4ccc8ed4178377b456358cd861c337afa5ced77
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 634183145
+Solde du propriétaire : 988.26047999 TKAS (16 UTXO)
+Coffre : pas encore déployé
+
+```
