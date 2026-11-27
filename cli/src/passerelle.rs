@@ -328,8 +328,12 @@ impl Passerelle {
 
     fn enregistrer_arrets(&self) -> Res<()> {
         let tmp = self.fichier_arrets.with_extension("nouveau");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&self.arrets)?)?;
-        std::fs::File::open(&tmp)?.sync_all()?;
+        // Écriture puis synchronisation par le même descripteur, ouvert en écriture (Windows refuse
+        // de vider sur le disque un fichier ouvert en lecture seule).
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(serde_json::to_string_pretty(&self.arrets)?.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
         std::fs::rename(&tmp, &self.fichier_arrets)?;
         Ok(())
     }
