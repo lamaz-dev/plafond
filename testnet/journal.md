@@ -1465,3 +1465,94 @@ Solde du propriétaire : 988.15405999 TKAS (17 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-28 02:06 UTC
+
+```
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://neutrino-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 634958405
+Solde du propriétaire : 988.15405999 TKAS (17 UTXO)
+Coffre : pas encore déployé
+
+$ vault-cli essai-lignee
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Essai du coffre à lignée : cœur v0.9.2 (544 octets), capacité 0.5 TKAS par paiement, période 600 unités DAA
+Adresse du coffre : kaspatest:prdzf6lr9uyfg6d6dm8dhzwmjf3kjcz0zcf8f5neglvfsaedaxwm2s84ymumk
+Adresse de retour : kaspatest:qzewptqdk8m4gua23hgld6gl7ht9khue5x2842w3jr6ygklgrv6xkyup3jncq
+
+== 1. Création : genèse à deux pièces ==
+[OK] genèse (2 pièces, une lignée) : acceptée : https://tn10.kaspa.stream/transactions/4118270b7e00e6ac2aa12343203b1b35506cb34d21dd282e4fc93fc6b0320ea1
+     frais 9000000 sompi ; masse calcul 11140 g, transitoire 4160 g, stockage 0 g ; 807.9 sompi par gramme de la plus grande
+     lignée du coffre : 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d
+     pièce 0 relue sur le nœud : 3 TKAS, lignée 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d (celle du coffre)
+     pièce 1 relue sur le nœud : 3 TKAS, lignée 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d (celle du coffre)
+
+== 2. Sas : adresse recalculée depuis la genèse, dépôt ordinaire ==
+Adresse du sas (v0.2.1, 264 octets, plafond de frais 6000000 sompi) : kaspatest:pp8u7uyd3xx6pj0flvwh5epdz6mjjc9lwa7g34964l0a280avwmn7v5c3mapg
+[OK] dépôt de 2 TKAS envoyé au sas par un paiement ordinaire : https://tn10.kaspa.stream/transactions/69191e28452b7f0f120287f82c9e9c45e2529f34d0f32ead490bd0072646a752
+
+== 3. Versement SANS clé du dépôt dans la pièce 0 ==
+     versement à 1 sompi/g (4452 sompi) refusé : RPC Server (remote error) -> Rejected transaction 63ad835a5ab51715bf50daeea5be2089c23fa79afcd1b27f9f124edd20624af1: transaction 63ad835a5ab51715bf50daeea5be2089c23fa79afcd1b27f9f124edd20624af1 is not standard: transaction has 4452 fees which is under the required amount of 222600 for normalized transient mass 2226 (proportional to transaction byte size)
+     versement à 2 sompi/g (8904 sompi) refusé : RPC Server (remote error) -> Rejected transaction 6441df2644956e552d348312d90d95532235546eb96869f7c2af2fbefe9103fd: transaction 6441df2644956e552d348312d90d95532235546eb96869f7c2af2fbefe9103fd is not standard: transaction has 8904 fees which is under the required amount of 222600 for normalized transient mass 2226 (proportional to transaction byte size)
+     versement à 5 sompi/g (22260 sompi) refusé : RPC Server (remote error) -> Rejected transaction 5cb4d195b90cb2cd3124734937b6ec23b625ea12b993518971c30ae1c6324513: transaction 5cb4d195b90cb2cd3124734937b6ec23b625ea12b993518971c30ae1c6324513 is not standard: transaction has 22260 fees which is under the required amount of 222600 for normalized transient mass 2226 (proportional to transaction byte size)
+     versement à 10 sompi/g (44520 sompi) refusé : RPC Server (remote error) -> Rejected transaction 3b0a592307f79671a0d4949d74274ee399c91818617de873f9a9b7e125728901: transaction 3b0a592307f79671a0d4949d74274ee399c91818617de873f9a9b7e125728901 is not standard: transaction has 44520 fees which is under the required amount of 222600 for normalized transient mass 2226 (proportional to transaction byte size)
+     versement à 20 sompi/g (89040 sompi) refusé : RPC Server (remote error) -> Rejected transaction 47663f0fde566ceced7d77de55b487f2c5992674bd4721d1b2dfb58a2236744a: transaction 47663f0fde566ceced7d77de55b487f2c5992674bd4721d1b2dfb58a2236744a is not standard: transaction has 89040 fees which is under the required amount of 222600 for normalized transient mass 2226 (proportional to transaction byte size)
+[OK] versement SANS clé (aucune signature dans la transaction) à 50 sompi/g : accepté et relayé : https://tn10.kaspa.stream/transactions/abcb253cb03284a54371f68e8834ab88025dbc8157eaedf48c166076c69d1851
+     frais 222600 sompi ; masse calcul 1883 g, transitoire 4452 g, stockage 0 g ; 50.0 sompi par gramme de la plus grande
+     pièce regonflée relue : 4.997774 TKAS, lignée 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d
+     prix retenu pour la suite : 50 sompi par gramme, plus une marge de moitié
+
+== 4. Paiement de l'agent : trop tôt, puis à l'heure ==
+[OK] attaque « paiement de l'agent trop tôt (pièce qui vient d'être regonflée) » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction bf31cd79c736efa2f670ebaecb1b5f2cc3e80d7fe2c50373a51e56ded46ed4f3: one of the transaction sequence locks conditions was not met
+[OK] paiement de l'agent (0,2 TKAS au vendeur) : acceptée : https://tn10.kaspa.stream/transactions/cccc2dd7b9215de4357c3eea3e018f299fa47ae2f3661829925e2f4124ecdb42
+     frais 3777075 sompi ; masse calcul 2835 g, transitoire 3620 g, stockage 51149 g ; 73.8 sompi par gramme de la plus grande
+     reste relu : 2.76222925 TKAS, lignée 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d
+
+== 5. Retrait partiel par le propriétaire (pièce 0) ==
+[OK] attaque « retrait partiel dont les frais vont plus vite que le rythme (pièce trop jeune) » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction a401eb4b4447c1f6e26115e2d0f8369147821b8b89feaf72bed86ca8a675ad5f: one of the transaction sequence locks conditions was not met
+     frais 903075 sompi : attente exigée 11 unités DAA après la création de la pièce
+[OK] retrait partiel (1 TKAS vers l'adresse de retour) : acceptée : https://tn10.kaspa.stream/transactions/2ad150d7e48bf051899c355bf029b83d06fbba19b8fea1d9c12bd84e2803feb9
+     frais 903075 sompi ; masse calcul 2835 g, transitoire 3620 g, stockage 12026 g ; 75.1 sompi par gramme de la plus grande
+     reste relu : 3.98874325 TKAS, lignée 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d ; part reprise : 1 TKAS à l'adresse de retour, lignée aucune
+
+== 6. Attaques réelles : poussière (S3), dépôt détourné, pièce de retour marquée (W10) ==
+     poussière de 0.2 TKAS envoyée à l'adresse du coffre (sans lignée) : https://tn10.kaspa.stream/transactions/1776ca7db4997da51e5d90ab4c840a1d77cbfac8291daf018abda78d86349902
+     second dépôt de 2 TKAS au sas : https://tn10.kaspa.stream/transactions/181cd53a0732767461b0cdc72971afdfa96538ae3f0eef50d7f27a3b9043a15a
+[OK] attaque « S3 : dépôt versé dans la poussière, sortie sans lignée » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction 2123deb673c8c2ecc18e9f7a595cac75d6584736968aba5744a8884209369010: failed to verify the signature script: covenants error: 0 is not a valid covenant output index for input 0 with 0 authorized outputs
+[OK] attaque « S3 : dépôt versé dans la poussière, sortie déclarée dans la lignée du coffre » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction dcf329229c07b0f1a7080edea1f114a981f9bce24a5ce2073aa639e899a18b6a: covenants error: input #0 and outputs with covenant id 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d do not correspond to the expected genesis hashing
+[OK] attaque « S3 : dépôt versé dans la poussière adoptée par une lignée neuve » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction 0fde06be6b375c8c1f2a919fd87dded156d018732c8af4e1c78a267f11fe23c2: failed to verify the signature script: covenants error: 0 is not a valid covenant output index for input 0 with 0 authorized outputs
+[OK] attaque « l'agent paie avec la poussière, sans lignée » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction d61730cfb96bac70b7d1aeb54315806ae87ef6d7273b28c5875dc129b68f3359: failed to verify the signature script: covenants error: 0 is not a valid covenant output index for input 0 with 0 authorized outputs
+[OK] attaque « l'agent paie avec la poussière, en déclarant la lignée du coffre » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction 0c99ba0b2eed0234640b38cce00b87aa7613525dd5b49051199adc880135c9c8: covenants error: input #0 and outputs with covenant id 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d do not correspond to the expected genesis hashing
+[OK] attaque « W10 : gel dont la pièce de retour naît marquée d'une lignée neuve » : REFUSÉE par le réseau
+     message du nœud : RPC Server (remote error) -> Rejected transaction 774cd13b78ec0d3a86b8ddf1b18b907b3f903f1bba5f59b88aa5960cbc658913: failed to verify the signature script: script ran, but verification failed
+     le second dépôt est toujours au sas : oui
+
+== 7. Fermeture : pièces, poussière et dépôt en attente, en une transaction ==
+     à fermer : 3 pièce(s) à l'adresse du coffre (dont 2 de la lignée), 1 dépôt(s) au sas
+[OK] fermeture (gel de toutes les pièces et retour du dépôt, ensemble) : acceptée : https://tn10.kaspa.stream/transactions/4d0a1a9d0eb64557a84772405d9f3bfdfc04b23319615bdb9f06714a4eea94b6
+     frais 1877176 sompi ; masse calcul 8950 g, transitoire 10840 g, stockage 22130 g ; 84.8 sompi par gramme de la plus grande
+     après fermeture : 0 pièce(s) à l'adresse du coffre, 0 au sas
+     adresse de retour : 5 pièce(s), 9.93220074 TKAS, toutes ordinaires (sans lignée) : oui
+     plus aucune pièce ne porte la lignée 3760fcd7a9ca149a376627ef90a3e0a2ff2be9b1dbf19d6a23d1f18839cc130d : un dépôt tardif attendrait le propriétaire (retour seulement)
+
+(fonds de test rendus au propriétaire de test : https://tn10.kaspa.stream/transactions/d485725fcf23a1b885674110f7d4ad77ad66abf9c979499ce1fb7900254c7edb)
+
+VERDICT : tout s'est passé comme prévu.
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 634959181
+Solde du propriétaire : 987.64626073 TKAS (11 UTXO)
+Coffre : pas encore déployé
+
+```
