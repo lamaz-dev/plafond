@@ -1,7 +1,8 @@
 # Borne de perte du coffre entier : cœur v0.9 à v0.9.2, lignée KIP-20
 
-Statut : contrat écrit, prouvé et testé contre le vrai moteur de script (27 nov. 2026). **Pas encore
-déployé par l'outil, aucun essai sur le testnet.** Les coffres créés aujourd'hui restent en v0.7.
+Statut : contrat écrit, prouvé et testé contre le vrai moteur de script (27 nov. 2026). Cœur v0.9.2
+et sas v0.2.1 **essayés sur testnet-10 le 28 nov. 2026**, de la création à la fermeture, attaques
+réelles comprises (`spec/essai-testnet-2026-11-28-v0.9.2.md`).
 
 > **v0.9.2 (28 nov. 2026).** `contracts/coeur.sil` est maintenant le cœur v0.9.2 (550 octets avec
 > les paramètres de référence) et `contracts/sas.sil` le sas v0.2.1 (264 octets). Par rapport à la

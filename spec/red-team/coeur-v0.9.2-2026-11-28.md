@@ -93,9 +93,25 @@ coffre, valeur au moins égale, une seule héritière).
   objet, « l'agent utilise l'entrée du retrait », plus trois nouvelles sur l'aiguillage) sont
   refusées, et chaque règle a son sabotage.
 
+## Essai sur testnet-10 et `maxFrais` (ajout du 28 nov., après l'essai)
+
+Essai fait le jour même : `spec/essai-testnet-2026-11-28-v0.9.2.md`. Tout a eu le résultat attendu ;
+S8 et W8 sont levés. Le versement sans signature est relayé comme une transaction ordinaire.
+
+**S2, `maxFrais` fixé à 0,01 KAS (1 000 000 sompi)** par défaut, au lieu de 0,06. Mesure : le nœud
+exige 100 sompi par gramme de la plus grande des masses « calcul » et « transitoire normalisée » ;
+pour un versement, 222 600 sompi (0,0022 KAS). Le plafond vaut environ 4,5 fois ce minimum :
+- au pire, un tiers fait brûler 0,01 KAS par dépôt (six fois moins qu'avant) ;
+- il reste de la marge si les frais du réseau montent ou si le script est un peu plus long ;
+- si les frais dépassaient un jour le plafond, les versements sans clé attendraient ; le
+  propriétaire pourrait toujours renvoyer les dépôts en ajoutant une pièce à lui pour les frais
+  (`retour` ne plafonne que ce qui est pris sur le dépôt).
+Les frais ordinaires d'un versement passent à 350 000 sompi (une fois et demie le minimum).
+Non vérifié : le prix au gramme sur le réseau principal (la mesure est celle du testnet-10).
+
 ## Avant de déployer
 
-1. Essai sur testnet-10 (plan des deux notes précédentes), avec un gel et un retrait partiel.
-2. Fixer `maxFrais` du sas sur les frais mesurés.
+1. ~~Essai sur testnet-10~~ : fait.
+2. ~~Fixer `maxFrais`~~ : fait (ci-dessus).
 3. Brancher l'outil ; côté vendeur, vérifier l'absence de lignée sur la sortie payée (F2).
 4. Faire relire `ownerControl` et `retour`.

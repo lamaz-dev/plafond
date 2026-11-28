@@ -39,11 +39,16 @@ pub const CB_RETOUR: u16 = 12;
 pub const CB_PAY: u16 = 12;
 pub const CB_OWNER: u16 = 12;
 pub const CB_RETRAIT: u16 = 12;
-/// Frais d'un rechargement (deux entrées), pris sur le dépôt.
-pub const FRAIS_RECHARGE: u64 = 2 * FEE;
-/// Plafond de frais par défaut inscrit dans le sas : le double des frais ordinaires. C'est aussi le
-/// plus qu'un tiers malveillant peut faire brûler en frais sur un dépôt.
-pub const FRAIS_MAX_DEFAUT: i64 = 2 * FRAIS_RECHARGE as i64;
+/// Frais ordinaires d'un versement (deux entrées), pris sur le dépôt : une fois et demie le minimum
+/// de relais mesuré sur testnet-10 le 28 nov. 2026 (222 600 sompi : 100 sompi par gramme de masse
+/// transitoire normalisée, 2 226 g ; testnet/journal.md, spec/essai-testnet-2026-11-28-v0.9.2.md).
+pub const FRAIS_RECHARGE: u64 = 350_000;
+/// Plafond de frais par défaut inscrit dans le sas (`maxFrais`) : 0,01 KAS, environ 4,5 fois le
+/// minimum mesuré. C'est le plus qu'un tiers malveillant peut faire brûler en frais sur un dépôt
+/// (limite S2) ; la marge laisse passer une hausse des frais du réseau ou un script un peu plus
+/// long. Au-delà, un dépôt attend : le propriétaire peut toujours le renvoyer en ajoutant une pièce
+/// à lui pour les frais. Valeur d'avant la mesure : 0,06 KAS.
+pub const FRAIS_MAX_DEFAUT: i64 = 1_000_000;
 /// Nombre maximal de pièces d'un coffre à la genèse (comme `PIECES_MAX` pour les coffres v0.7).
 pub const PIECES_MAX: usize = crate::PIECES_MAX as usize;
 
@@ -1015,6 +1020,12 @@ mod tests {
         assert!(tx.inputs.iter().all(|i| i.sequence == 0 && i.signature_script.len() < 600), "aucune attente, aucune signature");
         let mr = crate::masse::masses(&tx, &entries).unwrap();
         assert!(mr.standard() && mr.compute * 100 <= FRAIS_RECHARGE, "masse {} / {} / {}", mr.compute, mr.transient, mr.storage);
+        // Frais mesurés sur testnet-10 : les frais ordinaires couvrent le minimum de relais avec une
+        // marge, et le plafond du sas laisse au moins trois fois ce minimum.
+        let minimum = crate::masse::frais_relais(&tx);
+        assert!(minimum <= FRAIS_RECHARGE && FRAIS_RECHARGE * 5 >= minimum * 6, "minimum de relais {minimum}, frais ordinaires {FRAIS_RECHARGE}");
+        assert!(FRAIS_MAX_DEFAUT as u64 >= 3 * minimum && FRAIS_MAX_DEFAUT as u64 <= 6 * minimum, "plafond du sas {FRAIS_MAX_DEFAUT} pour un minimum de {minimum}");
+        eprintln!("versement : minimum de relais {minimum} sompi, frais ordinaires {FRAIS_RECHARGE}, plafond du sas {FRAIS_MAX_DEFAUT}");
         assert!(crate::garde_diffusion(&tx).is_ok());
         // L'outil refuse ce que le réseau refuserait.
         assert!(build_recharger(&c, &sas, (op(1), V), (op(2), Sas::depot_minimal(&c, FRAIS_RECHARGE) - 1), FRAIS_RECHARGE).is_err(), "dépôt trop petit");
@@ -1065,19 +1076,19 @@ mod tests {
         eprintln!("retrait partiel : {u_rp} unité(s) de calcul, masse {} / {} g, attente pour {} sompi de frais : {delai} DAA", mrp.compute, mrp.storage, FEE);
 
         // Fermeture : deux pièces de la lignée, une poussière et deux dépôts en attente, en une transaction.
-        let fe = build_fermeture(&c, &sas, &[(op(1), V, Some(lignee)), (op(5), V, Some(lignee)), (op(3), P, None)], &[(op(2), D), (op(4), 2 * D)], &rt, FEE, FEE, &k(1)).unwrap();
+        let fe = build_fermeture(&c, &sas, &[(op(1), V, Some(lignee)), (op(5), V, Some(lignee)), (op(3), P, None)], &[(op(2), D), (op(4), 2 * D)], &rt, FEE, FRAIS_RECHARGE, &k(1)).unwrap();
         let ef = vec![piece.clone(), piece.clone(), UtxoEntry::new(P, m.clone(), 3_000, false, None), UtxoEntry::new(D, vault_spk(&art_s), 0, false, None), UtxoEntry::new(2 * D, vault_spk(&art_s), 0, false, None)];
         assert!(acceptee_a(&fe, &ef, 10_000), "fermeture acceptée");
         for i in 0..5 {
             assert!(script_entree(&fe, &ef, i).unwrap() <= CB_OWNER as u64);
         }
         assert!(fe.outputs.len() == 5 && fe.outputs.iter().all(|o| o.covenant.is_none() && o.script_public_key == rt), "tout part à l'adresse de retour, en pièces ordinaires");
-        assert_eq!(fe.outputs.iter().map(|o| o.value).sum::<u64>(), 2 * V + P + 3 * D - 5 * FEE);
+        assert_eq!(fe.outputs.iter().map(|o| o.value).sum::<u64>(), 2 * V + P + 3 * D - 3 * FEE - 2 * FRAIS_RECHARGE);
         let mf = crate::masse::masses(&fe, &ef).unwrap();
-        assert!(mf.standard() && mf.compute * 100 <= 5 * FEE && crate::garde_diffusion(&fe).is_ok(), "masse de la fermeture {} / {}", mf.compute, mf.storage);
+        assert!(mf.standard() && crate::masse::frais_relais(&fe) <= 3 * FEE + 2 * FRAIS_RECHARGE && crate::garde_diffusion(&fe).is_ok(), "masse de la fermeture {} / {}", mf.compute, mf.storage);
         assert!(build_fermeture(&c, &sas, &[(op(1), V, Some(lignee))], &[], &p2pk(10), FEE, FEE, &k(1)).is_err(), "autre adresse refusée");
         assert!(build_fermeture(&c, &sas, &[], &[], &rt, FEE, FEE, &k(1)).is_err() && build_fermeture(&c, &sas, &[], &[(op(2), D)], &rt, FEE, F + 1, &k(1)).is_err());
-        assert!(build_fermeture(&c, &sas, &[], &[(op(2), D)], &rt, FEE, FEE, &k(1)).is_ok(), "dépôts seuls (coffre déjà fermé)");
+        assert!(build_fermeture(&c, &sas, &[], &[(op(2), D)], &rt, FEE, FRAIS_RECHARGE, &k(1)).is_ok(), "dépôts seuls (coffre déjà fermé)");
         eprintln!("fermeture (3 pièces + 2 dépôts) : masse {} / {} g", mf.compute, mf.storage);
 
         // Retour d'un dépôt par le propriétaire.
@@ -1089,6 +1100,8 @@ mod tests {
         }
         assert!(crate::masse::masses(&tx, &er).unwrap().standard());
         assert!(build_retour(&sas, &[(op(2), D)], &p2pk(10), FRAIS_RECHARGE, &k(1)).is_err(), "l'outil refuse une autre adresse");
+        let seul = build_retour(&sas, &[(op(2), D)], &rt, FRAIS_RECHARGE, &k(1)).unwrap();
+        assert!(crate::masse::frais_relais(&seul) <= FRAIS_RECHARGE, "retour d'un seul dépôt : minimum de relais {} sous les frais ordinaires", crate::masse::frais_relais(&seul));
 
         // Pour la lecture opcode par opcode (spec/coeur-bytecode.md) : bytecode de référence en hexadécimal.
         if let Ok(f) = std::env::var("PLAFOND_EXPORT_BYTECODE_V092") {

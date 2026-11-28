@@ -20,8 +20,8 @@ Ardoise (paramètres de référence) : 356 octets, bytecode 9776db472f44bcfae891
   adresse P2SH testnet : kaspatest:pzthdk689azte7hgjx2yhnmcjtmxce0qkk05lvh5jpzz6pre96tww49xppcf0
 Coeur v0.9.2 (paramètres de référence) : 550 octets, bytecode 78375a86a323cb215a46c0b334b12c4bc52e3cc9e9307fc374efca2416658edc
   adresse P2SH testnet : kaspatest:ppurwk5x5v3ukg26gmqtxd93939u2t3ue85nql7rwnhu5fqkvk8dcp0fwmqya
-Sas v0.2.1 (coffre v0.9.2 de référence, lignée du vecteur KIP-20) : 264 octets, bytecode ab07dc4bfce839f350568eaf12fefb7bd5faa60c1ab5f9ea0a27829d0646e41e
-  adresse P2SH testnet : kaspatest:pz4s0hztln5rnu6s26827yh7ldaat74xpsdtt702pgnc98gxgmjpu7uhd8s7e
+Sas v0.2.1 (coffre v0.9.2 de référence, lignée du vecteur KIP-20) : 264 octets, bytecode 8c8b877e58fb1e582cb142fc2e5a09d1b999a63397709288ff4906a3c3d4826e
+  adresse P2SH testnet : kaspatest:pzxghpm7tra3ukpvk9p0ctj6p8gmnxdxxwthpy5glaysdg7r6jpxuurgwmh43
 Coeur v0.9.1 (paramètres de référence) : 577 octets, bytecode 1f0ef2637f0e94eed6ee1bd79417a49d87526bacd1ed8709764558ea7aee0062
   adresse P2SH testnet : kaspatest:pq0saunr0u8ffmkkacda09qh5jwcw5nt4ng7mpcfwez436n6acqxy3k35jhm5
 Coeur v0.9 (paramètres de référence) : 376 octets, bytecode 38a3fea6d065c665ca4202f345ba4ebcd0423ef5d7b679dfec32ce17fee201f3

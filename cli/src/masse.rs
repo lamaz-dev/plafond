@@ -16,6 +16,21 @@ pub static FORCER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// « transaction storage mass of 1000055 is larger than max allowed size of 500000 ».
 /// Une transaction de 200 000 g de stockage a été acceptée : l'ancien plafond de 100 000 g ne s'applique plus.
 pub const MAX_STANDARD_MASS: u64 = 500_000;
+/// Prix minimal exigé par les nœuds pour relayer une transaction, mesuré sur le testnet-10 le
+/// 28 novembre 2026 (testnet/journal.md) : 100 sompi par gramme de la plus grande des deux masses
+/// « calcul » et « transitoire normalisée » (« transaction has 89040 fees which is under the required
+/// amount of 222600 for normalized transient mass 2226 »). La masse de stockage limite la forme de
+/// la transaction, elle n'entre pas dans ce minimum.
+pub const SOMPI_PAR_GRAMME: u64 = 100;
+
+/// Frais minimaux de relais d'une transaction (voir `SOMPI_PAR_GRAMME`). La masse transitoire est
+/// ramenée à l'échelle de la masse de calcul par le cofacteur du réseau (0,5 sur testnet-10).
+pub fn frais_relais(tx: &Transaction) -> u64 {
+    let calc = MassCalculator::new_with_consensus_params(&TESTNET_PARAMS);
+    let nc = calc.calc_non_contextual_masses(tx);
+    nc.normalized_max(&TESTNET_PARAMS.block_mass_cofactors()) * SOMPI_PAR_GRAMME
+}
+
 /// Paramètre C de KIP-9 (1 KAS × 10 000).
 pub const STORM: u64 = kaspa_consensus_core::constants::STORAGE_MASS_PARAMETER;
 

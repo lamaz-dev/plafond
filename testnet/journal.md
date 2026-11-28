@@ -1556,3 +1556,10 @@ Solde du propriétaire : 987.64626073 TKAS (11 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+### Lecture de l'essai du 28 nov. 2026, 02:06 UTC (ajout manuel)
+
+Premier essai du cœur v0.9.2 et du sas v0.2.1 : tout a eu le résultat attendu. Tableau des étapes,
+mesures de masse et de frais, et ce que l'essai ne montre pas : `spec/essai-testnet-2026-11-28-v0.9.2.md`.
+À retenir : le versement sans signature est relayé ; le nœud exige 100 sompi par gramme de masse
+transitoire normalisée (222 600 sompi pour un versement) ; `maxFrais` du sas fixé à 1 000 000 sompi.

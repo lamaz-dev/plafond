@@ -38,8 +38,10 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
    withdrawal by the owner (to the return address only, fees rate-limited like an agent payment) and makes every
    coin sent to the return address a plain coin with no covenant id (also in the airlock). Decided: freezing
    closes the vault for good (the lineage ends); one coin by default, more on request (the cap is multiplied by the
-   number of coins). Next: a testnet-10 trial (sequence in the red-team notes, including a real dust-coin attack and a
-   partial withdrawal), the airlock fee cap set from measured fees, then wiring into the tool (creation by genesis,
+   number of coins). Tried on testnet-10 on 28 Nov 2026
+   from creation to closing, with real attacks (dust coin, diverted deposit, marked return coin), all refused by the
+   network ([report](spec/essai-testnet-2026-11-28-v0.9.2.md)); the keyless refill is relayed like any transaction and
+   the airlock fee cap is set from the measured fees (0.01 KAS). Next: wiring into the tool (creation by genesis,
    lineage filter everywhere, automatic top-up, add / take back / close, close that also returns pending deposits,
    deposit address the payer can verify). The tool keeps deploying core v0.7 until then.
 3. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
