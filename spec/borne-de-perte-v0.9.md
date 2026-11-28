@@ -421,7 +421,9 @@ coffre, qui n'est plus le même.
 ### 9.8 Validation automatique (v0.9.2)
 
 Les chiffres du §8 deviennent : 20 transactions légitimes, **103 attaques nommées** (les 61 de la
-v0.9, 34 sur le retrait partiel, 8 sur les pièces de retour marquées), **41 sabotages**. Le moteur
+v0.9, 34 sur le retrait partiel, 8 sur les pièces de retour marquées), **41 sabotages**. Depuis le 28
+novembre (limite W11, §9.6) : 21 légitimes et 105 attaques, le rechargement nul étant accepté du
+propriétaire et refusé à l'agent comme sans clé. Le moteur
 exécuté est `kaspa-txscript` tel que `cli/Cargo.lock` le fige (2.2.0 ; les structures de consensus
 sont celles de `kaspa-consensus-core` 2.1.0).
 
