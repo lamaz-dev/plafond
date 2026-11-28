@@ -1700,3 +1700,55 @@ Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-28 12:36 UTC
+
+```
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 635336539
+Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+$ vault-cli deployer
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.9.2, à lignée) : 5 TKAS en 1 pièce(s) à l'adresse kaspatest:prz2mprrqq9ppuf9ps5fnteej0jlt9283twhp3t0aqse7gh4cq0ujqrhsvgfv
+Une pièce : un achat à la fois ; au pire, l'agent sort un plafond d'achat d'un coup, puis au rythme du budget.
+Lignée du coffre : b67fb948d7edc15a6684eb70f6acb881b57487c9444c44cedb3749c8e5831a5d
+Adresse de retour (reprise, fermeture) : kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+Transaction : https://tn10.kaspa.stream/transactions/b2ac60fb59f0bf2372daed671f97add9906251148a005d7f78c0183411416067
+Adresse de dépôt (sas), signée par le propriétaire : kaspatest:pzmmh6xl3ct9nywpv6gr2dnxuw2n5rra32fc0hzd9cp6hctse0zcy06ndvev2
+  dépôt minimal versé automatiquement : 0.5035 TKAS
+
+$ vault-cli sas-fiche /tmp/fiche-depot.json
+Fiche de dépôt écrite dans /tmp/fiche-depot.json (rien de secret : gardez-en une copie, elle sert aussi à reconstruire le coffre).
+
+$ vault-cli sas-verifier /tmp/fiche-depot.json
+ADRESSE VÉRIFIÉE : kaspatest:pzmmh6xl3ct9nywpv6gr2dnxuw2n5rra32fc0hzd9cp6hctse0zcy06ndvev2
+  coffre kaspatest:prz2mprrqq9ppuf9ps5fnteej0jlt9283twhp3t0aqse7gh4cq0ujqrhsvgfv ; lignée b67fb948d7edc15a6684eb70f6acb881b57487c9444c44cedb3749c8e5831a5d
+  propriétaire (clé publique, à comparer avec celle que vous connaissez) : 8b66653de8e1aef2335d69f963bbd781ba76b74558ccdddb0767e8e8295ea0ba
+  pièces à la création : 1 (c'est le k de la borne) ; pièces vivantes de la lignée : 1 ; valeur : 5 KAS
+  dépôt minimal versé automatiquement : 0.5035 KAS
+  création du coffre : relue sur le réseau et auditée (toutes les sorties de la lignée sont au script du coffre)
+  nœuds d'accord : wss://boson-10.kaspa.red/kaspa/testnet-10/wrpc/borsh, wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+
+$ vault-cli recuperer
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+(nœud injoignable, essai 2/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+1 pièce(s) et dépôt(s) renvoyés à kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz : 4.985 TKAS, https://tn10.kaspa.stream/transactions/0d640f82fb21bcccca8330a2d41394308a131e0b82697c7e2dba5ad45666308e
+Coffre FERMÉ : sa lignée est éteinte, son adresse de dépôt ne verse plus rien. Un dépôt qui y arriverait encore attendra que vous le renvoyiez (commande `sas-retour`).
+
+$ vault-cli sas-verifier /tmp/fiche-depot.json
+Error: "REFUSÉ : aucune pièce vivante de cette lignée à l'adresse du coffre. Le coffre est fermé (ou n'a jamais existé) : un dépôt à cette adresse ne serait versé nulle part et attendrait le propriétaire"
+(code de sortie 1)
+
+$ vault-cli etat
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://alpha-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 635338068
+Solde du propriétaire : 987.37500823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+```

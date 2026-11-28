@@ -1,0 +1,29 @@
+{
+  "version": "coeur-v0.9.2",
+  "retour": null,
+  "capacite": 50000000,
+  "periode": 5143,
+  "agent": "9fecfba642f66ee3e464c965668c4968de9d7a877bfe3c9b3cfe4a18363c3bb8",
+  "cree_daa": 635336554,
+  "apports": [
+    {
+      "txid": "b2ac60fb59f0bf2372daed671f97add9906251148a005d7f78c0183411416067",
+      "sompi": 500000000,
+      "daa": 635336554
+    }
+  ],
+  "vues": [],
+  "achats": [],
+  "lignee": "b67fb948d7edc15a6684eb70f6acb881b57487c9444c44cedb3749c8e5831a5d",
+  "genese": {
+    "txid": "b2ac60fb59f0bf2372daed671f97add9906251148a005d7f78c0183411416067",
+    "entree_txid": "69191e28452b7f0f120287f82c9e9c45e2529f34d0f32ead490bd0072646a752",
+    "entree_index": 1,
+    "valeurs": [
+      500000000
+    ],
+    "repere": "f359c29bc7c69c6422aa07caec43de07677f29b806e629068da7fe664a0719ee"
+  },
+  "sas_max_frais": 1000000,
+  "attestation": "89a914e9ebcc6bb71cb41f2a8761065f1d7bf44c7ba8faf44b49aca191cebdcb1cb05884637a0b452a64988e0a2a496cf15ec5d06fb12d271c7b170162161c73"
+}
