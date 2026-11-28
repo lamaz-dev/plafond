@@ -1734,10 +1734,29 @@ async fn main() -> Res<()> {
                         retour: (version == coffre::VERSION).then(|| coffre::empreinte_retour(&address(&owner))),
                     };
                     let art = coeur.artifact()?;
-                    let c = connect().await?;
-                    let ps = coffre::pieces(&c, &art).await;
-                    liberer(&c).await?;
-                    let ps = ps?;
+                    // Les nœuds publics ne répondent pas toujours : quelques essais avant d'abandonner.
+                    let mut lu = None;
+                    for essai in 1..=5 {
+                        let r: Res<Vec<coffre::Piece>> = async {
+                            let c = connect().await?;
+                            let ps = coffre::pieces(&c, &art).await;
+                            liberer(&c).await?;
+                            ps
+                        }
+                        .await;
+                        match r {
+                            Ok(ps) => {
+                                lu = Some(ps);
+                                break;
+                            }
+                            Err(e) if essai < 5 => {
+                                println!("(lecture impossible, essai {essai}/5 : {e})");
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    let ps = lu.expect("lu ou erreur renvoyée");
                     let total: u64 = ps.iter().map(|p| p.valeur).sum();
                     println!("{version}, {nom} : {} pièce(s), {} TKAS à l'adresse {}", ps.len(), total as f64 / 1e8, coffre::adresse(&art)?);
                     if ps.iter().all(|p| p.valeur < coeur_plancher()) {
