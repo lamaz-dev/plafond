@@ -1647,3 +1647,28 @@ Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-28 03:29 UTC
+
+```
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 635008118
+Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+$ vault-cli fermer-anciens
+Connecté au testnet-10 : wss://neutrino-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+coeur-v0.7, réglages de test jusqu'au 27 nov. (4 pièces) : 0 pièce(s), 0 TKAS à l'adresse kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+(nœud injoignable, essai 2/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Error: "réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC"
+(code de sortie 1)
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 635008711
+Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+```
