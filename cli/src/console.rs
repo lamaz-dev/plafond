@@ -1482,6 +1482,23 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                                             t["historique"] = f["historique"].clone();
                                         }
                                         t["fermeture"] = f;
+                                        // SAS ORPHELIN : un dépôt arrivé à l'adresse de dépôt d'un coffre
+                                        // fermé ne sera jamais versé. La console le signale et ne propose
+                                        // qu'une chose : le renvoyer à l'adresse de retour.
+                                        if let Some((archive, _)) = archive_fermee(&a.etat) {
+                                            let lu = handle.block_on(async {
+                                                let c = connect_silencieux().await?;
+                                                let r = crate::coffre092::orphelins(&c, &owner, &archive.to_string_lossy()).await;
+                                                liberer(&c).await?;
+                                                r
+                                            });
+                                            if let Ok((n, sompi, sans, sans_sompi)) = lu {
+                                                if n > 0 || sans > 0 {
+                                                    t["fermeture"]["sas_orphelin"] = json!({ "depots": n, "sompi": sompi, "pieces_sans_lignee": sans, "sans_lignee_sompi": sans_sompi,
+                                                        "explication": "De l'argent est arrivé à l'adresse de dépôt (ou à l'adresse) de ce coffre APRÈS sa fermeture. Il ne peut plus être versé dans le coffre : la seule chose possible est de le renvoyer à votre adresse de retour." });
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 json_rep(200, t)
@@ -1699,6 +1716,28 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         resultat(r)
                     }
                     _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                // Coffre FERMÉ : renvoyer à l'adresse de retour ce qui est arrivé trop tard à son adresse
+                // de dépôt (sas orphelin) et les pièces sans lignée laissées à son adresse.
+                ("POST", "/api/depot/renvoyer") => match &cible {
+                    _ if v["confirmation"].as_str() != Some("RENVOYER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                    Some(a) => match archive_fermee(&a.etat) {
+                        None => json_rep(409, json!({ "erreur": "ce coffre n'est pas fermé : ses dépôts en attente se versent dans le coffre" })),
+                        Some((archive, _)) => {
+                            let ch = archive.to_string_lossy().into_owned();
+                            let depots = handle.block_on(crate::coffre092::retour_tardif(&owner, &ch));
+                            let sans = handle.block_on(crate::coffre092::rapatrier_sans_lignee(&owner, Some(&ch)));
+                            journal(json!({ "renvoyer_orphelins": a.id, "depots": depots.as_ref().map_err(|e| e.to_string()), "sans_lignee": sans.as_ref().map_err(|e| e.to_string()) }));
+                            match (depots, sans) {
+                                (Err(e), Err(_)) => json_rep(400, json!({ "erreur": e.to_string() })),
+                                (d, s) => {
+                                    let txs: Vec<String> = [d.ok(), s.ok()].into_iter().flatten().collect();
+                                    json_rep(200, json!({ "ok": true, "transactions": txs, "explorateur": txs.first().map(|t| explorer(t)) }))
+                                }
+                            }
+                        }
+                    },
+                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },
                 // Verser dans le coffre les dépôts en attente à son adresse de dépôt (sans clé).
                 ("POST", "/api/depot/verser") => match (&cible, cle_cible) {

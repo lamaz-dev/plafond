@@ -586,6 +586,11 @@ pub async fn fermer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         let ds = depots(&c, &sas).await?;
         let now = virtual_daa(&c).await?;
         let en_vol = ps.iter().any(|p| p.creation.is_none() && p.lignee == Some(x)) || ds.iter().any(|d| !d.2);
+        // L1 : fermer balaie LE coffre, c'est-à-dire les pièces de sa lignée (et ses dépôts en
+        // attente). Les autres pièces de l'adresse ne sont pas le coffre : celles d'une autre lignée
+        // (l'argent d'un tiers) ne sont pas touchées ; celles sans lignée sont signalées à la fin et
+        // se rapatrient à part (`rapatrier_sans_lignee`).
+        let (ps, _) = coffre::du_coffre(ps, Some(x));
         match tx_fermeture(&coeur, &sas, &ps, &ds, &retour, owner, tentative)? {
             None if en_vol => {
                 vide_depuis = None;
@@ -631,8 +636,9 @@ pub async fn fermer(owner: &Keypair, agent: &Keypair) -> Res<String> {
             }
         }
     }
-    let reste = coffre::du_coffre(coffre::pieces(&c, &art).await?, Some(x)).0;
+    let (reste, etrangeres) = coffre::du_coffre(coffre::pieces(&c, &art).await?, Some(x));
     liberer(&c).await?;
+    let bilan = bilan_etrangeres(&etrangeres);
     if !reste.is_empty() {
         return Err(format!("fermeture incomplète : {} pièce(s) de la lignée encore dans le coffre, relancer", reste.len()).into());
     }
@@ -647,7 +653,86 @@ pub async fn fermer(owner: &Keypair, agent: &Keypair) -> Res<String> {
         return Err("coffre déjà vide".into());
     }
     println!("Coffre FERMÉ : sa lignée est éteinte, son adresse de dépôt ne verse plus rien. Un dépôt qui y arriverait encore attendra que vous le renvoyiez (commande `sas-retour`).");
+    if let Some(b) = bilan {
+        println!("{b}");
+    }
     Ok(ids.join(","))
+}
+
+/// Ce qui reste à l'adresse d'un coffre et qui n'est PAS le coffre, en une phrase (ou rien).
+pub fn bilan_etrangeres(etrangeres: &[Piece]) -> Option<String> {
+    let sans: Vec<&Piece> = etrangeres.iter().filter(|p| p.lignee.is_none()).collect();
+    let mut autres: Vec<Hash> = etrangeres.iter().filter_map(|p| p.lignee).collect();
+    autres.sort();
+    autres.dedup();
+    if etrangeres.is_empty() {
+        return None;
+    }
+    let mut t = String::from("À la même adresse, hors du coffre :");
+    if !sans.is_empty() {
+        t.push_str(&format!(
+            " {} pièce(s) sans lignée ({} KAS), envoyée(s) par un tiers : l'agent ne peut pas y toucher ; vous pouvez les rapatrier à part vers l'adresse de retour (commande `rapatrier-sans-lignee`).",
+            sans.len(),
+            sans.iter().map(|p| p.valeur).sum::<u64>() as f64 / 1e8
+        ));
+    }
+    if !autres.is_empty() {
+        t.push_str(&format!(
+            " {} pièce(s) de {} autre(s) lignée(s) ({} KAS) : c'est l'argent de celui qui les a créées, la fermeture n'y touche pas.",
+            etrangeres.len() - sans.len(),
+            autres.len(),
+            etrangeres.iter().filter(|p| p.lignee.is_some()).map(|p| p.valeur).sum::<u64>() as f64 / 1e8
+        ));
+    }
+    Some(t)
+}
+
+/// État d'un coffre ouvert (fichier d'état) ou fermé (`archive` laissée par la fermeture).
+fn etat_ou_archive(archive: Option<&str>) -> Res<EtatCoeur> {
+    match archive {
+        Some(a) => Ok(serde_json::from_str(&fs::read_to_string(a)?)?),
+        None => coffre::charger().ok_or_else(|| "aucun coffre".into()),
+    }
+}
+
+fn coeur_de_l_etat(e: &EtatCoeur, owner: &Keypair) -> Res<(Coeur, Address)> {
+    let retour_adr = coffre::adresse_retour(Some(e), &xonly(owner))?;
+    Ok((Coeur { owner: xonly(owner), agent: hex::decode(&e.agent)?, capacite: e.capacite, periode: e.periode, retour: Some(coffre::empreinte_retour(&retour_adr)) }, retour_adr))
+}
+
+/// Rapatrie vers l'adresse de retour les pièces SANS lignée de l'adresse du coffre (ouvert ou
+/// fermé). Jamais celles d'une autre lignée, jamais celles du coffre.
+pub async fn rapatrier_sans_lignee(owner: &Keypair, archive: Option<&str>) -> Res<String> {
+    let e = etat_ou_archive(archive)?;
+    let (coeur, retour_adr) = coeur_de_l_etat(&e, owner)?;
+    let art = coeur.artifact_v092()?;
+    let c = connect().await?;
+    let r: Res<String> = async {
+        let frais = FEE.min(coeur.capacite.max(0) as u64);
+        let sans: Vec<(TransactionOutpoint, u64, Option<Hash>)> =
+            coffre::pieces(&c, &art).await?.into_iter().filter(|p| p.lignee.is_none() && p.creation.is_some() && p.valeur >= 3 * frais).take(24).map(|p| (p.outpoint, p.valeur, None)).collect();
+        if sans.is_empty() {
+            return Err("aucune pièce sans lignée à rapatrier à cette adresse (ou trop petites pour payer leurs frais)".into());
+        }
+        let tx = lignee::build_gel(&coeur, &sans, &pay_to_address_script(&retour_adr), frais, owner)?;
+        Ok(c.submit_transaction(garde_diffusion(&tx)?, false).await?.to_string())
+    }
+    .await;
+    liberer(&c).await?;
+    let txid = r?;
+    println!("Pièce(s) sans lignée rapatriée(s) vers {retour_adr} : {}", explorer(&txid));
+    Ok(txid)
+}
+
+/// SAS ORPHELIN : ce qui se trouve encore à l'adresse de dépôt (et à l'adresse) d'un coffre FERMÉ.
+/// Renvoie (dépôts confirmés au sas, leur valeur, pièces sans lignée à l'adresse du coffre, leur valeur).
+pub async fn orphelins(c: &KaspaRpcClient, owner: &Keypair, archive: &str) -> Res<(usize, u64, usize, u64)> {
+    let e = etat_ou_archive(Some(archive))?;
+    let (coeur, _) = coeur_de_l_etat(&e, owner)?;
+    let sas = sas_de(&coeur, &e)?;
+    let ds: Vec<(TransactionOutpoint, u64, bool)> = depots(c, &sas).await?.into_iter().filter(|d| d.2).collect();
+    let sans: Vec<Piece> = coffre::pieces(c, &coeur.artifact_v092()?).await?.into_iter().filter(|p| p.lignee.is_none() && p.creation.is_some()).collect();
+    Ok((ds.len(), ds.iter().map(|d| d.1).sum(), sans.len(), sans.iter().map(|p| p.valeur).sum()))
 }
 
 /// Dépôts arrivés au sas d'un coffre FERMÉ : le propriétaire les renvoie à l'adresse de retour.
@@ -777,6 +862,37 @@ mod tests {
         assert!(sas_de(&c, &EtatCoeur { genese: None, ..e.clone() }).is_err());
         assert!(sas_de(&c, &EtatCoeur { version: coffre::VERSION.into(), ..e.clone() }).is_err(), "coffre v0.7 : pas de sas");
         assert_eq!(coffre::lignee_de(Some(&EtatCoeur { version: coffre::VERSION.into(), ..e })), None);
+    }
+
+    /// B (mission du 28 nov.) : TROIS lignées à la même adresse (X légitime, Y et Z d'un tiers) et
+    /// des pièces sans lignée. Solde, budget, risque, fermeture et vérification ne comptent que X.
+    #[test]
+    fn trois_lignees_a_la_meme_adresse_seule_x_compte() {
+        let c = coeur(2);
+        let (x, y, z) = (Hash::from_bytes([1; 32]), Hash::from_bytes([2; 32]), Hash::from_bytes([3; 32]));
+        let p = |i: u32, v: u64, l: Option<Hash>| Piece { lignee: l, outpoint: TransactionOutpoint::new(TransactionId::from_bytes([7; 32]), i), valeur: v, creation: Some(1_000) };
+        let toutes = vec![p(0, 300_000_000, Some(x)), p(1, 900_000_000, Some(y)), p(2, 700_000_000, Some(z)), p(3, 500_000_000, None), p(4, 100_000_000, Some(x)), p(5, 20_000_000, None), p(6, 800_000_000, Some(y))];
+        let (dedans, dehors) = coffre::du_coffre(toutes.clone(), Some(x));
+        let v = coffre::Vue { lignee: Some(x), hors_lignee: dehors.clone(), coeur: c.clone(), adresse: String::new(), pieces: dedans.clone(), now: 1_000 + 2 * c.periode as u64, etat: None };
+        // Soldes et risque : X seulement (4 TKAS sur les 33,2 présents à l'adresse).
+        assert_eq!(v.solde(), 400_000_000);
+        assert_eq!(v.immediate(), 2 * c.capacite as u64, "deux pièces de X, chacune au plafond ; pas sept");
+        assert_eq!(v.fenetre(0), 2 * c.capacite as u64);
+        assert_eq!(v.hors_lignee.iter().map(|q| q.valeur).sum::<u64>(), 2_920_000_000);
+        // Délai avant paiement : calculé sur X seulement (une grosse pièce de Y ne rend pas le paiement possible).
+        assert_eq!(coffre::delai(&c, &dedans, 1_000, 350_000_000), None, "aucune pièce de X ne couvre 3,5 TKAS, même si Y en a 9");
+        // Fermeture : la transaction ne dépense que les pièces de X ; Y, Z et les pièces sans lignée restent.
+        let sas = Sas::pour(&c, x, lignee::FRAIS_MAX_DEFAUT).unwrap();
+        let rt = pay_to_address_script(&address(&k(11)));
+        let tx = tx_fermeture(&c, &sas, &coffre::du_coffre(toutes.clone(), Some(x)).0, &[], &rt, &k(1), 0).unwrap().unwrap();
+        let depensees: Vec<u32> = tx.inputs.iter().map(|i| i.previous_outpoint.index).collect();
+        assert_eq!(depensees, vec![0, 4], "seules les pièces de la lignée X sont fermées");
+        // Ce qui reste est dit, en distinguant « sans lignée » (rapatriable) et « autres lignées » (pas touchées).
+        let bilan = bilan_etrangeres(&dehors).unwrap();
+        assert!(bilan.contains("2 pièce(s) sans lignée (5.2 KAS)") && bilan.contains("3 pièce(s) de 2 autre(s) lignée(s) (24 KAS)") && bilan.contains("n'y touche pas"), "{bilan}");
+        assert_eq!(bilan_etrangeres(&[]), None);
+        // Versement d'un dépôt : il ne vise qu'une pièce de X (le contrat refuserait de toute façon).
+        assert!(dedans.iter().all(|q| q.lignee == Some(x)));
     }
 
     /// L1 : seules les pièces de la lignée sont le coffre.

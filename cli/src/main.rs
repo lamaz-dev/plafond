@@ -1857,6 +1857,10 @@ async fn main() -> Res<()> {
                 _ => faits.iter().for_each(|t| println!("Dépôt versé dans le coffre, sans clé : {}", explorer(t))),
             }
         }
+        "rapatrier-sans-lignee" => {
+            // Pièces sans lignée envoyées par un tiers à l'adresse du coffre (ouvert, ou fermé avec son archive).
+            coffre092::rapatrier_sans_lignee(&owner, args.get(2).map(String::as_str)).await?;
+        }
         "sas-retour" => {
             let archive = args.get(2).ok_or("fichier d'archive du coffre fermé manquant")?;
             coffre092::retour_tardif(&owner, archive).await?;
