@@ -769,8 +769,7 @@ pub async fn retour_petits(owner: &Keypair, archive: Option<&str>) -> Res<Vec<St
     let retour = pay_to_address_script(&retour_adr);
     let c = connect().await?;
     let r: Res<Vec<String>> = async {
-        let seuil = 3 * lignee::FRAIS_RECHARGE.min(sas.max_frais.max(0) as u64);
-        let petits: Vec<(TransactionOutpoint, u64)> = depots(&c, &sas).await?.into_iter().filter(|d| d.2 && d.1 < seuil).map(|d| (d.0, d.1)).take(8).collect();
+        let petits = petits_de(&depots(&c, &sas).await?, seuil_petits(&sas));
         if petits.is_empty() {
             return Err("aucun petit dépôt confirmé à cette adresse de dépôt (les autres partent avec la fermeture ou le retour ordinaire)".into());
         }
@@ -792,6 +791,85 @@ pub async fn retour_petits(owner: &Keypair, archive: Option<&str>) -> Res<Vec<St
     .await;
     liberer(&c).await?;
     r
+}
+
+/// Sous ce montant, un dépôt du sas ne peut ni être versé ni renvoyé seul (ni par la fermeture) :
+/// seul `retour_petits` le renvoie, frais payés par la trésorerie. Environ 0,0105 KAS par défaut.
+pub fn seuil_petits(sas: &Sas) -> u64 {
+    3 * lignee::FRAIS_RECHARGE.min(sas.max_frais.max(0) as u64)
+}
+
+/// Les petits dépôts CONFIRMÉS (sous `seuil`) que `retour_petits` renverra, au plus 8 à la fois.
+pub fn petits_de(ds: &[(TransactionOutpoint, u64, bool)], seuil: u64) -> Vec<(TransactionOutpoint, u64)> {
+    ds.iter().filter(|d| d.2 && d.1 < seuil).map(|d| (d.0, d.1)).take(8).collect()
+}
+
+/// Ce que la console affiche des petits dépôts d'un sas (coffre ouvert ou fermé).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PetitsDepots {
+    pub nombre: usize,
+    pub sompi: u64,
+    /// Frais estimés pour UN renvoi, payés par la trésorerie (le dépôt revient entier).
+    pub frais_estimes: u64,
+    pub seuil: u64,
+}
+
+/// Petits dépôts d'un sas, à partir de la liste de ses dépôts (`depots`). Les frais sont estimés
+/// comme le fait `retour_petits` (masse d'une transaction de même forme × 1,5) ; la transaction
+/// d'estimation, signée par une clé jetable, n'est jamais diffusée.
+pub fn petits_du_sas(e: &EtatCoeur, owner: &Keypair, ds: &[(TransactionOutpoint, u64, bool)]) -> Res<PetitsDepots> {
+    let (coeur, retour_adr) = coeur_de_l_etat(e, owner)?;
+    let sas = sas_de(&coeur, e)?;
+    let seuil = seuil_petits(&sas);
+    let petits = petits_de(ds, seuil);
+    let frais_estimes = match petits.first() {
+        None => 0,
+        Some(d) => {
+            // Clé jetable connue de tous : la transaction d'estimation n'est valable nulle part.
+            let jetable = Keypair::from_seckey_slice(secp256k1::SECP256K1, &[7u8; 32])?;
+            let appoint = (TransactionOutpoint::new(Default::default(), 0), kaspa_consensus_core::tx::UtxoEntry::new(10 * FEE, pay_to_address_script(&address(&jetable)), 0, false, None));
+            masse::frais_relais(&lignee::build_retour_assiste(&sas, *d, &pay_to_address_script(&retour_adr), appoint, FEE, &jetable)?) * 3 / 2
+        }
+    };
+    Ok(PetitsDepots { nombre: petits.len(), sompi: petits.iter().map(|d| d.1).sum(), frais_estimes, seuil })
+}
+
+/// Petits dépôts au sas d'un coffre ouvert (`archive` absente) ou fermé (son archive).
+pub async fn petits_depots(c: &KaspaRpcClient, owner: &Keypair, archive: Option<&str>) -> Res<PetitsDepots> {
+    let e = etat_ou_archive(archive)?;
+    let (coeur, _) = coeur_de_l_etat(&e, owner)?;
+    let ds = depots(c, &sas_de(&coeur, &e)?).await?;
+    petits_du_sas(&e, owner, &ds)
+}
+
+/// Contrôle AVANT `retour_petits` (pour la console) : y a-t-il un petit dépôt à renvoyer, et la
+/// trésorerie (pièces confirmées, `tresorerie`) peut-elle payer les frais d'un renvoi ? Reprend
+/// l'exigence de `coffre::financer(10 × FEE)` et celle de `build_retour_assiste` (pièce > frais).
+pub fn controle_retour_petits(petits: &PetitsDepots, tresorerie: &[u64]) -> Result<(), String> {
+    if petits.nombre == 0 {
+        return Err(format!(
+            "aucun petit dépôt confirmé à renvoyer (sous {} KAS) : les autres dépôts sont versés dans le coffre, ou renvoyés par la fermeture",
+            petits.seuil as f64 / 1e8
+        ));
+    }
+    let montant = 10 * FEE;
+    let (mut total, mut n) = (0u64, 0u64);
+    for v in tresorerie.iter().take(20) {
+        total += v;
+        n += 1;
+        if total >= montant + FEE * (n + 1) {
+            break;
+        }
+    }
+    let plus_grosse = tresorerie.iter().take(20).copied().max().unwrap_or(0);
+    if total < montant + FEE * n.max(1) || plus_grosse <= petits.frais_estimes {
+        return Err(format!(
+            "trésorerie insuffisante pour payer les frais du renvoi : il faut au moins {} KAS disponibles (confirmés) dans votre trésorerie ; les frais réellement payés sont d'environ {} KAS",
+            (montant + 2 * FEE) as f64 / 1e8,
+            petits.frais_estimes as f64 / 1e8
+        ));
+    }
+    Ok(())
 }
 
 /// Pour les bancs d'essai (ici et dans la passerelle) : une fiche de dépôt construite comme le fait
@@ -1014,5 +1092,43 @@ mod tests {
         let trois = Regles::calculer_k(400_000_000, 36_000, 50_000_000, Some(3)).unwrap();
         let texte = avertissement_pieces(&trois);
         assert!(texte.contains("multipliée par 3") && texte.contains("1.5 KAS") && texte.contains("définitif"), "{texte}");
+    }
+
+    /// Petits dépôts (console, carte « Adresse de dépôt ») : seuil, sélection, frais estimés, et
+    /// contrôle avant le renvoi assisté (refus sans petit dépôt, refus si la trésorerie ne peut pas
+    /// payer les frais).
+    #[test]
+    fn petits_depots_selection_et_controle() {
+        let c = coeur(2);
+        let g = genese(1);
+        let x = lignee_recalculee(&c, &g).unwrap();
+        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION_V092.into(), retour: Some(address(&k(11)).to_string()), capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
+        let sas = sas_de(&c, &e).unwrap();
+        assert_eq!(seuil_petits(&sas), 1_050_000, "environ 0,0105 KAS avec le plafond de frais par défaut");
+        let op = |n: u8| TransactionOutpoint::new(kaspa_consensus_core::tx::TransactionId::from_bytes([n; 32]), 0);
+        // confirmé et petit / non confirmé / au-dessus du seuil / un seul sompi
+        let ds = vec![(op(1), 500_000, true), (op(2), 400_000, false), (op(3), 1_050_000, true), (op(4), 1, true)];
+        assert_eq!(petits_de(&ds, seuil_petits(&sas)), vec![(op(1), 500_000), (op(4), 1)]);
+        let p = petits_du_sas(&e, &k(1), &ds).unwrap();
+        assert_eq!((p.nombre, p.sompi, p.seuil), (2, 500_001, 1_050_000));
+        assert!(p.frais_estimes > 0 && p.frais_estimes < 10 * FEE, "frais estimés : {}", p.frais_estimes);
+        // Mauvais propriétaire : l'adresse de dépôt ne se recalcule pas, rien n'est affiché à tort.
+        assert!(petits_du_sas(&e, &k(9), &ds).is_err());
+        // Aucun petit dépôt : refus, même avec une trésorerie pleine.
+        let rien = petits_du_sas(&e, &k(1), &ds[2..3]).unwrap();
+        assert_eq!((rien.nombre, rien.frais_estimes), (0, 0));
+        let refus = controle_retour_petits(&rien, &[100_000_000_000]).unwrap_err();
+        assert!(refus.contains("aucun petit dépôt"), "{refus}");
+        // Trésorerie vide, ou trop petite pour l'exigence de `financer` : refus, avec le montant à prévoir.
+        for treso in [vec![], vec![FEE], vec![10 * FEE], vec![FEE; 9]] {
+            let refus = controle_retour_petits(&p, &treso).unwrap_err();
+            assert!(refus.contains("trésorerie insuffisante"), "{treso:?} : {refus}");
+        }
+        // Assez dans la trésorerie : accepté (une pièce, ou plusieurs petites).
+        assert!(controle_retour_petits(&p, &[12 * FEE]).is_ok());
+        assert!(controle_retour_petits(&p, &[3 * FEE; 6]).is_ok());
+        // Plus grosse pièce incapable de payer les frais à elle seule : refus.
+        let cher = PetitsDepots { frais_estimes: 4 * FEE, ..p.clone() };
+        assert!(controle_retour_petits(&cher, &[3 * FEE; 6]).is_err());
     }
 }

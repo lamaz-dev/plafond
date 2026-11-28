@@ -386,6 +386,9 @@ async fn depot_json(c: &kaspa_wrpc_client::KaspaRpcClient, owner: &Keypair, agen
         Ok(sas) => crate::coffre092::depots(c, &sas).await.unwrap_or_default(),
         Err(_) => vec![],
     };
+    // Petits dépôts : trop petits pour être versés, et même pour être renvoyés par la fermeture.
+    // Seul le renvoi assisté (frais payés par la trésorerie) les rend : /api/depot/renvoyer-petits.
+    let petits = crate::coffre092::petits_du_sas(etat, owner, &attente).unwrap_or_default();
     json!({
         "publie": true,
         "adresse": fiche.adresse_depot,
@@ -395,6 +398,12 @@ async fn depot_json(c: &kaspa_wrpc_client::KaspaRpcClient, owner: &Keypair, agen
         "en_attente_sompi": attente.iter().map(|d| d.1).sum::<u64>(),
         "en_attente": attente.len(),
         "sous_le_minimum": attente.iter().filter(|d| d.1 < fiche.depot_minimal_sompi).count(),
+        // Sous le minimum mais assez gros pour payer leurs frais : la fermeture les renvoie.
+        "sous_le_minimum_renvoyables": attente.iter().filter(|d| d.1 < fiche.depot_minimal_sompi && d.1 >= petits.seuil).count(),
+        "petits": petits.nombre,
+        "petits_sompi": petits.sompi,
+        "petits_frais_estimes_sompi": petits.frais_estimes,
+        "petits_seuil_sompi": petits.seuil,
         // Confirmés et au-dessus du minimum : la console les verse d'elle-même (sans clé).
         "a_verser": attente.iter().filter(|d| d.2 && d.1 >= fiche.depot_minimal_sompi).count(),
         "en_confirmation": attente.iter().filter(|d| !d.2).count(),
@@ -1492,13 +1501,18 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                                         if let Some((archive, _)) = archive_fermee(&a.etat) {
                                             let lu = handle.block_on(async {
                                                 let c = connect_silencieux().await?;
-                                                let r = crate::coffre092::orphelins(&c, &owner, &archive.to_string_lossy()).await;
+                                                let ch = archive.to_string_lossy().into_owned();
+                                                let r = crate::coffre092::orphelins(&c, &owner, &ch).await;
+                                                let p = crate::coffre092::petits_depots(&c, &owner, Some(&ch)).await;
                                                 liberer(&c).await?;
-                                                r
+                                                Ok::<_, Box<dyn std::error::Error>>((r?, p.unwrap_or_default()))
                                             });
-                                            if let Ok((n, sompi, sans, sans_sompi)) = lu {
-                                                if n > 0 || sans > 0 {
+                                            if let Ok(((n, sompi, sans, sans_sompi), petits)) = lu {
+                                                // Les petits dépôts ne partent pas avec le renvoi ordinaire : comptés à part.
+                                                let (n, sompi) = (n.saturating_sub(petits.nombre), sompi.saturating_sub(petits.sompi));
+                                                if n > 0 || sans > 0 || petits.nombre > 0 {
                                                     t["fermeture"]["sas_orphelin"] = json!({ "depots": n, "sompi": sompi, "pieces_sans_lignee": sans, "sans_lignee_sompi": sans_sompi,
+                                                        "petits": petits.nombre, "petits_sompi": petits.sompi, "petits_frais_estimes_sompi": petits.frais_estimes, "petits_seuil_sompi": petits.seuil,
                                                         "explication": "De l'argent est arrivé à l'adresse de dépôt (ou à l'adresse) de ce coffre APRÈS sa fermeture. Il ne peut plus être versé dans le coffre : la seule chose possible est de le renvoyer à votre adresse de retour." });
                                                 }
                                             }
@@ -1742,6 +1756,57 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         }
                     },
                     None => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                // PETITS DÉPÔTS (sous ~0,0105 KAS) : trop petits pour être versés, ni renvoyés par la
+                // fermeture. Renvoyés ENTIERS à l'adresse de retour, frais payés par la trésorerie
+                // (`coffre092::retour_petits`). Coffre ouvert, ou fermé (sas orphelin, par son archive).
+                // Comme pour envoyer : confirmation, puis mot de passe (et code) si le compte est protégé.
+                ("POST", "/api/depot/renvoyer-petits") => match &cible {
+                    _ if v["confirmation"].as_str() != Some("RENVOYER_PETITS") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                    None => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                    Some(a) => match cle_ch.map(|_| garde.ouvrir(cle_ch, &owner, &v, true).map(|_| ())).unwrap_or(Ok(())) {
+                        Err(r) => r,
+                        Ok(()) => {
+                            let ouvert = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || crate::coffre::charger().is_some_and(|e| crate::coffre::lignee_de(Some(&e)).is_some()));
+                            let archive = if ouvert { None } else { archive_fermee(&a.etat).map(|(p, _)| p.to_string_lossy().into_owned()) };
+                            if !ouvert && archive.is_none() {
+                                json_rep(409, json!({ "erreur": "ce mandat n'a pas de coffre à adresse de dépôt (ni ouvert, ni fermé)" }))
+                            } else {
+                                let lancer = || {
+                                    handle.block_on(async {
+                                        let c = connect_silencieux().await?;
+                                        let r = async {
+                                            let petits = crate::coffre092::petits_depots(&c, &owner, archive.as_deref()).await?;
+                                            let treso: Vec<u64> = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().filter(|u| u.utxo_entry.block_daa_score != u64::MAX).map(|u| u.utxo_entry.amount).collect();
+                                            Ok::<_, Box<dyn std::error::Error>>((petits.clone(), crate::coffre092::controle_retour_petits(&petits, &treso)))
+                                        }
+                                        .await;
+                                        liberer(&c).await?;
+                                        let (petits, controle) = r?;
+                                        Ok::<_, Box<dyn std::error::Error>>(match controle {
+                                            Err(e) => Err(e),
+                                            Ok(()) => Ok((petits, crate::coffre092::retour_petits(&owner, archive.as_deref()).await)),
+                                        })
+                                    })
+                                };
+                                let r = if ouvert { avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), lancer) } else { lancer() };
+                                match r {
+                                    Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
+                                    Ok(Err(refus)) => {
+                                        journal(json!({ "renvoyer_petits": a.id, "refus": refus }));
+                                        json_rep(409, json!({ "erreur": refus }))
+                                    }
+                                    Ok(Ok((petits, envoi))) => {
+                                        journal(json!({ "renvoyer_petits": a.id, "depots": petits.nombre, "resultat": envoi.as_ref().map_err(|e| e.to_string()) }));
+                                        match envoi {
+                                            Ok(txs) => json_rep(200, json!({ "ok": true, "renvoyes": txs.len(), "transactions": txs, "preuves": txs.iter().map(|t| explorer(t)).collect::<Vec<_>>(), "explorateur": txs.first().map(|t| explorer(t)) })),
+                                            Err(e) => json_rep(502, json!({ "erreur": e.to_string() })),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
                 },
                 // Verser dans le coffre les dépôts en attente à son adresse de dépôt (sans clé).
                 ("POST", "/api/depot/verser") => match (&cible, cle_cible) {
@@ -2028,6 +2093,8 @@ mod tests {
         // gel sans la confirmation explicite : refusé
         assert_eq!(statut(ureq::post(&format!("{base}/api/geler")).set("X-Jeton", "jeton-de-test").send_string("{}")), 400);
         assert_eq!(statut(ureq::post(&format!("{base}/api/creer")).set("X-Jeton", "jeton-de-test").send_string("{\"confirmation\":\"oui\"}")), 400);
+        // renvoi des petits dépôts sans la confirmation explicite : refusé
+        assert_eq!(statut(ureq::post(&format!("{base}/api/depot/renvoyer-petits")).set("X-Jeton", "jeton-de-test").send_string("{}")), 400);
         // montant d'alimentation hors bornes : refusé avant toute transaction
         assert_eq!(statut(ureq::post(&format!("{base}/api/alimenter")).set("X-Jeton", "jeton-de-test").send_string("{\"montant_sompi\":1}")), 400);
         serveur.unblock();
@@ -2238,6 +2305,37 @@ mod tests {
         let (statut, rep) = poster(&base, "/api/connecter/preparer", json!({ "mot_de_passe": mdp, "code": code }));
         assert_eq!(statut, 409, "{rep}");
         assert!(PAGE.contains("api(\"/api/connecter/preparer\",{agent:etat.agent,mot_de_passe:mdp,code})"), "la page doit demander le mot de passe");
+        serveur.unblock();
+        fil.join().unwrap();
+        let _ = std::fs::remove_file(ch);
+    }
+
+    /// Petits dépôts (sous ~0,0105 KAS) : leur renvoi assisté dépense une pièce de la trésorerie,
+    /// il est donc protégé comme un envoi : confirmation explicite, mot de passe ET code si la double
+    /// authentification est active, et refus clair quand il n'y a pas de coffre à adresse de dépôt.
+    /// (Refus sans petit dépôt et refus si la trésorerie ne peut pas payer les frais :
+    /// `coffre092::tests::petits_depots_selection_et_controle`, même contrôle que cette route.)
+    #[test]
+    fn renvoi_des_petits_depots_protege() {
+        let mdp = "le bon mot de passe";
+        let (base, serveur, fil, _, secret, ch) = console_avec_cle("petits", true);
+        let route = "/api/depot/renvoyer-petits";
+        let (statut, rep) = poster(&base, route, json!({ "mot_de_passe": mdp }));
+        assert_eq!(statut, 400, "sans confirmation : refus ({rep})");
+        let (statut, _) = poster(&base, route, json!({ "confirmation": "RENVOYER" }));
+        assert_eq!(statut, 400, "la confirmation d'une autre action ne vaut pas");
+        let (statut, _) = poster(&base, route, json!({ "confirmation": "RENVOYER_PETITS", "agent": "inconnu", "mot_de_passe": mdp }));
+        assert_eq!(statut, 404);
+        for corps in [json!({ "confirmation": "RENVOYER_PETITS" }), json!({ "confirmation": "RENVOYER_PETITS", "mot_de_passe": "un mauvais mot de passe" }), json!({ "confirmation": "RENVOYER_PETITS", "mot_de_passe": mdp })] {
+            let (statut, rep) = poster(&base, route, corps);
+            assert_eq!(statut, 403, "sans identification complète, rien ne part : {rep}");
+            assert!(rep["transactions"].is_null());
+        }
+        let code = format!("{:06}", double_auth::code(&secret, double_auth::maintenant() / 30));
+        let (statut, rep) = poster(&base, route, json!({ "confirmation": "RENVOYER_PETITS", "mot_de_passe": mdp, "code": code }));
+        assert_eq!(statut, 409, "identification complète, mais aucun coffre : refus clair ({rep})");
+        assert!(rep["erreur"].as_str().unwrap_or("").contains("pas de coffre"), "{rep}");
+        assert!(PAGE.contains("api(\"/api/depot/renvoyer-petits\",{agent:etat.agent,confirmation:\"RENVOYER_PETITS\",mot_de_passe:mdp,code})"), "la page doit envoyer confirmation, mot de passe et code");
         serveur.unblock();
         fil.join().unwrap();
         let _ = std::fs::remove_file(ch);
