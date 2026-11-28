@@ -950,7 +950,7 @@ mod tests {
             }
             let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
             let x = 1u64 << 40;
-            let etat = crate::coffre::EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
+            let etat = crate::coffre::EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
                 apports: vec![crate::coffre::Apport { txid: String::new(), sompi: v, daa: x }], vues: vec![], achats: vec![] };
             let vue = crate::coffre::Vue { lignee: None, hors_lignee: vec![], coeur: c.clone(), adresse: String::new(),
                 pieces: vec![crate::coffre::Piece { lignee: None, outpoint: op, valeur: v, creation: Some(x) }], now: x.saturating_add(age), etat: Some(etat) };
@@ -1024,6 +1024,14 @@ mod tests {
             passe
         };
         assert!(coeur(200_000_000, 0).verifier().is_err() && coeur(0, 864_000).verifier().is_err());
+        // Vérification 2 (Red Team système) : à la création, l'outil refuse toute capacité ou période
+        // nulle ou négative, pour TOUTES les versions du cœur (chaque compilation passe par `verifier`).
+        for (c, r) in [(0, 864_000), (-1, 864_000), (i64::MIN, 864_000), (200_000_000, 0), (200_000_000, -1), (200_000_000, i64::MIN), (0, 0), (-1, -1)] {
+            let mut k = coeur(c, r);
+            assert!(k.verifier().is_err(), "({c}, {r})");
+            k.retour = Some(vec![0x20; 34]);
+            assert!(k.artifact_v092().is_err() && k.artifact().is_err(), "({c}, {r}) : aucun coffre ne doit être compilé");
+        }
         assert!(!essais(&coeur(200_000_000, 0), 1_000_000_000), "période nulle : aucun paiement ne doit passer");
         assert!(!essais(&coeur(200_000_000, -5), 1_000_000_000), "période négative");
         assert!(!essais(&coeur(-5, -5), 1_000_000_000), "capacité et période négatives");

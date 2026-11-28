@@ -1788,7 +1788,7 @@ async fn main() -> Res<()> {
                         genese: None,
                         sas_max_frais: None,
                         attestation: None,
-                        retraits: vec![], versements: vec![],
+                        retraits: vec![], versements: vec![], ages_remis: vec![],
                     })?;
                     match coffre::geler(&owner, &agent).await {
                         Ok(ids) => {
@@ -1861,6 +1861,10 @@ async fn main() -> Res<()> {
             // Pièces sans lignée envoyées par un tiers à l'adresse du coffre (ouvert, ou fermé avec son archive).
             coffre092::rapatrier_sans_lignee(&owner, args.get(2).map(String::as_str)).await?;
         }
+        "sas-retour-petits" => {
+            // Dépôts trop petits pour payer leurs frais : renvoyés entiers, frais payés par la trésorerie.
+            coffre092::retour_petits(&owner, args.get(2).map(String::as_str)).await?;
+        }
         "sas-retour" => {
             let archive = args.get(2).ok_or("fichier d'archive du coffre fermé manquant")?;
             coffre092::retour_tardif(&owner, archive).await?;
@@ -1869,7 +1873,7 @@ async fn main() -> Res<()> {
             x402::demo(&owner, &agent).await?;
         }
         _ => {
-            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | ajouter <sompi> | reprendre <sompi> | recuperer (fermer) | sas | sas-verser | sas-verifier <fiche.json> [--proprietaire <clé>] [--hors-ligne] | coffre-reconstruire <fiche.json> [adresse_retour] | sas-retour <archive> | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
+            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | ajouter <sompi> | reprendre <sompi> | recuperer (fermer) | sas | sas-verser | sas-verifier <fiche.json> [--proprietaire <clé>] [--hors-ligne] | coffre-reconstruire <fiche.json> [adresse_retour] | sas-retour <archive> | sas-retour-petits [archive] | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
         }
     }
     Ok(())

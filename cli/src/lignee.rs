@@ -295,6 +295,43 @@ pub fn build_retour(sas: &Sas, depots: &[(TransactionOutpoint, u64)], retour: &S
     Ok(tx)
 }
 
+/// Retour d'un PETIT dépôt (vérification 3, spec/red-team/systeme-2026-11-28.md) : un dépôt trop
+/// petit pour payer ses propres frais, voire sous le plancher de stockage, n'est pas perdu. Le
+/// propriétaire ajoute une de ses pièces ordinaires (`appoint`) qui paie les frais :
+///     [dépôt du sas, pièce du propriétaire] -> [adresse de retour (le dépôt ENTIER), monnaie rendue]
+/// Le sas l'accepte (sortie 0 à l'adresse de retour, au moins le dépôt moins `maxFrais`, sans
+/// lignée). Deux entrées et deux sorties : la masse de stockage (KIP-9) reste faible même pour un
+/// dépôt d'un seul sompi. La monnaie revient au script de la pièce d'appoint.
+pub fn build_retour_assiste(
+    sas: &Sas,
+    depot: (TransactionOutpoint, u64),
+    retour: &ScriptPublicKey,
+    appoint: (TransactionOutpoint, UtxoEntry),
+    frais: u64,
+    owner: &Keypair,
+) -> Res<Transaction> {
+    let art = sas.artifact()?;
+    if crate::sequestre::spk_hash(retour).as_slice() != sas.retour.as_slice() {
+        return Err("ce n'est pas l'adresse de retour du sas".into());
+    }
+    if appoint.1.covenant_id.is_some() || appoint.1.amount <= frais {
+        return Err("pièce d'appoint inutilisable (marquée d'une lignée, ou trop petite pour les frais)".into());
+    }
+    let inputs = vec![
+        TransactionInput::new_with_compute_budget(depot.0, vec![], 0, CB_RETOUR),
+        TransactionInput::new_with_compute_budget(appoint.0, vec![], 0, crate::CB_P2PK),
+    ];
+    let outputs = vec![TransactionOutput::new(depot.1, retour.clone()), TransactionOutput::new(appoint.1.amount - frais, appoint.1.script_public_key.clone())];
+    let entries = vec![UtxoEntry::new(depot.1, vault_spk(&art), 0, false, None), appoint.1.clone()];
+    let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+    let s = sign(&tx, &entries, 0, owner);
+    tx.inputs[0].signature_script = vault_sigscript(&art, "retour", &[s.into()])?;
+    let s = sign(&tx, &entries, 1, owner);
+    tx.inputs[1].signature_script = kaspa_txscript::script_builder::ScriptBuilder::new().add_data(&s)?.drain();
+    tx.finalize();
+    Ok(tx)
+}
+
 /// FERMETURE du coffre en une transaction : toutes les pièces de l'adresse du coffre (de la lignée
 /// ou non) ET tous les dépôts en attente au sas partent à l'adresse de retour, chacun vers sa propre
 /// sortie (entrée i -> sortie i), en pièces ordinaires. La lignée s'éteint : plus aucun versement
@@ -1103,6 +1140,34 @@ mod tests {
         assert!(build_retour(&sas, &[(op(2), D)], &p2pk(10), FRAIS_RECHARGE, &k(1)).is_err(), "l'outil refuse une autre adresse");
         let seul = build_retour(&sas, &[(op(2), D)], &rt, FRAIS_RECHARGE, &k(1)).unwrap();
         assert!(crate::masse::frais_relais(&seul) <= FRAIS_RECHARGE, "retour d'un seul dépôt : minimum de relais {} sous les frais ordinaires", crate::masse::frais_relais(&seul));
+
+        // Vérification 3 : un dépôt minuscule (jusqu'à 1 sompi, très en dessous de ses propres frais
+        // et du plancher de stockage) revient ENTIER à l'adresse de retour, les frais étant payés
+        // par une pièce ordinaire du propriétaire. Le chemin ordinaire, lui, le refuse.
+        // Deux entrées : le minimum de relais (413 000 sompi mesurés) dépasse les frais ordinaires d'un dépôt.
+        const FA: u64 = 600_000;
+        let appoint = |v: u64| (op(9), UtxoEntry::new(v, p2pk(1), 0, false, None));
+        for petit in [1u64, 546, 10_000, FRAIS_RECHARGE, 3 * FRAIS_RECHARGE - 1, D] {
+            if petit <= FRAIS_RECHARGE {
+                assert!(build_retour(&sas, &[(op(2), petit)], &rt, FRAIS_RECHARGE, &k(1)).is_err(), "{petit} : ne paie pas ses frais");
+            }
+            let ta = build_retour_assiste(&sas, (op(2), petit), &rt, appoint(100_000_000), FA, &k(1)).unwrap();
+            let ea = vec![UtxoEntry::new(petit, vault_spk(&art_s), 0, false, None), appoint(100_000_000).1];
+            assert!(acceptee_a(&ta, &ea, 1_000_000), "retour assisté d'un dépôt de {petit} sompi");
+            assert_eq!((ta.outputs[0].value, &ta.outputs[0].script_public_key, ta.outputs[0].covenant), (petit, &rt, None), "le dépôt revient entier, en pièce ordinaire");
+            assert_eq!((ta.outputs[1].value, &ta.outputs[1].script_public_key), (100_000_000 - FA, &p2pk(1)), "la monnaie revient au propriétaire");
+            let ma = crate::masse::masses(&ta, &ea).unwrap();
+            assert!(ma.standard() && crate::masse::frais_relais(&ta) <= FA && crate::garde_diffusion(&ta).is_ok(), "{petit} : masse {} / {} / {}", ma.compute, ma.transient, ma.storage);
+            if petit == 1 {
+                eprintln!("retour assisté d'un dépôt de 1 sompi : masse {} / {} g, relais {} sompi", ma.compute, ma.storage, crate::masse::frais_relais(&ta));
+            }
+        }
+        // Ni une autre adresse, ni une autre clé, ni une pièce d'appoint marquée ou trop petite.
+        assert!(build_retour_assiste(&sas, (op(2), 1), &p2pk(10), appoint(100_000_000), FA, &k(1)).is_err());
+        assert!(build_retour_assiste(&sas, (op(2), 1), &rt, appoint(FA), FA, &k(1)).is_err());
+        assert!(build_retour_assiste(&sas, (op(2), 1), &rt, (op(9), UtxoEntry::new(100_000_000, p2pk(1), 0, false, Some(lignee))), FA, &k(1)).is_err());
+        let vole = build_retour_assiste(&sas, (op(2), 1), &rt, (op(9), UtxoEntry::new(100_000_000, p2pk(2), 0, false, None)), FA, &k(2)).unwrap();
+        assert!(script_entree(&vole, &[UtxoEntry::new(1, vault_spk(&art_s), 0, false, None), UtxoEntry::new(100_000_000, p2pk(2), 0, false, None)], 0).is_none(), "sans la clé du propriétaire : refusé");
 
         // Pour la lecture opcode par opcode (spec/coeur-bytecode.md) : bytecode de référence en hexadécimal.
         if let Ok(f) = std::env::var("PLAFOND_EXPORT_BYTECODE_V092") {

@@ -66,6 +66,11 @@ pub struct EtatCoeur {
     /// viennent pas de la trésorerie). Sert seulement à les afficher sous leur vrai nom.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub versements: Vec<String>,
+    /// W11 (spec/red-team/systeme-2026-11-28.md) : transactions qui ont remis à zéro l'âge d'une
+    /// pièce du coffre sans vrai dépôt et sans passer par cet outil. Seule la clé du propriétaire
+    /// le peut : la console en fait une alerte. Les 10 dernières.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ages_remis: Vec<String>,
 }
 
 /// La création d'un coffre à lignée, telle que le réseau l'a vue : l'identifiant de la lignée est
@@ -152,6 +157,23 @@ pub fn suivre(e: &mut EtatCoeur, pieces: &[Piece], now: u64) -> bool {
         let reprises: std::collections::HashSet<String> = e.retraits.iter().map(|r| r.txid.clone()).collect();
         let repris: u64 = e.retraits.iter().filter(|r| continuations.iter().any(|n| txid_de(&n.0) == r.txid)).map(|r| r.sompi).sum();
         let achat = continuations.iter().rev().find(|n| !reprises.contains(&txid_de(&n.0)));
+        // W11 : une pièce remplacée par une pièce au moins aussi grosse, mais grossie de moins que
+        // la capacité, par une transaction que cet outil n'a pas faite. Ce n'est ni un paiement (la
+        // pièce diminuerait), ni un versement du sas (au moins la capacité), ni un geste de cet
+        // outil (apports, reprises et versements sont connus) : c'est la clé du propriétaire,
+        // utilisée ailleurs, qui a remis l'âge à zéro.
+        for n in &continuations {
+            let t = txid_de(&n.0);
+            let connue = reprises.contains(&t) || e.versements.contains(&t) || e.ages_remis.contains(&t);
+            let remise = e.vues.iter().any(|v| !actuelles.contains(v) && n.1 >= v.1 && ((n.1 - v.1) as i128) < e.capacite as i128);
+            if !connue && remise {
+                e.ages_remis.push(t);
+                let n = e.ages_remis.len();
+                if n > 10 {
+                    e.ages_remis.drain(..n - 10);
+                }
+            }
+        }
         let perte = match achat {
             None => 0,
             Some(_) => disparues.saturating_sub(revenu).saturating_sub(repris),
@@ -382,7 +404,7 @@ pub async fn deployer_vers(owner: &Keypair, agent: &Keypair, retour: Option<&str
         genese: None,
         sas_max_frais: None,
         attestation: None,
-        retraits: vec![], versements: vec![],
+        retraits: vec![], versements: vec![], ages_remis: vec![],
         version: VERSION.into(),
         // Rien d'enregistré pour l'adresse par défaut : le coffre suit l'adresse du propriétaire.
         retour: retour.map(|_| retour_adr.to_string()),
@@ -932,7 +954,7 @@ mod tests {
     fn achats_reconnus_sans_lignee() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         assert!(suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10));
@@ -957,7 +979,7 @@ mod tests {
         let c = coeur(200_000_000, 864_000);
         let depot = TransactionId::from_bytes([1; 32]);
         let (note, inscrit) = (1_000u64, 997u64); // noté par l'outil ; réellement inscrit
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
             apports: vec![Apport { txid: depot.to_string(), sompi: 1_000_000_000, daa: note }], vues: vec![], achats: vec![] };
         let pieces = vec![Piece { lignee: None, outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(inscrit) }];
         // L'agent paie 0,5 TKAS dès que le réseau le permet : à inscription + attente.
@@ -1023,7 +1045,7 @@ mod tests {
     fn suivre_face_aux_depots_de_tiers() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let neuf = || EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let neuf = || EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         let total = |e: &EtatCoeur| e.achats.iter().map(|a| a.sompi).sum::<u64>();
@@ -1062,6 +1084,27 @@ mod tests {
         suivre(&mut e, &apres, 20);
         assert!(e.achats.is_empty());
         assert_eq!(perte_nette(&e, &apres), 0);
+
+        // (f) W11 : une pièce remplacée par une pièce de même valeur (âge remis à zéro, frais payés
+        // par une autre pièce), par une transaction inconnue de l'outil : signalée, pas un achat.
+        let mut e = neuf();
+        e.capacite = 100;
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        suivre(&mut e, &[p(1, 0, 1_000), p(7, 0, 1_000)], 20);
+        assert!(e.achats.is_empty());
+        assert_eq!(e.ages_remis, vec![TransactionId::from_bytes([7; 32]).to_string()]);
+        // Même chose avec un dépôt symbolique (moins que la capacité) : signalée aussi.
+        suivre(&mut e, &[p(1, 0, 1_000), p(8, 0, 1_099)], 30);
+        assert_eq!(e.ages_remis.len(), 2);
+        // Un vrai rechargement hors outil (au moins la capacité), un paiement, une reprise connue
+        // ou un versement connu : pas d'alerte.
+        suivre(&mut e, &[p(1, 0, 1_000), p(9, 0, 1_199)], 40);
+        suivre(&mut e, &[p(1, 0, 1_000), p(10, 1, 1_150)], 50);
+        e.versements.push(TransactionId::from_bytes([11; 32]).to_string());
+        suivre(&mut e, &[p(1, 0, 1_000), p(11, 0, 1_150)], 60);
+        e.retraits.push(Apport { txid: TransactionId::from_bytes([12; 32]).to_string(), sompi: 0, daa: 0 });
+        suivre(&mut e, &[p(1, 0, 1_000), p(12, 0, 1_150)], 70);
+        assert_eq!(e.ages_remis.len(), 2, "{:?}", e.ages_remis);
 
         // (e) Dans tous les cas, ce qui compte pour la sécurité ne dépend pas de `suivre` : la
         // perte nette affichée (apports − solde) et l'exposition viennent des pièces lues sur le nœud.
@@ -1180,7 +1223,7 @@ mod tests {
     fn r62_regonflement_n_est_pas_un_achat() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         assert_eq!(pieces_du_mandat(&e), 2);
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
@@ -1206,7 +1249,7 @@ mod tests {
     fn reprise_n_est_pas_un_achat() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
@@ -1228,7 +1271,7 @@ mod tests {
     fn r62_courbe_promise_tenue_apres_regonflement() {
         let c = coeur(50_000_000, 36_000);
         let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 0);
-        let etat = |apports: Vec<Apport>| EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
+        let etat = |apports: Vec<Apport>| EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
         let v0 = 200_000_000u64;
         let mut apports = vec![Apport { txid: String::new(), sompi: v0, daa: 0 }];
         // L'agent dépense au maximum jusqu'à t_r, puis la pièce est regonflée de m.
@@ -1272,7 +1315,7 @@ mod tests {
         let parts = decouper(r.depot, r.pieces);
         assert_eq!(parts.iter().sum::<u64>(), r.depot);
         let pieces: Vec<Piece> = parts.iter().map(|v| Piece { lignee: None, outpoint: op, valeur: *v, creation: Some(0) }).collect();
-        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect(), vues: vec![], achats: vec![] };
         let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
         // Au bout d'une période de recharge, k achats au plafond sont possibles d'affilée.
@@ -1285,7 +1328,7 @@ mod tests {
     fn vue_courbe_et_risque() {
         let c = coeur(50_000_000, 288_000);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
-        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: String::new(), sompi: 2_000_000_000, daa: 0 }], vues: vec![], achats: vec![] };
         let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces: vec![Piece { lignee: None, outpoint: op, valeur: 2_000_000_000, creation: Some(0) }], now: 0, etat: Some(etat) };
         assert_eq!(v.immediate(), 0, "un mandat neuf démarre à zéro");

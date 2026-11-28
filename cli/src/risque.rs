@@ -92,6 +92,7 @@ pub fn rapport(couloirs: &[Couloir], engagements: &[Engagement], now: i64, d: i6
     non_couvert.dedup();
     non_couvert.push("fonds hors des coffres Plafond (portefeuille ordinaire d'un agent)".into());
     non_couvert.push("clé du propriétaire compromise".into());
+    non_couvert.push("clé du propriétaire compromise, cas particulier : remise à zéro de l'âge d'un coffre sans dépôt, qui bloque l'agent sans rien voler (W11)".into());
     json!({
         "version": "plafond-risque-v0",
         "daa": s(now),

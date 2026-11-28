@@ -326,6 +326,10 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
             "empreinte_source_contrat": hex::encode(blake2b_simd::Params::new().hash_length(32).hash(if v.lignee.is_some() { crate::coeur::SOURCE_V092 } else { crate::coeur::SOURCE }.as_bytes()).as_bytes()),
         },
     });
+    // W11 : âge d'une pièce remis à zéro sans dépôt, hors de cet outil (clé du propriétaire).
+    if !etat.ages_remis.is_empty() {
+        r["ages_remis"] = json!(etat.ages_remis);
+    }
     if v.lignee.is_some() {
         // Nombre RÉEL de pièces : celui de la création, engagé par la lignée. S'il diffère des
         // règles (création sur-allouée, règles modifiées), les chiffres affichés suivent le réel.
@@ -2785,7 +2789,7 @@ mod tests {
             // ancienne lecture : la reprise 3 avait été notée comme un achat
             achats: vec![AchatVu { txid: tx(2), sompi: 100, daa: 20 }, AchatVu { txid: tx(3), sompi: 250, daa: 30 }],
             retraits: vec![Apport { txid: tx(3), sompi: 250, daa: 30 }],
-            versements: vec![tx(5)] };
+            versements: vec![tx(5)], ages_remis: vec![] };
         let m = mouvements(&e);
         let genre = |t: &str| m.iter().filter(|x| x["txid"] == t).map(|x| x["genre"].as_str().unwrap().to_string()).collect::<Vec<_>>();
         assert_eq!(genre(&tx(2)), ["achat"]);

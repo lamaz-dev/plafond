@@ -88,7 +88,7 @@ pub fn reconstruire(f: &Fiche, owner_pk: &[u8], agent_pk: &[u8], retour: Option<
         sas_max_frais: Some(f.max_frais_sompi),
         attestation: Some(f.attestation.clone()),
         retraits: vec![],
-        versements: vec![],
+        versements: vec![], ages_remis: vec![],
     })
 }
 
@@ -307,7 +307,7 @@ pub async fn creer(owner: &Keypair, agent: &Keypair, retour: Option<&str>) -> Re
         genese: Some(Genese { txid: txid.clone(), entree_txid: fonds[0].0.transaction_id.to_string(), entree_index: fonds[0].0.index, valeurs: valeurs.clone(), repere }),
         sas_max_frais: Some(lignee::FRAIS_MAX_DEFAUT),
         attestation: None,
-        retraits: vec![], versements: vec![],
+        retraits: vec![], versements: vec![], ages_remis: vec![],
     };
     coffre::enregistrer(&e)?;
     println!("Coffre créé (cœur v0.9.2, à lignée) : {} TKAS en {k} pièce(s) à l'adresse {}", r.depot as f64 / 1e8, coffre::adresse(&art)?);
@@ -758,6 +758,42 @@ pub async fn retour_tardif(owner: &Keypair, archive: &str) -> Res<String> {
     Ok(txid)
 }
 
+/// PETITS DÉPÔTS (vérification 3, spec/red-team/systeme-2026-11-28.md) : un dépôt trop petit pour
+/// payer ses frais (que la fermeture et le retour ordinaire laissent sur place) est renvoyé ENTIER
+/// à l'adresse de retour ; les frais sont payés par une pièce de la trésorerie du propriétaire.
+/// Un dépôt par transaction. Coffre ouvert (sans `archive`) ou fermé (avec son archive).
+pub async fn retour_petits(owner: &Keypair, archive: Option<&str>) -> Res<Vec<String>> {
+    let e = etat_ou_archive(archive)?;
+    let (coeur, retour_adr) = coeur_de_l_etat(&e, owner)?;
+    let sas = sas_de(&coeur, &e)?;
+    let retour = pay_to_address_script(&retour_adr);
+    let c = connect().await?;
+    let r: Res<Vec<String>> = async {
+        let seuil = 3 * lignee::FRAIS_RECHARGE.min(sas.max_frais.max(0) as u64);
+        let petits: Vec<(TransactionOutpoint, u64)> = depots(&c, &sas).await?.into_iter().filter(|d| d.2 && d.1 < seuil).map(|d| (d.0, d.1)).take(8).collect();
+        if petits.is_empty() {
+            return Err("aucun petit dépôt confirmé à cette adresse de dépôt (les autres partent avec la fermeture ou le retour ordinaire)".into());
+        }
+        let mut ids = vec![];
+        for d in petits {
+            // Une pièce de la trésorerie paie les frais ; le reste lui revient.
+            let (entries, inputs, _) = coffre::financer(&c, owner, 10 * FEE).await?;
+            let i = (0..entries.len()).max_by_key(|i| entries[*i].amount).ok_or("trésorerie vide")?;
+            let appoint = (inputs[i].previous_outpoint, entries[i].clone());
+            let essai = lignee::build_retour_assiste(&sas, d, &retour, appoint.clone(), FEE, owner)?;
+            let frais = masse::frais_relais(&essai) * 3 / 2;
+            let tx = lignee::build_retour_assiste(&sas, d, &retour, appoint, frais, owner)?;
+            ids.push(c.submit_transaction(garde_diffusion(&tx)?, false).await?.to_string());
+            println!("Petit dépôt de {} sompi renvoyé entier à {retour_adr} (frais payés par la trésorerie : {frais} sompi) : {}", d.1, explorer(ids.last().unwrap()));
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+        Ok(ids)
+    }
+    .await;
+    liberer(&c).await?;
+    r
+}
+
 /// Pour les bancs d'essai (ici et dans la passerelle) : une fiche de dépôt construite comme le fait
 /// l'outil, signée par la clé `signataire`.
 #[cfg(test)]
@@ -855,7 +891,7 @@ mod tests {
         let c = coeur(2);
         let g = genese(1);
         let x = lignee_recalculee(&c, &g).unwrap();
-        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
+        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
         assert_eq!(sas_de(&c, &e).unwrap().id(), x);
         assert_eq!(coffre::lignee_de(Some(&e)), Some(x));
         assert!(sas_de(&c, &EtatCoeur { lignee: Some(hex::encode([5u8; 32])), ..e.clone() }).is_err(), "lignée du fichier ≠ lignée de la création");
@@ -959,7 +995,7 @@ mod tests {
         let c = coeur(2);
         let g = Genese { valeurs: vec![300_000_000; 3], ..genese(1) };
         let x = lignee_recalculee(&c, &g).unwrap();
-        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g.clone()), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
+        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g.clone()), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], ages_remis: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
         assert_eq!(k_reel(&c, &e).unwrap(), 3);
         let alerte = ecart_pieces(1, 3, c.capacite).expect("règles : 1 pièce ; réseau : 3");
         assert!(alerte.contains("3 pièce(s)") && alerte.contains("1.5 KAS"), "{alerte}");
