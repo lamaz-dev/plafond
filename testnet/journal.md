@@ -1563,3 +1563,87 @@ Premier essai du cœur v0.9.2 et du sas v0.2.1 : tout a eu le résultat attendu.
 mesures de masse et de frais, et ce que l'essai ne montre pas : `spec/essai-testnet-2026-11-28-v0.9.2.md`.
 À retenir : le versement sans signature est relayé ; le nœud exige 100 sompi par gramme de masse
 transitoire normalisée (222 600 sompi pour un versement) ; `maxFrais` du sas fixé à 1 000 000 sompi.
+
+## 2026-11-28 02:46 UTC
+
+```
+$ vault-cli etat
+Connecté au testnet-10 : wss://neutrino-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 634982091
+Solde du propriétaire : 987.64626073 TKAS (11 UTXO)
+Coffre : pas encore déployé
+
+$ vault-cli deployer
+Connecté au testnet-10 : wss://boson-10.kaspa.red/kaspa/testnet-10/wrpc/borsh
+Coffre créé (cœur v0.9.2, à lignée) : 5 TKAS en 1 pièce(s) à l'adresse kaspatest:prz2mprrqq9ppuf9ps5fnteej0jlt9283twhp3t0aqse7gh4cq0ujqrhsvgfv
+Une pièce : un achat à la fois ; au pire, l'agent sort un plafond d'achat d'un coup, puis au rythme du budget.
+Lignée du coffre : a0f82793d2ed0f40e80a3bd3f70576bc1559c698d33da536287d925d3e7c97c1
+Adresse de retour (reprise, fermeture) : kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz
+Transaction : https://tn10.kaspa.stream/transactions/b9e6fb1203078d4fe8c825a0304bd38d4ac3decd7caf1f4e498dfc9f3561cfe3
+Adresse de dépôt (sas), signée par le propriétaire : kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00
+  dépôt minimal versé automatiquement : 0.5035 TKAS
+
+$ vault-cli sas
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Adresse de dépôt (sas) : kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00
+Dépôt minimal versé automatiquement : 0.5035 TKAS (en dessous, le dépôt attend le propriétaire)
+Dépôts en attente : 0 (0 TKAS)
+Fiche de dépôt à transmettre au payeur (il la vérifie avec `sas-verifier`) :
+{"version":"coeur-v0.9.2","coffre":{"owner":"8b66653de8e1aef2335d69f963bbd781ba76b74558ccdddb0767e8e8295ea0ba","agent":"9fecfba642f66ee3e464c965668c4968de9d7a877bfe3c9b3cfe4a18363c3bb8","capacite":50000000,"periode":5143,"retour":"56b7c9b0b216da784b688960ff8d718e66314a7c89bab5148a02ea39975fd5c5"},"genese":{"txid":"b9e6fb1203078d4fe8c825a0304bd38d4ac3decd7caf1f4e498dfc9f3561cfe3","entree_txid":"0be1be41754dcb06dc2cd7e44d1b18eaa800fb421d95e790f99012a5b96454d7","entree_index":1,"valeurs":[500000000]},"lignee":"a0f82793d2ed0f40e80a3bd3f70576bc1559c698d33da536287d925d3e7c97c1","adresse_coffre":"kaspatest:prz2mprrqq9ppuf9ps5fnteej0jlt9283twhp3t0aqse7gh4cq0ujqrhsvgfv","adresse_depot":"kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00","max_frais_sompi":1000000,"depot_minimal_sompi":50350000,"attestation":"1fbf4a2c9c6f85229d91a8b8663f6ae6759bb01f27fde174164d7f20893aeacd0d1d1adc00f0dda77b5953bfcd7792b48f12c9e0f6f1417ca09d5c451254035e"}
+
+$ vault-cli sas-deposer 200000000
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Dépôt de 2 TKAS envoyé à l'adresse de dépôt kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00 : https://tn10.kaspa.stream/transactions/dc508788f4d0b328540f7a89b2f3f4b8e195adc3d69ed0bae2fb6269df886f56
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli sas-verser
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Dépôt versé dans le coffre, sans clé : https://tn10.kaspa.stream/transactions/4c62bc2a6ea4579c5b37750847ba4220aab3e3dc686e27b44605a35caed65ab5
+
+$ vault-cli pause 90
+(pause de 90 s)
+
+$ vault-cli payer 5000000
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://neutrino-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Paiement accepté par le réseau : https://tn10.kaspa.stream/transactions/ea96f79515c7ea019687eb7dfb3784258d5ce0013227047bf3a8c50b6309aa25
+
+$ vault-cli reprendre 100000000
+(nœud injoignable, essai 1/3 : réseau de test injoignable (aucun nœud n'a répondu en 20 s) : vérifiez votre connexion, ou indiquez un nœud avec NOEUD_WRPC ; nouvel essai)
+Connecté au testnet-10 : wss://neutrino-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+1 TKAS repris vers l'adresse de retour (frais 0.0042525 TKAS) : https://tn10.kaspa.stream/transactions/03b809f6c893dd478e4393233c380d99d3b57c755899397ff13151bd2c94d304
+
+$ vault-cli ajouter 100000000
+Connecté au testnet-10 : wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+Coffre rechargé de 1 TKAS (pièce existante regonflée, nombre de pièces inchangé) : https://tn10.kaspa.stream/transactions/a3cc44d084f669cf6cdb11829c7b0cc3bfd2818e0f0fb67c10c407210ba5266a
+
+$ vault-cli sas-deposer 200000000
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Dépôt de 2 TKAS envoyé à l'adresse de dépôt kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00 : https://tn10.kaspa.stream/transactions/41a165a77146ae355e24f29100ca22f8cfc50832fd6f228be258ae1efb277fe2
+
+$ vault-cli pause 15
+(pause de 15 s)
+
+$ vault-cli sas
+Connecté au testnet-10 : wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/borsh
+Adresse de dépôt (sas) : kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00
+Dépôt minimal versé automatiquement : 0.5035 TKAS (en dessous, le dépôt attend le propriétaire)
+Dépôts en attente : 1 (2 TKAS)
+Fiche de dépôt à transmettre au payeur (il la vérifie avec `sas-verifier`) :
+{"version":"coeur-v0.9.2","coffre":{"owner":"8b66653de8e1aef2335d69f963bbd781ba76b74558ccdddb0767e8e8295ea0ba","agent":"9fecfba642f66ee3e464c965668c4968de9d7a877bfe3c9b3cfe4a18363c3bb8","capacite":50000000,"periode":5143,"retour":"56b7c9b0b216da784b688960ff8d718e66314a7c89bab5148a02ea39975fd5c5"},"genese":{"txid":"b9e6fb1203078d4fe8c825a0304bd38d4ac3decd7caf1f4e498dfc9f3561cfe3","entree_txid":"0be1be41754dcb06dc2cd7e44d1b18eaa800fb421d95e790f99012a5b96454d7","entree_index":1,"valeurs":[500000000]},"lignee":"a0f82793d2ed0f40e80a3bd3f70576bc1559c698d33da536287d925d3e7c97c1","adresse_coffre":"kaspatest:prz2mprrqq9ppuf9ps5fnteej0jlt9283twhp3t0aqse7gh4cq0ujqrhsvgfv","adresse_depot":"kaspatest:pzgscwf9tt7xvhjmp3q2wwt8ctug858rr08nv3w3deyrjlhepr5kqujlfpe00","max_frais_sompi":1000000,"depot_minimal_sompi":50350000,"attestation":"1fbf4a2c9c6f85229d91a8b8663f6ae6759bb01f27fde174164d7f20893aeacd0d1d1adc00f0dda77b5953bfcd7792b48f12c9e0f6f1417ca09d5c451254035e"}
+
+$ vault-cli recuperer
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+2 pièce(s) et dépôt(s) renvoyés à kaspatest:qz9kvefaars6au3nt45ljcam67qm5a4hg4vvehwmqan736pft6st5lhhymxhz : 8.9087475 TKAS, https://tn10.kaspa.stream/transactions/9a0c702de3b223addb893d67a5b697f151a8bd95b74a49eb03ef39e34807c474
+Coffre FERMÉ : sa lignée est éteinte, son adresse de dépôt ne verse plus rien. Un dépôt qui y arriverait encore attendra que vous le renvoyiez (commande `sas-retour`).
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 634984330
+Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+```
