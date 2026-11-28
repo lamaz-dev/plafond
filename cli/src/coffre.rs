@@ -281,6 +281,25 @@ pub async fn financer(c: &KaspaRpcClient, owner: &Keypair, montant: u64) -> Res<
     Ok((entries, inputs, total))
 }
 
+/// Simple fonction de portefeuille : envoie `montant` depuis les pièces ordinaires de la clé `de`
+/// vers un script, le reste revenant à `de`. Aucun coffre, aucun contrat.
+pub async fn envoyer(c: &KaspaRpcClient, de: &Keypair, vers: &ScriptPublicKey, montant: u64) -> Res<String> {
+    let (entries, inputs, total) = financer(c, de, montant).await?;
+    let fee = FEE * inputs.len() as u64;
+    let mut outputs = vec![TransactionOutput::new(montant, vers.clone())];
+    let rendu = total.checked_sub(montant + fee).ok_or("solde insuffisant pour ce montant et les frais")?;
+    if rendu > 0 {
+        outputs.push(TransactionOutput::new(rendu, pay_to_address_script(&address(de))));
+    }
+    let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+    for i in 0..tx.inputs.len() {
+        let s = sign(&tx, &entries, i, de);
+        tx.inputs[i].signature_script = ScriptBuilder::new().add_data(&s)?.drain();
+    }
+    tx.finalize();
+    Ok(c.submit_transaction(garde_diffusion(&tx)?, false).await?.to_string())
+}
+
 /// Découpe un dépôt en `k` pièces presque égales (la dernière prend le reste).
 pub fn decouper(montant: u64, k: i64) -> Vec<u64> {
     let k = k.max(1) as u64;

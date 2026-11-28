@@ -613,6 +613,26 @@ pub async fn retour_tardif(owner: &Keypair, archive: &str) -> Res<String> {
     Ok(txid)
 }
 
+/// Pour les bancs d'essai (ici et dans la passerelle) : une fiche de dépôt construite comme le fait
+/// l'outil, signée par la clé `signataire`.
+#[cfg(test)]
+pub(crate) fn fiche_d_essai(c: &Coeur, g: Genese, signataire: &Keypair) -> Fiche {
+    let x = lignee_recalculee(c, &g).unwrap();
+    let sas = Sas::pour(c, x, lignee::FRAIS_MAX_DEFAUT).unwrap();
+    let (coffre_adr, depot_adr) = (adresse_de(&vault_spk(&c.artifact_v092().unwrap())).unwrap(), adresse_de(&vault_spk(&sas.artifact().unwrap())).unwrap());
+    Fiche {
+        version: VERSION_V092.into(),
+        coffre: c.publics(),
+        genese: g,
+        lignee: x.to_string(),
+        adresse_coffre: coffre_adr.to_string(),
+        adresse_depot: depot_adr.to_string(),
+        max_frais_sompi: sas.max_frais,
+        depot_minimal_sompi: Sas::depot_minimal(c, lignee::FRAIS_RECHARGE),
+        attestation: attester(signataire, &coffre_adr, &x, &depot_adr),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,22 +646,8 @@ mod tests {
     fn genese(n: u8) -> Genese {
         Genese { txid: hex::encode([n; 32]), entree_txid: hex::encode([n + 1; 32]), entree_index: 0, valeurs: vec![300_000_000] }
     }
-    /// Une fiche de dépôt honnête, signée par le propriétaire `cle`.
     fn fiche_de(c: &Coeur, g: Genese, cle: u8) -> Fiche {
-        let x = lignee_recalculee(c, &g).unwrap();
-        let sas = Sas::pour(c, x, lignee::FRAIS_MAX_DEFAUT).unwrap();
-        let (coffre_adr, depot_adr) = (adresse_de(&vault_spk(&c.artifact_v092().unwrap())).unwrap(), adresse_de(&vault_spk(&sas.artifact().unwrap())).unwrap());
-        Fiche {
-            version: VERSION_V092.into(),
-            coffre: c.publics(),
-            genese: g,
-            lignee: x.to_string(),
-            adresse_coffre: coffre_adr.to_string(),
-            adresse_depot: depot_adr.to_string(),
-            max_frais_sompi: sas.max_frais,
-            depot_minimal_sompi: Sas::depot_minimal(c, lignee::FRAIS_RECHARGE),
-            attestation: attester(&k(cle), &coffre_adr, &x, &depot_adr),
-        }
+        fiche_d_essai(c, g, &k(cle))
     }
 
     /// La lignée recalculée par l'outil est celle que le réseau calcule pour la transaction de

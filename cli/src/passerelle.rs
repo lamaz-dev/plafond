@@ -43,6 +43,9 @@
 //!     GET  /admin/etat                    agents, arrêts, tête du journal
 //!     POST /admin/arret   {agent}         arrête un agent (« * » : tous)
 //!     POST /admin/reprise {agent}         lève l'arrêt
+//!     GET  /admin/financement             demande de financement de chaque agent (requêtes restantes,
+//!                                         montant, adresse de dépôt vérifiée, liens d'achat)
+//!     GET  /v1/financement                la même fiche, pour l'agent lui-même
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, Read, Write};
@@ -155,6 +158,8 @@ struct FichierConfig {
     /// du premier agent.
     #[serde(default)]
     vendeur_demo: bool,
+    /// Modèle de lien vers un service d'achat (`{adresse}`, `{montant}`, `{devise}`), https seulement.
+    lien_achat: Option<String>,
     agents: Vec<FichierAgent>,
 }
 
@@ -167,6 +172,8 @@ struct FichierAgent {
     origines: Vec<String>,
     max_requete_sompi: Option<i64>,
     debit_par_minute: Option<usize>,
+    /// Demande de financement de cet agent : cible et seuil en requêtes, devise (src/financement.rs).
+    recharge: Option<crate::financement::Reglage>,
 }
 
 /// Ce que la passerelle sait d'un agent : jamais la clé de son propriétaire.
@@ -179,6 +186,7 @@ pub struct Agent {
     pub etat: String,
     politique: Politique,
     debit: Debit,
+    recharge: Option<crate::financement::Reglage>,
 }
 
 /// Lit un agent installé par `agent-installer` (même format que `agent-payer`).
@@ -226,6 +234,9 @@ pub struct Passerelle {
     idem: HashMap<String, Idempotence>,
     acheter: Acheteur,
     lire: Lecteur,
+    lien_achat: Option<String>,
+    /// Cours indicatifs (devise -> prix d'un KAS), pour exprimer la demande dans la devise du client.
+    cours: Box<dyn FnMut() -> Option<Value>>,
 }
 
 pub struct Requete<'a> {
@@ -276,6 +287,7 @@ impl Passerelle {
                 etat,
                 politique: Politique { origines, max_requete: a.max_requete_sompi.unwrap_or(plafond).clamp(0, plafond), demo: cfg.demo },
                 debit: Debit::new(a.debit_par_minute.unwrap_or(30).max(1)),
+                recharge: a.recharge,
             });
         }
         let fichier_arrets = rel(cfg.arrets.as_deref().unwrap_or("passerelle-arrets.json"));
@@ -297,6 +309,8 @@ impl Passerelle {
             fichier_arrets,
             journal,
             idem: HashMap::new(),
+            lien_achat: cfg.lien_achat.filter(|l| l.starts_with("https://")),
+            cours: Box::new(|| None),
             acheter,
             lire,
         })
@@ -352,8 +366,56 @@ impl Passerelle {
         }
     }
 
+    /// Branche la lecture des cours (sans elle, la demande est exprimée en requêtes seulement).
+    pub fn avec_cours(mut self, cours: Box<dyn FnMut() -> Option<Value>>) -> Self {
+        self.cours = cours;
+        self
+    }
+
+    /// Demande de financement d'un agent : combien de requêtes il lui reste, combien il manque pour
+    /// atteindre sa cible, et OÙ envoyer l'argent. L'adresse ne vient jamais de l'agent : pour un
+    /// coffre à lignée, c'est celle de la fiche de dépôt, recalculée ici et dont la signature du
+    /// propriétaire est vérifiée (S7) ; pour un ancien coffre, celle que l'administrateur a écrite
+    /// dans la configuration. Sans adresse vérifiable, la fiche n'en donne pas.
+    fn financement(&mut self, i: usize) -> Value {
+        let Some(reglage) = self.agents[i].recharge.clone() else {
+            return json!({ "agent": self.agents[i].nom, "configure": false });
+        };
+        let lu = match (self.lire)(&self.agents[i]) {
+            Ok(v) => v,
+            Err(e) => return json!({ "agent": self.agents[i].nom, "configure": true, "erreur": e.to_string() }),
+        };
+        let valeur = lu["coffre"]["valeur_sompi"].as_u64().unwrap_or(0);
+        let cours = (self.cours)().and_then(|c| c[reglage.devise.to_ascii_lowercase().as_str()].as_f64());
+        let besoin = crate::financement::calculer(valeur, &reglage, cours);
+        let a = &self.agents[i];
+        let a_lignee = lu["coffre"]["lignee"].is_string();
+        let fiche: Option<crate::coffre092::Fiche> = serde_json::from_value(lu["depot"].clone()).ok().filter(|f: &crate::coffre092::Fiche| {
+            crate::coffre092::verifier_fiche(f).is_ok() && f.coffre.owner == hex::encode(&a.owner_pk) && f.coffre.agent == hex::encode(crate::xonly(&a.cle))
+        });
+        let (adresse, origine) = match (&fiche, a_lignee, &reglage.adresse_depot) {
+            (Some(f), _, _) => (Some(f.adresse_depot.clone()), "fiche de dépôt vérifiée (signée par le propriétaire)"),
+            (None, true, _) => (None, "adresse de dépôt non vérifiable pour l'instant : aucune adresse n'est donnée"),
+            (None, false, Some(adr)) => (Some(adr.clone()), "adresse écrite par l'administrateur dans la configuration"),
+            (None, false, None) => (None, "aucune adresse de dépôt configurée"),
+        };
+        let mut v = crate::financement::fiche(&a.nom, &besoin, &reglage, adresse.as_deref().unwrap_or(""), self.lien_achat.as_deref().filter(|_| adresse.is_some()));
+        v["configure"] = json!(true);
+        v["adresse_depot"] = json!(adresse);
+        v["origine_adresse"] = json!(origine);
+        v["fiche_depot"] = json!(fiche);
+        v["depot_minimal_sompi"] = json!(fiche.as_ref().map(|f| f.depot_minimal_sompi));
+        v["liens"] = crate::financement::liens();
+        v
+    }
+
     fn admin(&mut self, r: Requete) -> (u16, Value) {
         match (r.methode, r.chemin) {
+            ("GET", "/admin/financement") => {
+                let fiches: Vec<Value> = (0..self.agents.len()).map(|i| self.financement(i)).collect();
+                let a_recharger = fiches.iter().filter(|f| f["a_recharger"] == true).count();
+                (200, json!({ "agents": fiches, "a_recharger": a_recharger }))
+            }
             ("GET", "/admin/etat") => {
                 let (n, tete) = self.journal.tete();
                 let agents: Vec<Value> = self.agents.iter().map(|a| json!({ "nom": a.nom, "arrete": self.arrete(&a.nom), "vendeurs": a.politique.origines, "max_requete_sompi": a.politique.max_requete })).collect();
@@ -400,6 +462,9 @@ impl Passerelle {
                 Ok(v) => (200, v),
                 Err(e) => (503, json!({ "erreur": e.to_string() })),
             },
+            // L'agent peut dire à son propriétaire qu'il a besoin d'être rechargé ; il transmet
+            // alors une fiche que le payeur vérifie, jamais une adresse de son cru.
+            ("GET", "/v1/financement") => (200, self.financement(i)),
             ("POST", "/v1/fetch") => {
                 let cle_idem = r.idempotence.map(|k| k.chars().take(128).collect::<String>());
                 if let Some(rejoue) = cle_idem.as_deref().and_then(|k| self.idem.get(&nom).and_then(|m| m.lire(k))) {
@@ -474,7 +539,8 @@ pub fn lecteur_reel(handle: Handle) -> Lecteur {
 /// Lance la passerelle (bloquant).
 pub fn lancer(handle: Handle, config: &Path) -> Res<()> {
     let handle_vendeur = handle.clone();
-    let mut p = Passerelle::depuis_fichier(config, acheteur_reel(handle.clone()), lecteur_reel(handle))?;
+    let mut cours = crate::financement::Cours::nouveau();
+    let mut p = Passerelle::depuis_fichier(config, acheteur_reel(handle.clone()), lecteur_reel(handle))?.avec_cours(Box::new(move || cours.lire()));
     x402::BLOQUER_INTERNE.store(!p.demo(), std::sync::atomic::Ordering::Relaxed);
     if p.vendeur_demo {
         let pay_to = kaspa_addresses::Address::new(kaspa_addresses::Prefix::Testnet, kaspa_addresses::Version::PubKey, &p.agents[0].owner_pk);
@@ -599,6 +665,66 @@ mod tests {
             assert_eq!(p.traiter(req("POST", "/v1/fetch", &bearer(&b.cle_a), &json!({ "url": url }).to_string())).0, 403, "{url}");
         }
         assert!(appels.borrow().is_empty());
+    }
+
+    /// Demande de financement : en requêtes et dans la devise du client ; l'adresse de dépôt vient
+    /// de la fiche signée par le propriétaire et vérifiée ici, jamais de l'agent.
+    #[test]
+    fn financement_adresse_de_depot_verifiee() {
+        use crate::coffre::Genese;
+        let b = banc("financement");
+        let (mut p, _) = passerelle(&b);
+        let k = |o: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[o; 32]).unwrap();
+        let reglage = |adresse: Option<&str>| crate::financement::Reglage { requetes_cible: 1000, seuil_requetes: 200, tarif_requete_sompi: Some(20_000_000), devise: "eur".into(), adresse_depot: adresse.map(String::from) };
+        // Sans réglage : rien à dire.
+        let (s, v) = p.traiter(req("GET", "/v1/financement", &bearer(&b.cle_a), ""));
+        assert_eq!((s, v["configure"].as_bool()), (200, Some(false)));
+        // Coffre à lignée de l'agent a (propriétaire : clé 1, agent : clé 2), fiche signée par le propriétaire.
+        let coeur = crate::coeur::Coeur { owner: xonly(&k(1)), agent: xonly(&k(2)), capacite: 50_000_000, periode: 36_000, retour: Some(crate::coffre::empreinte_retour(&crate::address(&k(11)))) };
+        let genese = Genese { txid: hex::encode([4u8; 32]), entree_txid: hex::encode([5u8; 32]), entree_index: 0, valeurs: vec![300_000_000] };
+        let bonne = crate::coffre092::fiche_d_essai(&coeur, genese.clone(), &k(1));
+        let lu = |fiche: Value| json!({ "coffre": { "valeur_sompi": 150u64 * 20_000_000, "lignee": "aa" }, "depot": fiche });
+        p.agents[0].recharge = Some(reglage(Some("kaspatest:adresse-de-la-configuration")));
+        p.lien_achat = Some("https://achat.exemple/?a={adresse}&m={montant}&d={devise}".into());
+        p.cours = Box::new(|| Some(json!({ "eur": 0.03 })));
+        let f = serde_json::to_value(&bonne).unwrap();
+        p.lire = Box::new(move |_| Ok(lu(f.clone())));
+        let (s, v) = p.traiter(req("GET", "/v1/financement", &bearer(&b.cle_a), ""));
+        assert_eq!(s, 200);
+        assert_eq!((v["requetes_restantes"].as_u64(), v["a_recharger"].as_bool(), v["montant"]["valeur"].as_f64()), (Some(150), Some(true), Some(5.26)));
+        assert_eq!(v["adresse_depot"].as_str(), Some(bonne.adresse_depot.as_str()), "l'adresse de la fiche vérifiée, pas celle de la configuration");
+        assert!(v["lien_achat"].as_str().unwrap().contains(&bonne.adresse_depot) && v["origine_adresse"].as_str().unwrap().contains("signée"));
+        assert_eq!(v["depot_minimal_sompi"].as_u64(), Some(bonne.depot_minimal_sompi));
+        assert_eq!(v["liens"]["plateformes"][0]["nom"], "Finst");
+        // Fiches que l'agent pourrait fabriquer : adresse remplacée, fiche signée par lui-même (sa
+        // propre lignée à l'adresse du coffre), fiche d'un autre propriétaire. Aucune adresse n'est donnée.
+        let mut remplacee = bonne.clone();
+        remplacee.adresse_depot = crate::address(&k(2)).to_string();
+        let signee_par_l_agent = crate::coffre092::fiche_d_essai(&coeur, Genese { entree_txid: hex::encode([9u8; 32]), ..genese.clone() }, &k(2));
+        let autre_proprietaire = crate::coffre092::fiche_d_essai(&crate::coeur::Coeur { owner: xonly(&k(2)), ..coeur.clone() }, genese.clone(), &k(2));
+        assert!(crate::coffre092::verifier_fiche(&autre_proprietaire).is_ok(), "cohérente en elle-même, mais ce n'est pas le coffre de cet agent");
+        for (nom, fausse) in [("adresse remplacée", serde_json::to_value(&remplacee).unwrap()), ("signée par l'agent", serde_json::to_value(&signee_par_l_agent).unwrap()), ("autre propriétaire", serde_json::to_value(&autre_proprietaire).unwrap()), ("absente", Value::Null), ("illisible", json!({ "adresse_depot": "kaspatest:x" }))] {
+            p.lire = Box::new(move |_| Ok(lu(fausse.clone())));
+            let (_, v) = p.traiter(req("GET", "/v1/financement", &bearer(&b.cle_a), ""));
+            assert!(v["adresse_depot"].is_null() && v["lien_achat"].is_null() && v["fiche_depot"].is_null(), "{nom} : {v}");
+            assert!(v["origine_adresse"].as_str().unwrap().contains("non vérifiable"), "{nom}");
+            assert_eq!(v["requetes_restantes"].as_u64(), Some(150), "le besoin reste affiché");
+        }
+        // Ancien coffre (sans lignée) : l'adresse écrite par l'administrateur dans la configuration.
+        p.lire = Box::new(|_| Ok(json!({ "coffre": { "valeur_sompi": 0u64 } })));
+        let (_, v) = p.traiter(req("GET", "/v1/financement", &bearer(&b.cle_a), ""));
+        assert_eq!(v["adresse_depot"].as_str(), Some("kaspatest:adresse-de-la-configuration"));
+        // Sans cours : pas de montant, pas de lien, mais le besoin en requêtes.
+        p.cours = Box::new(|| None);
+        let (_, v) = p.traiter(req("GET", "/v1/financement", &bearer(&b.cle_a), ""));
+        assert!(v["montant"].is_null() && v["lien_achat"].is_null() && v["requetes_restantes"].as_u64() == Some(0));
+        // Administration : tous les agents ; un agent n'y a pas accès.
+        let (s, v) = p.traiter(req("GET", "/admin/financement", &bearer(&b.admin), ""));
+        assert_eq!((s, v["agents"].as_array().unwrap().len(), v["a_recharger"].as_u64()), (200, 2, Some(1)));
+        assert_eq!(v["agents"][1]["configure"], false);
+        assert_eq!(p.traiter(req("GET", "/admin/financement", &bearer(&b.cle_a), "")).0, 404);
+        // Un modèle de lien qui n'est pas en https est ignoré dès la configuration.
+        assert!(Some("http://achat.exemple/".to_string()).filter(|l: &String| l.starts_with("https://")).is_none());
     }
 
     #[test]

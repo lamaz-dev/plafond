@@ -54,15 +54,19 @@ pub(crate) async fn etat_budget(owner_pk: &[u8], agent: &Keypair) -> Res<Value> 
     let v = coffre::vue(&c, owner_pk, &xonly(agent)).await;
     liberer(&c).await?;
     let v = v?;
+    // Coffre à lignée : la fiche de dépôt (adresse recalculée et signée par le propriétaire), que
+    // celui qui paie vérifie lui-même. Jamais une adresse nue.
+    let depot = v.lignee.and_then(|_| crate::coffre092::fiche(owner_pk, &xonly(agent)).ok());
     Ok(json!({
-        "coffre": { "adresse": v.adresse, "pieces": v.pieces.len(), "valeur_sompi": v.solde() },
+        "coffre": { "adresse": v.adresse, "pieces": v.pieces.len(), "valeur_sompi": v.solde(), "lignee": v.lignee.map(|x| x.to_string()) },
+        "depot": depot,
         "disponible_sompi": v.immediate(),
         "capacite_sompi": v.coeur.capacite,
         "max_par_paiement_sompi": (v.coeur.capacite as u64).saturating_sub(FEE),
         "frais_par_paiement_sompi": FEE,
         "recharge_complete_daa": v.coeur.periode,
         "prochain_paiement_plafond_secondes": coffre::delai(&v.coeur, &v.pieces, v.now, v.coeur.capacite as u64).map(|d| d / 10),
-        "garanti_par": if v.coeur.retour.is_some() { "covenant Plafond cœur v0.7 (verrou relatif du consensus Kaspa)" } else { "covenant Plafond cœur v0.6 (verrou relatif du consensus Kaspa)" },
+        "garanti_par": if v.lignee.is_some() { "covenant Plafond cœur v0.9.2 (lignée de pièces, verrou relatif du consensus Kaspa)" } else if v.coeur.retour.is_some() { "covenant Plafond cœur v0.7 (verrou relatif du consensus Kaspa)" } else { "covenant Plafond cœur v0.6 (verrou relatif du consensus Kaspa)" },
     }))
 }
 

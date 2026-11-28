@@ -380,6 +380,8 @@ pub static OUVRIR_NAVIGATEUR: std::sync::atomic::AtomicBool = std::sync::atomic:
 /// retour des nouveaux mandats. Le développeur voit tout de suite un gel partir ailleurs que vers sa
 /// trésorerie. Sa clé est sur le même ordinateur : elle sert à essayer, pas à se protéger.
 pub static RETOUR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Fichier (chiffré) de la clé de ce portefeuille de retour de test : sert au bouton « Envoyer ».
+static RETOUR_TEST_CLE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Parcours « Je n'ai rien » : adresse du portefeuille de retour qui vient d'être affiché (phrase
 /// en attente de ressaisie), puis adresse confirmée par la ressaisie. Seules des ADRESSES sont
@@ -531,6 +533,7 @@ fn proteger_essai(mot_de_passe: &str) -> Res<()> {
 fn portefeuille_retour_test(dossier: &str, enveloppe: &cle::Enveloppe) -> Res<String> {
     let chemin = std::path::Path::new(dossier).join("retour-test.key");
     let ch = chemin.to_string_lossy().into_owned();
+    *RETOUR_TEST_CLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(ch.clone());
     let pk = match agents::lire_cle_stockee(&ch)? {
         Some(agents::CleStockee::Chiffree(f)) => secp256k1::PublicKey::from_slice(&hex::decode(&f.publique)?)?.x_only_public_key().0.serialize().to_vec(),
         Some(agents::CleStockee::Claire(k)) => xonly(&k),
@@ -1211,6 +1214,54 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         "risque": crate::risque::rapport(&couloirs, &[], instant, crate::JOUR_DAA), "cours": c, "tarif_reference_sompi": tarif_reference(),
                         "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "essai": est_essai(), "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))
+                }
+                // ---- Acheter, revendre, envoyer (src/financement.rs). Des liens vers des plateformes
+                // régulées et une simple fonction de portefeuille : aucun échange entre utilisateurs.
+                ("GET", "/api/financement") => {
+                    let mut r = crate::financement::liens();
+                    r["envoyer"] = json!({ "sources": [
+                        { "id": "tresorerie", "adresse": address(&owner).to_string() },
+                        { "id": "retour_test", "adresse": RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()).clone() },
+                    ], "note": "Envoyer déplace l'argent d'un portefeuille dont la clé est sur cet ordinateur. Si votre adresse de retour est sur votre téléphone ou votre Ledger, envoyez depuis cet appareil." });
+                    json_rep(200, r)
+                }
+                ("POST", "/api/envoyer") => {
+                    let garde_ok = match cle_ch {
+                        // Compte protégé : mot de passe (et code de double authentification s'il est actif).
+                        Some(_) => garde.ouvrir(cle_ch, &owner, &v, true).map(|_| ()),
+                        None => Ok(()),
+                    };
+                    let dest = crate::retour::controler(crate::retour::Profil::Portefeuille, v["adresse"].as_str().unwrap_or(""), None, &[], None);
+                    let montant = v["montant_sompi"].as_u64().filter(|m| (1_000_000..=100_000_000_000).contains(m));
+                    let source: Res<Keypair> = match v["source"].as_str().unwrap_or("tresorerie") {
+                        "tresorerie" => Ok(owner),
+                        "retour_test" => (|| {
+                            let ch = RETOUR_TEST_CLE.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("pas de portefeuille de retour sur cet ordinateur")?;
+                            match agents::lire_cle_stockee(&ch)? {
+                                Some(agents::CleStockee::Chiffree(f)) => Ok(enveloppe.as_ref().ok_or("clé du portefeuille de retour indisponible")?.dechiffrer(&f)?.into()),
+                                Some(agents::CleStockee::Claire(k)) => Ok(k),
+                                None => Err("pas de portefeuille de retour sur cet ordinateur".into()),
+                            }
+                        })(),
+                        _ => Err("source inconnue".into()),
+                    };
+                    match (garde_ok, dest, montant, source) {
+                        (Err(r), _, _, _) => r,
+                        _ if v["confirmation"].as_str() != Some("ENVOYER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                        (_, Err(e), _, _) => json_rep(400, json!({ "erreur": e.to_string() })),
+                        (_, _, None, _) => json_rep(400, json!({ "erreur": "montant invalide" })),
+                        (_, _, _, Err(e)) => json_rep(400, json!({ "erreur": e.to_string() })),
+                        (Ok(()), Ok(c), Some(m), Ok(k)) => {
+                            let r = handle.block_on(async {
+                                let rpc = connect_silencieux().await?;
+                                let r = crate::coffre::envoyer(&rpc, &k, &pay_to_address_script(&c.adresse), m).await;
+                                liberer(&rpc).await?;
+                                r
+                            });
+                            journal(json!({ "envoyer": m, "vers": c.adresse.to_string(), "source": v["source"].as_str().unwrap_or("tresorerie"), "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                            resultat(r)
+                        }
+                    }
                 }
                 // ---- Adresse de retour : trois situations (src/retour.rs)
                 ("POST", "/api/retour/controler") => {

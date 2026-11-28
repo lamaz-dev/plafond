@@ -123,6 +123,60 @@ pub fn lien_achat(modele: &str, adresse: &str, montant: f64, devise: &str) -> Op
     Some(modele.replace("{adresse}", &enc(adresse)).replace("{montant}", &format!("{montant:.2}")).replace("{devise}", &enc(&devise.to_ascii_uppercase())))
 }
 
+/// Une plateforme régulée où le client achète ou revend lui-même ses KAS. Plafond n'y détient rien,
+/// n'exécute aucun ordre et ne met pas ses utilisateurs en relation : ce ne sont que des liens.
+pub struct Plateforme {
+    pub nom: &'static str,
+    /// « principal » ou « secours ».
+    pub role: &'static str,
+    pub lien: &'static str,
+    pub acheter: bool,
+    pub revendre: bool,
+    /// Ce que l'on sait de son statut, avec la source à vérifier par le client.
+    pub statut: &'static str,
+    /// Vrai si Plafond touche quelque chose quand le client passe par ce lien. Aucun lien ne l'est
+    /// aujourd'hui ; s'il le devenait, `MENTION_REMUNERE` s'affiche à côté du lien.
+    pub remunere: bool,
+}
+
+pub const MENTION_REMUNERE: &str = "Partenariat rémunéré";
+
+/// Liens proposés (choix du propriétaire du projet, 27 nov. 2026). Statuts relevés le 28 nov. 2026
+/// sur les sites des autorités et des plateformes ; la disponibilité du KAS et les moyens de
+/// paiement se vérifient sur la plateforme elle-même.
+pub const PLATEFORMES: &[Plateforme] = &[
+    Plateforme {
+        nom: "Finst",
+        role: "principal",
+        lien: "https://finst.com/fr",
+        acheter: true,
+        revendre: true,
+        statut: "Prestataire agréé MiCA par l'AFM (Pays-Bas), inscrit sur la liste blanche de l'AMF. À vérifier sur amf-france.org.",
+        remunere: false,
+    },
+    Plateforme {
+        nom: "Kraken",
+        role: "secours",
+        lien: "https://www.kraken.com/fr",
+        acheter: true,
+        revendre: true,
+        statut: "Licence MiCA délivrée par la Banque centrale d'Irlande. À vérifier sur centralbank.ie.",
+        remunere: false,
+    },
+];
+
+/// Les liens, tels que la console et la passerelle les donnent. Pas d'espace d'échange entre
+/// utilisateurs : acheter et revendre se font sur une plateforme régulée, au nom du client.
+pub fn liens() -> Value {
+    json!({
+        "plateformes": PLATEFORMES.iter().map(|p| json!({
+            "nom": p.nom, "role": p.role, "lien": p.lien, "acheter": p.acheter, "revendre": p.revendre, "statut": p.statut,
+            "partenariat_remunere": p.remunere, "mention": if p.remunere { Some(MENTION_REMUNERE) } else { None },
+        })).collect::<Vec<_>>(),
+        "principe": "Plafond ne vend pas, n'achète pas et ne met pas ses utilisateurs en relation. Vous achetez ou revendez vous-même, sur une plateforme régulée, à votre nom.",
+    })
+}
+
 /// Fiche d'un agent pour la demande de financement (JSON de la passerelle et du webhook).
 pub fn fiche(nom: &str, b: &Besoin, r: &Reglage, adresse: &str, modele_lien: Option<&str>) -> Value {
     let lien = match (modele_lien, b.montant) {
@@ -180,6 +234,23 @@ mod tests {
         assert_eq!(l, "https://achat.exemple/buy?to=kaspatest:qq1%26x%3Dy&amount=5.26&fiat=EUR");
         assert_eq!(lien_achat("http://achat.exemple/?a={adresse}", "a", 1.0, "eur"), None);
         assert_eq!(lien_achat("javascript:alert(1)", "a", 1.0, "eur"), None);
+    }
+
+    /// Liens externes : https seulement, un principal et un secours, et la mention « partenariat
+    /// rémunéré » dès qu'un lien le devient (aucun aujourd'hui).
+    #[test]
+    fn liens_externes_et_mention_de_remuneration() {
+        assert!(PLATEFORMES.iter().all(|p| p.lien.starts_with("https://") && !p.lien.contains('?') && !p.statut.is_empty()), "liens simples, sans paramètre de suivi");
+        assert_eq!(PLATEFORMES.iter().filter(|p| p.role == "principal").map(|p| p.nom).collect::<Vec<_>>(), vec!["Finst"]);
+        assert!(PLATEFORMES.iter().any(|p| p.role == "secours" && p.nom == "Kraken"));
+        assert!(PLATEFORMES.iter().find(|p| p.nom == "Finst").is_some_and(|p| p.acheter && p.revendre));
+        let v = liens();
+        for (p, j) in PLATEFORMES.iter().zip(v["plateformes"].as_array().unwrap()) {
+            assert_eq!(j["partenariat_remunere"], p.remunere);
+            assert_eq!(j["mention"].as_str(), p.remunere.then_some(MENTION_REMUNERE), "la mention suit la rémunération");
+        }
+        assert!(PLATEFORMES.iter().all(|p| !p.remunere), "aucun lien rémunéré aujourd'hui");
+        assert!(v["principe"].as_str().unwrap().contains("ne met pas ses utilisateurs en relation"));
     }
 
     #[test]

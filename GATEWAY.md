@@ -60,6 +60,16 @@ Agents use the same API as the single-agent router, so the Python SDK (`sdk/pyth
 | `GET /admin/etat` | agents, stops, head of the audit chain |
 | `POST /admin/arret {agent}` | stops an agent (`"*"`: all agents) |
 | `POST /admin/reprise {agent}` | lifts the stop (`"*"` lifts every stop) |
+| `GET /admin/financement` | funding request of every agent: requests left, amount to pay in the client's currency, verified deposit address, purchase links |
+| `GET /v1/financement` | the same sheet, for the calling agent |
+
+**Funding requests.** Add `"recharge": { "requetes_cible": 1000, "seuil_requetes": 200, "devise": "eur" }` to an agent
+(and optionally a top-level `"lien_achat"` template, https only, with `{adresse}`, `{montant}`, `{devise}`). The
+gateway then says how many requests the agent has left and how much to send to reach the target. The deposit
+address never comes from the agent: for a lineage vault it is taken from the deposit sheet signed by the owner key,
+which the gateway recomputes and verifies; if it cannot be verified, no address is given. Plafond holds no funds:
+buying and selling happen on a regulated platform, in the client's name (Finst as the main link, Kraken as a
+backup). There is no marketplace between users.
 
 Agents authenticate with `Authorization: Bearer <agent key>`, administrators with the administration key.
 An agent key cannot reach `/admin`, and the administration key cannot pay.

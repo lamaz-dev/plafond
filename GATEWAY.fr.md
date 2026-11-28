@@ -45,6 +45,19 @@ changement. Points d'entrée : `GET /v1/coffre`, `POST /v1/fetch`, et pour l'adm
 `POST /admin/arret`, `POST /admin/reprise`. Une clé d'agent n'atteint pas `/admin`, et la clé d'administration
 ne peut pas payer.
 
+## Demande de financement
+
+Ajoutez à un agent `"recharge": { "requetes_cible": 1000, "seuil_requetes": 200, "devise": "eur" }` (et, si
+vous voulez, un modèle `"lien_achat"` à la racine, en https, avec `{adresse}`, `{montant}`, `{devise}`).
+`GET /admin/financement` donne alors, pour chaque agent, le nombre de requêtes restantes, le montant à envoyer
+dans la devise du client et l'adresse de dépôt ; `GET /v1/financement` donne la même fiche à l'agent lui-même.
+
+L'adresse de dépôt ne vient jamais de l'agent. Pour un coffre à lignée, c'est celle de la fiche de dépôt signée
+par la clé du propriétaire, que la passerelle recalcule et vérifie ; si elle n'est pas vérifiable, aucune adresse
+n'est donnée. Plafond ne détient pas les fonds : l'achat et la revente se font sur une plateforme régulée, au nom
+du client (Finst en lien principal, Kraken en secours). Il n'y a pas d'espace d'échange entre utilisateurs. Si un
+lien devenait rémunéré, la mention « partenariat rémunéré » s'afficherait à côté.
+
 ## Vérifier le journal d'audit
 
 ```bash
