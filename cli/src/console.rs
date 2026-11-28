@@ -63,7 +63,65 @@ fn qr(texte: &str) -> Option<String> {
 /// Règles d'un mandat : budget, période, plafond par achat et, en option, durée en jours.
 /// Avec une durée, le capital alloué vaut budget × nombre de périodes : c'est la perte maximale
 /// garantie du mandat sur toute sa vie (le coffre ne peut pas dépenser plus que ce qu'il contient).
+#[cfg_attr(not(test), allow(dead_code))]
 fn regles_mandat(v: &Value) -> Res<(crate::Regles, Option<i64>)> {
+    regles_mandat_capital(v).map(|(r, d, _)| (r, d))
+}
+
+/// Marge gardée pour les frais quand on compare le capital d'un mandat à la trésorerie (0,05 jeton).
+const MARGE_FRAIS: u64 = 5_000_000;
+
+/// Plus petit montant de départ d'un coffre : une période de budget (et au moins 1 jeton), comme
+/// un mandat sans échéance. Le reste se met ensuite avec « Ajouter ».
+fn depot_minimum(r: &crate::Regles) -> u64 {
+    (r.budget as u64).max(100_000_000)
+}
+
+/// La trésorerie couvre-t-elle ce qui sera bloqué dans le coffre à sa création (frais compris) ?
+fn capital_tient(depot: u64, tresorerie: u64) -> bool {
+    tresorerie >= depot.saturating_add(MARGE_FRAIS)
+}
+
+/// Montant de départ qui tient dans la trésorerie : un nombre entier de périodes de budget, au moins
+/// le minimum, jamais plus que le capital de toute la durée. `None` : même le minimum ne tient pas.
+fn depot_qui_tient(budget: u64, minimum: u64, capital: u64, tresorerie: u64) -> Option<u64> {
+    let possible = tresorerie.saturating_sub(MARGE_FRAIS).min(capital);
+    if possible < minimum {
+        return None;
+    }
+    let b = budget.max(1);
+    Some((possible / b * b).max(minimum))
+}
+
+/// Message de refus quand la trésorerie ne couvre pas le capital bloqué à la création.
+fn refus_capital(depot: u64, tresorerie: u64, propose: Option<u64>) -> String {
+    let j = |x: u64| format!("{:.2}", x as f64 / 1e8);
+    let base = format!("trésorerie insuffisante : ce mandat bloque {} jetons dans son coffre dès la création (le réseau ne garantit le plafond que sur l'argent déjà dans le coffre), votre trésorerie en a {}", j(depot), j(tresorerie));
+    match propose {
+        Some(p) => format!("{base}. Mettez {} au départ et rechargez ensuite avec « Ajouter », ou ajoutez des fonds à la trésorerie.", j(p)),
+        None => format!("{base}. Ajoutez des fonds à la trésorerie ou choisissez un budget plus petit."),
+    }
+}
+
+/// Comme `regles_mandat`, avec le capital de toute la durée (budget × périodes). Le champ facultatif
+/// `depot_sompi` met moins au départ (petit coffre rechargé ensuite) : entre une période de budget et
+/// ce capital. Le contrat ne change pas : seul le montant placé à la création change.
+fn regles_mandat_capital(v: &Value) -> Res<(crate::Regles, Option<i64>, u64)> {
+    let (mut r, duree) = regles_mandat_brut(v)?;
+    let capital = r.depot;
+    if let Some(d) = v["depot_sompi"].as_u64() {
+        let min = depot_minimum(&r).min(capital);
+        if d < min || d > capital {
+            return Err(format!("montant de départ hors bornes : entre une période de budget ({} unités) et le capital de toute la durée ({} unités)", min, capital).into());
+        }
+        r.depot = d;
+    } else if !v["depot_sompi"].is_null() {
+        return Err("montant de départ invalide".into());
+    }
+    Ok((r, duree, capital))
+}
+
+fn regles_mandat_brut(v: &Value) -> Res<(crate::Regles, Option<i64>)> {
     let (Some(b), Some(p), Some(m)) = (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) else {
         return Err("budget, période et plafond par achat requis".into());
     };
@@ -106,6 +164,83 @@ fn regles_json(r: &crate::Regles) -> Value {
         "budget_garanti_par_periode_sompi": r.budget,
         "reserve_sompi": r.capacite,
     })
+}
+
+/// Mouvements d'un coffre, chacun sous son vrai nom : achat de l'agent, reprise vers l'adresse de
+/// retour, dépôt reçu au sas puis versé, ajout depuis la trésorerie, ouverture. Plus récents d'abord.
+fn mouvements(e: &crate::coffre::EtatCoeur) -> Vec<Value> {
+    let repris: std::collections::HashSet<&str> = e.retraits.iter().map(|r| r.txid.as_str()).collect();
+    let ouverture = e.genese.as_ref().map(|g| g.txid.clone()).or_else(|| e.apports.first().map(|a| a.txid.clone()));
+    let retour = e.retour.clone();
+    let mut v: Vec<Value> = e
+        .achats
+        .iter()
+        // Anciennes lectures (avant la correction) : une reprise a pu être notée comme un achat.
+        .filter(|a| !repris.contains(a.txid.as_str()))
+        .map(|a| json!({ "genre": "achat", "txid": a.txid, "destinataire": format!("tx {}", &a.txid[..a.txid.len().min(12)]), "montant_sompi": a.sompi, "frais_sompi": 0, "instant_daa": a.daa }))
+        .collect();
+    v.extend(e.retraits.iter().map(|r| json!({ "genre": "reprise", "txid": r.txid, "destinataire": retour, "montant_sompi": r.sompi, "frais_sompi": 0, "instant_daa": r.daa })));
+    // Les pièces d'une même transaction forment un seul mouvement.
+    let mut vus: Vec<(String, u64, u64)> = vec![];
+    for a in &e.apports {
+        match vus.iter_mut().find(|x| x.0 == a.txid) {
+            Some(x) => x.1 += a.sompi,
+            None => vus.push((a.txid.clone(), a.sompi, a.daa)),
+        }
+    }
+    for (txid, sompi, daa) in vus {
+        let genre = if Some(&txid) == ouverture.as_ref() { "ouverture" } else if e.versements.contains(&txid) { "depot_verse" } else { "apport" };
+        v.push(json!({ "genre": genre, "txid": txid, "montant_sompi": sompi, "frais_sompi": 0, "instant_daa": daa }));
+    }
+    v.sort_by_key(|m| std::cmp::Reverse(m["instant_daa"].as_u64().unwrap_or(0)));
+    v
+}
+
+/// Archive laissée par la fermeture d'un coffre à lignée (la plus récente), avec sa date.
+fn archive_fermee(etat: &str) -> Option<(std::path::PathBuf, u64)> {
+    let p = std::path::Path::new(etat);
+    let dossier = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let prefixe = format!("{}.ferme-", p.file_name()?.to_str()?.trim_end_matches(".json"));
+    fs::read_dir(dossier)
+        .ok()?
+        .filter_map(|d| d.ok())
+        .filter(|d| d.file_name().to_str().is_some_and(|n| n.starts_with(&prefixe) && n.ends_with(".json")))
+        .filter_map(|d| Some((d.path(), d.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs())))
+        .max_by_key(|x| x.1)
+}
+
+/// Le coffre de ce mandat a-t-il été fermé (et n'y en a-t-il pas d'autre ouvert) ? Fermer est
+/// définitif : la fiche le dit, avec la date, l'adresse de retour et les preuves.
+fn fermeture_json(a: &agents::Agent, tresorerie: &str) -> Option<Value> {
+    let archive = archive_fermee(&a.etat);
+    if a.ferme.is_none() && archive.is_none() {
+        return None;
+    }
+    let e: Option<crate::coffre::EtatCoeur> = archive.as_ref().and_then(|(p, _)| fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok());
+    let f = a.ferme.clone();
+    let le = f.as_ref().map(|f| f.le).or(archive.as_ref().map(|x| x.1)).unwrap_or(0);
+    let retour = f.as_ref().and_then(|f| f.retour.clone()).or_else(|| a.retour.clone()).or_else(|| e.as_ref().and_then(|e| e.retour.clone())).unwrap_or_else(|| tresorerie.to_string());
+    let transactions: Vec<String> = f.as_ref().map(|f| f.transactions.clone()).unwrap_or_default();
+    let mut historique = e.as_ref().map(mouvements).unwrap_or_default();
+    for t in transactions.iter().rev() {
+        historique.insert(0, json!({ "genre": "fermeture", "txid": t, "destinataire": retour, "montant_sompi": 0, "frais_sompi": 0, "instant_ms": le * 1000 }));
+    }
+    Some(json!({
+        "le": le,
+        "retour": retour,
+        "transactions": transactions,
+        "preuves": transactions.iter().map(|t| explorer(t)).collect::<Vec<_>>(),
+        "automatique": f.as_ref().is_some_and(|f| f.automatique),
+        "historique": historique,
+        "explication": "Coffre fermé définitivement : tout ce qu'il contenait est revenu à l'adresse de retour. Un coffre fermé ne se rouvre pas ; créez-en un nouveau.",
+    }))
+}
+
+/// Note la fermeture d'un coffre réussie (transactions séparées par des virgules).
+fn noter_fermeture(defaut: &str, a: &agents::Agent, txids: &str, tresorerie: &str, automatique: bool) {
+    let transactions = txids.split(',').map(str::trim).filter(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())).map(String::from).collect();
+    let f = agents::Fermeture { le: crate::double_auth::maintenant(), transactions, retour: Some(a.retour.clone().unwrap_or_else(|| tresorerie.to_string())), automatique };
+    let _ = agents::marquer_ferme(defaut, &a.id, f);
 }
 
 fn origine() -> Option<Etat> {
@@ -153,14 +288,9 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
         .iter()
         .map(|s| json!({ "secondes": s, "perte_max_sompi": v.courbe(etat.cree_daa + s * 10) }))
         .collect();
-    // Achats reconnus sur la chaîne (dépense frais compris), puis apports du propriétaire.
-    let historique: Vec<Value> = etat
-        .achats
-        .iter()
-        .rev()
-        .map(|a| json!({ "genre": "achat", "txid": a.txid, "destinataire": format!("tx {}", &a.txid[..a.txid.len().min(12)]), "montant_sompi": a.sompi, "frais_sompi": 0, "instant_daa": a.daa }))
-        .chain(etat.apports.iter().rev().map(|a| json!({ "genre": "apport", "txid": a.txid, "montant_sompi": a.sompi, "frais_sompi": 0, "instant_daa": a.daa })))
-        .collect();
+    // Achats de l'agent reconnus sur la chaîne (dépense frais compris), reprises vers l'adresse de
+    // retour, dépôts versés, ajouts : chacun sous son nom (une reprise n'est jamais un achat).
+    let historique: Vec<Value> = mouvements(&etat);
     let mut r = json!({
         "sante": sante,
         "regles": regles,
@@ -249,6 +379,9 @@ async fn depot_json(c: &kaspa_wrpc_client::KaspaRpcClient, owner: &Keypair, agen
         "en_attente_sompi": attente.iter().map(|d| d.1).sum::<u64>(),
         "en_attente": attente.len(),
         "sous_le_minimum": attente.iter().filter(|d| d.1 < fiche.depot_minimal_sompi).count(),
+        // Confirmés et au-dessus du minimum : la console les verse d'elle-même (sans clé).
+        "a_verser": attente.iter().filter(|d| d.2 && d.1 >= fiche.depot_minimal_sompi).count(),
+        "en_confirmation": attente.iter().filter(|d| !d.2).count(),
         "fiche": fiche,
         "explication": "Tout ce qui est envoyé à cette adresse ne peut que recharger ce coffre ou revenir à votre adresse de retour. Transmettez la fiche, pas seulement l'adresse : le payeur peut la vérifier.",
     })
@@ -825,7 +958,7 @@ pub fn porte(serveur: &tiny_http::Server, session: &Session, fichiers: &Fichiers
         } else if methode == "POST" && chemin == "/api/session" {
             if entete("Origin").is_none_or(|o| origines.contains(&o)) { session.repondre_echange(entete("X-Ticket")) } else { json_rep(403, json!({ "erreur": "origine refusée" })) }
         } else if !session.jeton_ok(entete("X-Jeton")) {
-            json_rep(401, json!({ "erreur": "session fermée ou invalide : appuyez sur Entrée dans le terminal pour obtenir un nouveau lien" }))
+            json_rep(401, json!({ "erreur": "session fermée : dans la fenêtre du terminal où Plafond tourne, appuyez sur Entrée, puis ouvrez le nouveau lien affiché" }))
         } else if methode == "POST" && !entete("Origin").is_none_or(|o| origines.contains(&o)) {
             json_rep(403, json!({ "erreur": "origine refusée" }))
         } else {
@@ -1176,8 +1309,9 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                                 if actif && a.echeance.is_some_and(|e| crate::double_auth::maintenant() >= e) {
                                     let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(geler(&owner, &k, false, 0)));
                                     journal(json!({ "echeance": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
-                                    if r.is_ok() {
+                                    if let Ok(txids) = &r {
                                         agents::noter(&defaut, &a.nom, "echeance", None);
+                                        noter_fermeture(&defaut, a, txids, &address(&owner).to_string(), true);
                                     }
                                 }
                                 if t["solde_proprietaire_sompi"].is_u64() {
@@ -1187,6 +1321,12 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                                     ligne[cle] = t[cle].clone();
                                 }
                                 ligne["achats"] = json!(t["historique"].as_array().map(|h| h.iter().filter(|m| m["genre"] == "achat").count()).unwrap_or(0));
+                                ligne["depots_a_verser"] = t["depot"]["a_verser"].clone();
+                                if !actif {
+                                    if let Some(f) = fermeture_json(a, &address(&owner).to_string()) {
+                                        ligne["fermeture"] = json!({ "le": f["le"], "retour": f["retour"], "preuves": f["preuves"] });
+                                    }
+                                }
                                 if let Some(now) = t["risque_now"].as_i64() {
                                     instant = instant.max(now); // le plus tard : borne prudente (le disponible ne fait que croître)
                                 }
@@ -1219,10 +1359,24 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                 // régulées et une simple fonction de portefeuille : aucun échange entre utilisateurs.
                 ("GET", "/api/financement") => {
                     let mut r = crate::financement::liens();
+                    let retour_test = RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    // Soldes des deux portefeuilles dont la clé est ici (lecture seule, pour le formulaire « Envoyer »).
+                    let soldes = handle.block_on(async {
+                        let c = connect_silencieux().await?;
+                        let lire = |a: kaspa_addresses::Address| { let c = &c; async move { c.get_utxos_by_addresses(vec![a]).await.map(|u| u.iter().map(|u| u.utxo_entry.amount).sum::<u64>()) } };
+                        let t = lire(address(&owner)).await.ok();
+                        let rt = match retour_test.as_deref().map(crate::coffre::valider_retour) {
+                            Some(Ok(a)) => lire(a).await.ok(),
+                            _ => None,
+                        };
+                        liberer(&c).await?;
+                        Ok::<_, Box<dyn std::error::Error>>((t, rt))
+                    }).unwrap_or((None, None));
                     r["envoyer"] = json!({ "sources": [
-                        { "id": "tresorerie", "adresse": address(&owner).to_string() },
-                        { "id": "retour_test", "adresse": RETOUR_TEST.lock().unwrap_or_else(|e| e.into_inner()).clone() },
-                    ], "note": "Envoyer déplace l'argent d'un portefeuille dont la clé est sur cet ordinateur. Si votre adresse de retour est sur votre téléphone ou votre Ledger, envoyez depuis cet appareil." });
+                        { "id": "tresorerie", "adresse": address(&owner).to_string(), "solde_sompi": soldes.0 },
+                        { "id": "retour_test", "adresse": retour_test, "solde_sompi": soldes.1 },
+                    ], "minimum_sompi": 1_000_000u64, "maximum_sompi": 100_000_000_000u64,
+                       "note": "Envoyer déplace l'argent d'un portefeuille dont la clé est sur cet ordinateur. Si votre adresse de retour est sur votre téléphone ou votre Ledger, envoyez depuis cet appareil." });
                     json_rep(200, r)
                 }
                 ("POST", "/api/envoyer") => {
@@ -1309,7 +1463,15 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         let c = cours.lire();
                         match avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(tableau(&owner, &k, c))) {
                             Ok(mut t) => {
-                                t["agent"] = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a) });
+                                t["agent"] = json!({ "id": a.id, "nom": a.nom, "identifiant": agents::xonly_pub(a, &agent_principal).map(hex::encode), "connexion": connexion_json(a), "regles": a.regles.as_ref().map(regles_json) });
+                                if matches!(t["sante"].as_str(), Some("aucun") | Some("gele")) {
+                                    if let Some(f) = fermeture_json(a, &address(&owner).to_string()) {
+                                        if t["historique"].as_array().is_none_or(|h| h.is_empty()) {
+                                            t["historique"] = f["historique"].clone();
+                                        }
+                                        t["fermeture"] = f;
+                                    }
+                                }
                                 json_rep(200, t)
                             }
                             Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
@@ -1323,10 +1485,26 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     if v["confirmation"].as_str() != Some("CREER") {
                         json_rep(400, json!({ "erreur": "confirmation requise" }))
                     } else {
-                        let mandat = regles_mandat(&v);
+                        let mandat = regles_mandat_capital(&v).map(|(r, d, c)| ((r, d), c));
+                        // Le capital du coffre est bloqué dès la création : refus clair AVANT d'inscrire le
+                        // mandat si la trésorerie ne le couvre pas (lecture du nœud ; sans réponse, la
+                        // création elle-même refusera un solde insuffisant).
+                        let manque = mandat.as_ref().ok().and_then(|((r, _), capital)| {
+                            let solde = handle.block_on(async {
+                                let c = connect_silencieux().await?;
+                                let s: u64 = c.get_utxos_by_addresses(vec![address(&owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum();
+                                liberer(&c).await?;
+                                Ok::<u64, Box<dyn std::error::Error>>(s)
+                            }).ok()?;
+                            (!capital_tient(r.depot, solde)).then(|| (r.depot, solde, depot_qui_tient(r.budget as u64, depot_minimum(r).min(*capital), *capital, solde)))
+                        });
+                        let mandat = mandat.map(|(m, _)| m);
                         let duree = mandat.as_ref().ok().and_then(|(_, d)| *d);
                         // Adresse de retour : choisie selon la situation de l'utilisateur et validée AVANT de créer.
                         let retour = retour_du_mandat(&v, &address(&owner).to_string());
+                        if let Some((depot, solde, propose)) = manque {
+                            json_rep(400, json!({ "erreur": refus_capital(depot, solde, propose), "motif": "tresorerie_insuffisante", "capital_sompi": depot, "tresorerie_sompi": solde, "depot_propose_sompi": propose }))
+                        } else {
                         match retour.and_then(|ret| mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r), enveloppe.as_ref())).map(|a| (a, ret))) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                             Ok((mut a, ret)) => {
@@ -1349,13 +1527,18 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                                 }
                             }
                         }
+                        }
                     }
                 }
                 // Aperçu des règles avant création : la plateforme calcule, l'utilisateur ne règle que 3 choses.
-                ("POST", "/api/regles") => match regles_mandat(&v) {
-                    Ok((r, duree)) => {
+                ("POST", "/api/regles") => match regles_mandat_capital(&v) {
+                    Ok((r, duree, capital)) => {
                         let mut j = regles_json(&r);
                         j["duree_jours"] = json!(duree);
+                        // Ce qui sera bloqué dans le coffre dès la création, et les bornes du montant de départ.
+                        j["capital_duree_sompi"] = json!(capital);
+                        j["depot_minimum_sompi"] = json!(depot_minimum(&r).min(capital));
+                        j["marge_frais_sompi"] = json!(MARGE_FRAIS);
                         json_rep(200, j)
                     }
                     Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
@@ -1440,6 +1623,8 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                 },
                 ("POST", "/api/creer") => match (&cible, cle_cible) {
                     _ if v["confirmation"].as_str() != Some("CREER") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                    // Fermer est définitif : le coffre d'un mandat fermé ne se rouvre pas.
+                    (Some(a), _) if fermeture_json(a, "").is_some() => json_rep(409, json!({ "erreur": "ce coffre a été fermé définitivement : créez un nouveau mandat", "motif": "ferme" })),
                     (Some(a), Some(Ok(k))) => {
                         let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || {
                             handle.block_on(crate::coffre::deployer_vers(&owner, &k, a.retour.as_deref()))
@@ -1456,8 +1641,9 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     (Some(a), Some(Ok(k))) => {
                         let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(geler(&owner, &k, false, 0)));
                         journal(json!({ "geler": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
-                        if r.is_ok() {
+                        if let Ok(txids) = &r {
                             agents::noter(&defaut, &a.nom, "arret", None);
+                            noter_fermeture(&defaut, a, txids, &address(&owner).to_string(), false);
                         }
                         resultat(r)
                     }
@@ -1470,8 +1656,9 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         let mut bilan = Vec::new();
                         for a in &liste {
                             let r = agents::cle(a, &agent_principal).and_then(|k| avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || if load_state().is_err() { Err("aucun coffre ouvert".into()) } else { handle.block_on(geler(&owner, &k, false, 0)) }));
-                            if r.is_ok() {
+                            if let Ok(txids) = &r {
                                 agents::noter(&defaut, &a.nom, "arret", None);
+                                noter_fermeture(&defaut, a, txids, &address(&owner).to_string(), false);
                             }
                             bilan.push(json!({ "agent": a.id, "nom": a.nom, "transaction": r.as_ref().ok(), "erreur": r.as_ref().err().map(|e| e.to_string()) }));
                         }
@@ -2488,6 +2675,105 @@ mod tests {
         let source = include_str!("console.rs");
         let generer = &source[source.find("(\"POST\", \"/api/retour/generer\")").unwrap()..source.find("(\"POST\", \"/api/retour/confirmer\")").unwrap()];
         assert!(!generer.contains("fs::") && !generer.contains("enregistrer") && generer.matches("journal(").count() == 1 && !generer[generer.find("journal(").unwrap()..generer.find("json_rep(200").unwrap()].contains("phrase.as"), "la phrase ne va ni sur disque ni au journal");
+    }
+
+    /// Création d'un mandat : le capital bloqué est dit, comparé à la trésorerie, et un montant de
+    /// départ plus petit (rechargé ensuite) est possible sans toucher au contrat.
+    #[test]
+    fn capital_bloque_et_montant_de_depart() {
+        let v = |j: i64| json!({ "budget_sompi": 2_000_000_000i64, "periode_daa": crate::JOUR_DAA, "plafond_sompi": 200_000_000i64, "duree_jours": j });
+        // 20 par jour pendant 30 jours : 600 bloqués
+        let (r, _, capital) = regles_mandat_capital(&v(30)).unwrap();
+        assert_eq!((r.depot, capital), (60_000_000_000, 60_000_000_000));
+        // moins au départ : entre une période de budget et le capital de la durée
+        let mut w = v(30);
+        w["depot_sompi"] = json!(6_000_000_000u64);
+        let (r, d, capital) = regles_mandat_capital(&w).unwrap();
+        assert_eq!((r.depot, d, capital), (6_000_000_000, Some(30), 60_000_000_000));
+        assert_eq!((r.capacite, r.recharge_daa, r.budget), regles_mandat(&v(30)).map(|(r, _)| (r.capacite, r.recharge_daa, r.budget)).unwrap(), "mêmes règles du contrat, seul le montant de départ change");
+        w["depot_sompi"] = json!(1_000_000_000u64);
+        assert!(regles_mandat_capital(&w).is_err(), "moins d'une période de budget : refusé");
+        w["depot_sompi"] = json!(60_000_000_001u64);
+        assert!(regles_mandat_capital(&w).is_err(), "plus que le capital de la durée : refusé");
+        w["depot_sompi"] = json!("beaucoup");
+        assert!(regles_mandat_capital(&w).is_err());
+        // la trésorerie suffit-elle ? (marge de frais comprise)
+        assert!(capital_tient(60_000_000_000, 60_000_000_000 + MARGE_FRAIS));
+        assert!(!capital_tient(60_000_000_000, 60_000_000_000));
+        assert!(!capital_tient(60_000_000_000, 10_000_000_000), "1 000/jour × 30 j avec une petite trésorerie : refusé");
+        // proposition qui tient : un nombre entier de jours de budget
+        assert_eq!(depot_qui_tient(2_000_000_000, 2_000_000_000, 60_000_000_000, 10_000_000_000), Some(8_000_000_000));
+        assert_eq!(depot_qui_tient(2_000_000_000, 2_000_000_000, 60_000_000_000, 100_000_000_000), Some(60_000_000_000), "jamais plus que le capital");
+        assert_eq!(depot_qui_tient(2_000_000_000, 2_000_000_000, 60_000_000_000, 1_000_000_000), None, "même une période ne tient pas");
+        assert!(refus_capital(60_000_000_000, 10_000_000_000, Some(8_000_000_000)).contains("Ajouter"));
+    }
+
+    /// Mouvements d'un coffre : une reprise vers l'adresse de retour n'est jamais un achat de
+    /// l'agent ; dépôts versés, ajouts et ouverture ont chacun leur nom.
+    #[test]
+    fn mouvements_classes_par_genre() {
+        use crate::coffre::{AchatVu, Apport, EtatCoeur};
+        let tx = |b: u8| hex::encode([b; 32]);
+        let e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, version: crate::coffre::VERSION.into(), retour: Some("kaspatest:retour".into()), capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+            apports: vec![Apport { txid: tx(1), sompi: 500, daa: 0 }, Apport { txid: tx(1), sompi: 500, daa: 0 }, Apport { txid: tx(4), sompi: 300, daa: 40 }, Apport { txid: tx(5), sompi: 200, daa: 50 }],
+            vues: vec![],
+            // ancienne lecture : la reprise 3 avait été notée comme un achat
+            achats: vec![AchatVu { txid: tx(2), sompi: 100, daa: 20 }, AchatVu { txid: tx(3), sompi: 250, daa: 30 }],
+            retraits: vec![Apport { txid: tx(3), sompi: 250, daa: 30 }],
+            versements: vec![tx(5)] };
+        let m = mouvements(&e);
+        let genre = |t: &str| m.iter().filter(|x| x["txid"] == t).map(|x| x["genre"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(genre(&tx(2)), ["achat"]);
+        assert_eq!(genre(&tx(3)), ["reprise"], "la reprise n'apparaît plus comme un achat");
+        assert_eq!(genre(&tx(1)), ["ouverture"], "les pièces de la création forment un seul mouvement");
+        assert_eq!(m.iter().find(|x| x["txid"] == tx(1)).unwrap()["montant_sompi"], 1_000);
+        assert_eq!(genre(&tx(4)), ["apport"]);
+        assert_eq!(genre(&tx(5)), ["depot_verse"]);
+        assert_eq!(m.iter().find(|x| x["genre"] == "reprise").unwrap()["destinataire"], "kaspatest:retour");
+        assert_eq!(m.iter().filter(|x| x["genre"] == "achat").count(), 1);
+        assert!(m.windows(2).all(|w| w[0]["instant_daa"].as_u64() >= w[1]["instant_daa"].as_u64()), "plus récents d'abord");
+    }
+
+    /// Fermer est définitif : la fiche dit quand et où tout est revenu, et le coffre ne se rouvre pas.
+    #[test]
+    fn coffre_ferme_definitivement() {
+        let _verrou = VERROU_ETAT.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("console-ferme-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let defaut = d.join("etat-coffre.json").to_string_lossy().into_owned();
+        let a = agents::nouveau(&defaut, "Recherche", None, None).unwrap();
+        let ouvert = agents::nouveau(&defaut, "Support", None, None).unwrap();
+        assert!(fermeture_json(&a, "kaspatest:tresorerie").is_none(), "jamais ouvert : pas fermé");
+        // ancienne fermeture, avant le mémo : l'archive laissée par la fermeture suffit
+        let archive = format!("{}.ferme-0123456789ab.json", a.etat.trim_end_matches(".json"));
+        std::fs::write(&archive, "{}").unwrap();
+        let f = fermeture_json(&a, "kaspatest:tresorerie").unwrap();
+        assert!(f["le"].as_u64().unwrap() > 0);
+        assert_eq!(f["retour"], "kaspatest:tresorerie");
+        // fermeture faite par la console : date, adresse de retour, preuves
+        noter_fermeture(&defaut, &a, &format!("{},{}", "ab".repeat(32), "pas-une-transaction"), "kaspatest:tresorerie", false);
+        let a = agents::charger(&defaut).into_iter().find(|x| x.id == a.id).unwrap();
+        let f = fermeture_json(&a, "kaspatest:tresorerie").unwrap();
+        assert_eq!(f["transactions"], json!(["ab".repeat(32)]));
+        assert!(f["preuves"][0].as_str().unwrap().contains(&"ab".repeat(32)));
+        assert_eq!(f["historique"][0]["genre"], "fermeture");
+        *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(defaut.clone());
+        let (base, serveur, fil, _, _, ch) = demarrer_console_avec_cle("ferme", false);
+        let (statut, r) = poster(&base, "/api/creer", json!({ "agent": a.id, "confirmation": "CREER" }));
+        assert_eq!((statut, r["motif"].as_str()), (409, Some("ferme")), "un coffre fermé ne se rouvre pas : {r}");
+        // l'aperçu des règles dit ce qui sera bloqué dès la création, sans réseau
+        let (statut, r) = poster(&base, "/api/regles", json!({ "budget_sompi": 2_000_000_000i64, "periode_daa": crate::JOUR_DAA, "plafond_sompi": 200_000_000i64, "duree_jours": 7 }));
+        assert_eq!(statut, 200, "{r}");
+        assert_eq!((r["capital_duree_sompi"].as_u64(), r["depot_minimum_sompi"].as_u64(), r["capital_alloue_sompi"].as_u64()), (Some(14_000_000_000), Some(2_000_000_000), Some(14_000_000_000)));
+        let (statut, r) = poster(&base, "/api/regles", json!({ "budget_sompi": 2_000_000_000i64, "periode_daa": crate::JOUR_DAA, "plafond_sompi": 200_000_000i64, "duree_jours": 7, "depot_sompi": 4_000_000_000u64 }));
+        assert_eq!((statut, r["capital_alloue_sompi"].as_u64()), (200, Some(4_000_000_000)));
+        let _ = ouvert;
+        serveur.unblock();
+        fil.join().unwrap();
+        *ETAT_DEFAUT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let _ = std::fs::remove_file(ch);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

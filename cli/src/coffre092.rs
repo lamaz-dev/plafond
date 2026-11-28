@@ -248,7 +248,7 @@ pub async fn creer(owner: &Keypair, agent: &Keypair, retour: Option<&str>) -> Re
         genese: Some(Genese { txid: txid.clone(), entree_txid: fonds[0].0.transaction_id.to_string(), entree_index: fonds[0].0.index, valeurs: valeurs.clone() }),
         sas_max_frais: Some(lignee::FRAIS_MAX_DEFAUT),
         attestation: None,
-        retraits: vec![],
+        retraits: vec![], versements: vec![],
     };
     coffre::enregistrer(&e)?;
     println!("Coffre créé (cœur v0.9.2, à lignée) : {} TKAS en {k} pièce(s) à l'adresse {}", r.depot as f64 / 1e8, coffre::adresse(&art)?);
@@ -460,6 +460,7 @@ pub async fn verser_depots(owner_pk: &[u8], agent_pk: &[u8]) -> Res<Vec<String>>
             let tx = lignee::build_recharger(&coeur, &sas, (p.outpoint, p.valeur), (d.0, d.1), frais)?;
             let txid = c.submit_transaction(garde_diffusion(&tx)?, false).await?.to_string();
             e.apports.push(Apport { txid: txid.clone(), sompi: d.1 - frais, daa: now });
+            e.versements.push(txid.clone()); // affichage seulement : « dépôt versé », pas « ajout »
             coffre::enregistrer(&e)?;
             faits.push(txid.clone());
             if attendre_piece(&c, &art, &txid, 30).await?.is_none() {
@@ -710,7 +711,7 @@ mod tests {
         let c = coeur(2);
         let g = genese(1);
         let x = lignee_recalculee(&c, &g).unwrap();
-        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g), sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
+        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
         assert_eq!(sas_de(&c, &e).unwrap().id(), x);
         assert_eq!(coffre::lignee_de(Some(&e)), Some(x));
         assert!(sas_de(&c, &EtatCoeur { lignee: Some(hex::encode([5u8; 32])), ..e.clone() }).is_err(), "lignée du fichier ≠ lignée de la création");

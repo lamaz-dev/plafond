@@ -39,6 +39,26 @@ pub struct Agent {
     /// Adresse de retour du coffre (gel, retrait) choisie à la création ; absente : la trésorerie.
     #[serde(default)]
     pub retour: Option<String>,
+    /// Fermeture définitive du coffre de ce mandat (date, transactions, adresse de retour) : un coffre
+    /// fermé ne se rouvre pas, on en crée un nouveau. Simple mémo d'affichage, rien de secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ferme: Option<Fermeture>,
+}
+
+/// Fermeture d'un coffre, telle que la console l'a faite (preuves publiques sur le registre).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Fermeture {
+    /// Date de la fermeture (secondes Unix).
+    pub le: u64,
+    /// Transactions de fermeture (preuves publiques).
+    #[serde(default)]
+    pub transactions: Vec<String>,
+    /// Adresse où tout est revenu.
+    #[serde(default)]
+    pub retour: Option<String>,
+    /// Fermeture à l'échéance du mandat (automatique) plutôt qu'à la demande.
+    #[serde(default)]
+    pub automatique: bool,
 }
 
 /// Agent principal du compte, vu de la console. Elle n'a besoin que de sa clé publique (surveiller,
@@ -90,6 +110,14 @@ pub fn fixer_retour(etat_defaut: &str, id: &str, retour: Option<String>) -> Res<
     enregistrer(etat_defaut, &agents)
 }
 
+/// Note la fermeture définitive du coffre d'un mandat (après une fermeture réussie).
+pub fn marquer_ferme(etat_defaut: &str, id: &str, f: Fermeture) -> Res<()> {
+    let mut agents = charger(etat_defaut);
+    let a = agents.iter_mut().find(|a| a.id == id).ok_or("mandat inconnu")?;
+    a.ferme = Some(f);
+    enregistrer(etat_defaut, &agents)
+}
+
 pub fn fixer_echeance(etat_defaut: &str, id: &str, echeance: Option<u64>) -> Res<()> {
     let mut agents = charger(etat_defaut);
     let a = agents.iter_mut().find(|a| a.id == id).ok_or("mandat inconnu")?;
@@ -112,7 +140,7 @@ pub fn charger(etat_defaut: &str) -> Vec<Agent> {
     let lu: Option<Vec<Agent>> = std::fs::read_to_string(chemin_registre(etat_defaut)).ok().and_then(|t| serde_json::from_str(&t).ok());
     match lu {
         Some(v) if !v.is_empty() => v,
-        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None, echeance: None, retour: None }],
+        _ => vec![Agent { id: PRINCIPAL.into(), nom: "Agent principal".into(), regles: None, etat: etat_defaut.into(), cle: "env".into(), cree_le: 0, publique: None, connecte_le: None, echeance: None, retour: None, ferme: None }],
     }
 }
 
@@ -160,6 +188,7 @@ pub fn nouveau(etat_defaut: &str, nom: &str, regles: Option<crate::Regles>, enve
         connecte_le: None,
         echeance: None,
         retour: None,
+        ferme: None,
     };
     agents.push(a.clone());
     enregistrer(etat_defaut, &agents)?;

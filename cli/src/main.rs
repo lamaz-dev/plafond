@@ -1776,7 +1776,7 @@ async fn main() -> Res<()> {
                         genese: None,
                         sas_max_frais: None,
                         attestation: None,
-                        retraits: vec![],
+                        retraits: vec![], versements: vec![],
                     })?;
                     match coffre::geler(&owner, &agent).await {
                         Ok(ids) => {

@@ -62,6 +62,10 @@ pub struct EtatCoeur {
     /// Retraits partiels du propriétaire : de l'argent repris, pas une dépense de l'agent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retraits: Vec<Apport>,
+    /// Coffre à lignée : transactions de versement des dépôts reçus au sas (des apports qui ne
+    /// viennent pas de la trésorerie). Sert seulement à les afficher sous leur vrai nom.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versements: Vec<String>,
 }
 
 /// La création d'un coffre à lignée, telle que le réseau l'a vue : l'identifiant de la lignée est
@@ -135,8 +139,20 @@ pub fn suivre(e: &mut EtatCoeur, pieces: &[Piece], now: u64) -> bool {
             .map(|(t, v)| v.saturating_sub(e.apports.iter().filter(|a| a.txid == *t).map(|a| a.sompi).sum()))
             .sum();
         let revenu: u64 = continuations.iter().map(|n| n.1).sum::<u64>() + recycle;
-        if let (Some(dernier), true) = (continuations.last(), disparues > revenu) {
-            e.achats.push(AchatVu { txid: dernier.0.split(':').next().unwrap_or("").to_string(), sompi: disparues - revenu, daa: now });
+        // Reprise du propriétaire (retrait partiel vers l'adresse de retour) : sa continuation n'est
+        // pas un achat de l'agent. Si un achat a eu lieu entre les deux mêmes lectures, il reste
+        // compté (ce qui est sorti moins les montants repris : les frais de la reprise y restent,
+        // l'erreur ne peut que grossir les achats, jamais les cacher).
+        let txid_de = |cle: &str| cle.split(':').next().unwrap_or("").to_string();
+        let reprises: std::collections::HashSet<String> = e.retraits.iter().map(|r| r.txid.clone()).collect();
+        let repris: u64 = e.retraits.iter().filter(|r| continuations.iter().any(|n| txid_de(&n.0) == r.txid)).map(|r| r.sompi).sum();
+        let achat = continuations.iter().rev().find(|n| !reprises.contains(&txid_de(&n.0)));
+        let perte = match achat {
+            None => 0,
+            Some(_) => disparues.saturating_sub(revenu).saturating_sub(repris),
+        };
+        if let (Some(dernier), true) = (achat, perte > 0) {
+            e.achats.push(AchatVu { txid: dernier.0.split(':').next().unwrap_or("").to_string(), sompi: perte, daa: now });
             let n = e.achats.len();
             if n > 50 {
                 e.achats.drain(..n - 50);
@@ -361,7 +377,7 @@ pub async fn deployer_vers(owner: &Keypair, agent: &Keypair, retour: Option<&str
         genese: None,
         sas_max_frais: None,
         attestation: None,
-        retraits: vec![],
+        retraits: vec![], versements: vec![],
         version: VERSION.into(),
         // Rien d'enregistré pour l'adresse par défaut : le coffre suit l'adresse du propriétaire.
         retour: retour.map(|_| retour_adr.to_string()),
@@ -911,7 +927,7 @@ mod tests {
     fn achats_reconnus_sans_lignee() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         assert!(suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10));
@@ -936,7 +952,7 @@ mod tests {
         let c = coeur(200_000_000, 864_000);
         let depot = TransactionId::from_bytes([1; 32]);
         let (note, inscrit) = (1_000u64, 997u64); // noté par l'outil ; réellement inscrit
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
             apports: vec![Apport { txid: depot.to_string(), sompi: 1_000_000_000, daa: note }], vues: vec![], achats: vec![] };
         let pieces = vec![Piece { lignee: None, outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(inscrit) }];
         // L'agent paie 0,5 TKAS dès que le réseau le permet : à inscription + attente.
@@ -1002,7 +1018,7 @@ mod tests {
     fn suivre_face_aux_depots_de_tiers() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let neuf = || EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let neuf = || EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         let total = |e: &EtatCoeur| e.achats.iter().map(|a| a.sompi).sum::<u64>();
@@ -1159,7 +1175,7 @@ mod tests {
     fn r62_regonflement_n_est_pas_un_achat() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         assert_eq!(pieces_du_mandat(&e), 2);
         let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
@@ -1178,13 +1194,36 @@ mod tests {
         assert_eq!(e.achats.iter().map(|a| a.sompi).sum::<u64>(), 400, "achat de 100 sur 1:0, regonflement ignoré");
     }
 
+    /// `suivre` : une reprise du propriétaire (retrait partiel vers l'adresse de retour) n'est pas
+    /// un achat de l'agent (essai testnet du 28 nov. 2026 : elle apparaissait dans « Derniers achats »).
+    /// Un achat entre les deux mêmes lectures reste compté, jamais caché.
+    #[test]
+    fn reprise_n_est_pas_un_achat() {
+        let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
+        let depot = TransactionId::from_bytes([1; 32]).to_string();
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+            apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
+        let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
+        suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
+        // Reprise de 300 sur 1:1 (frais 5) : continuation 2:0 de 695.
+        e.retraits.push(Apport { txid: TransactionId::from_bytes([2; 32]).to_string(), sompi: 300, daa: 20 });
+        suivre(&mut e, &[p(1, 0, 1_000), p(2, 0, 695)], 20);
+        assert!(e.achats.is_empty(), "une reprise n'est pas un achat : {:?}", e.achats);
+        // Reprise de 100 (3:0) et achat de 200 (4:0) entre deux lectures : l'achat reste visible.
+        e.retraits.push(Apport { txid: TransactionId::from_bytes([3; 32]).to_string(), sompi: 100, daa: 30 });
+        suivre(&mut e, &[p(3, 0, 595), p(4, 0, 800)], 30);
+        assert_eq!(e.achats.len(), 1);
+        assert_eq!(e.achats[0].txid, TransactionId::from_bytes([4; 32]).to_string());
+        assert!(e.achats[0].sompi >= 200, "l'achat n'est jamais minoré : {:?}", e.achats);
+    }
+
     /// La courbe promise (somme des apports) reste une borne de la perte possible après un
     /// regonflement : la pièce regonflée garde sa courbe, l'apport commence la sienne à sa date.
     #[test]
     fn r62_courbe_promise_tenue_apres_regonflement() {
         let c = coeur(50_000_000, 36_000);
         let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 0);
-        let etat = |apports: Vec<Apport>| EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
+        let etat = |apports: Vec<Apport>| EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
         let v0 = 200_000_000u64;
         let mut apports = vec![Apport { txid: String::new(), sompi: v0, daa: 0 }];
         // L'agent dépense au maximum jusqu'à t_r, puis la pièce est regonflée de m.
@@ -1228,7 +1267,7 @@ mod tests {
         let parts = decouper(r.depot, r.pieces);
         assert_eq!(parts.iter().sum::<u64>(), r.depot);
         let pieces: Vec<Piece> = parts.iter().map(|v| Piece { lignee: None, outpoint: op, valeur: *v, creation: Some(0) }).collect();
-        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect(), vues: vec![], achats: vec![] };
         let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
         // Au bout d'une période de recharge, k achats au plafond sont possibles d'affilée.
@@ -1241,7 +1280,7 @@ mod tests {
     fn vue_courbe_et_risque() {
         let c = coeur(50_000_000, 288_000);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
-        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: String::new(), sompi: 2_000_000_000, daa: 0 }], vues: vec![], achats: vec![] };
         let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces: vec![Piece { lignee: None, outpoint: op, valeur: 2_000_000_000, creation: Some(0) }], now: 0, etat: Some(etat) };
         assert_eq!(v.immediate(), 0, "un mandat neuf démarre à zéro");

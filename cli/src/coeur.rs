@@ -950,7 +950,7 @@ mod tests {
             }
             let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
             let x = 1u64 << 40;
-            let etat = crate::coffre::EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
+            let etat = crate::coffre::EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
                 apports: vec![crate::coffre::Apport { txid: String::new(), sompi: v, daa: x }], vues: vec![], achats: vec![] };
             let vue = crate::coffre::Vue { lignee: None, hors_lignee: vec![], coeur: c.clone(), adresse: String::new(),
                 pieces: vec![crate::coffre::Piece { lignee: None, outpoint: op, valeur: v, creation: Some(x) }], now: x.saturating_add(age), etat: Some(etat) };
