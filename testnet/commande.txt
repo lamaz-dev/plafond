@@ -1,7 +1,7 @@
-# Enterprise gateway, second run (27 Nov 2026): the first run refused the purchase because the new vault had not
-# released enough budget yet ("available in 606 s"). Wait longer, then pay, refuse an overspend, emergency stop.
-deployer
-pause 2000                     # a new vault releases its budget over time
-essai-passerelle
-recuperer
+# Core v0.9.2 + airlock v0.2.1, first testnet-10 trial (28 Nov 2026): genesis with two coins, deposit to the
+# airlock, keyless refill at rising fee levels (measures what the network really asks), agent payment too early
+# then on time, partial withdrawal, real attacks (dust coin and diverted deposit, marked return coin), then
+# closing the vault with a pending deposit in the same transaction.
+etat
+essai-lignee
 etat

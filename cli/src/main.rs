@@ -68,6 +68,7 @@ mod passerelle;
 mod routeur;
 mod sas;
 mod lignee;
+mod essai_lignee;
 mod sequestre;
 mod x402;
 
@@ -1576,6 +1577,16 @@ async fn main() -> Res<()> {
             let attaquant = keypair_from_env("ATTAQUANT_SK")?;
             if !attaques::batterie(&xonly(&owner), &agent, &attaquant, quoi).await? {
                 return Err("au moins une attaque n'a pas eu le résultat attendu".into());
+            }
+        }
+        "essai-lignee" => {
+            // Testnet uniquement : coffre à lignée (cœur v0.9.2) et sas v0.2.1, de la création à la fermeture.
+            let retour = keypair_from_env("RETOUR_SK")?;
+            let c = connect().await?;
+            let ok = essai_lignee::lancer(&c, &owner, &agent, &retour, &pay_to_address_script(&address(&service))).await;
+            liberer(&c).await?;
+            if !ok? {
+                return Err("l'essai du coffre à lignée n'a pas eu le résultat attendu".into());
             }
         }
         "course-gel" | "course-recharge" => {

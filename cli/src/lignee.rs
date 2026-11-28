@@ -290,6 +290,52 @@ pub fn build_retour(sas: &Sas, depots: &[(TransactionOutpoint, u64)], retour: &S
     Ok(tx)
 }
 
+/// FERMETURE du coffre en une transaction : toutes les pièces de l'adresse du coffre (de la lignée
+/// ou non) ET tous les dépôts en attente au sas partent à l'adresse de retour, chacun vers sa propre
+/// sortie (entrée i -> sortie i), en pièces ordinaires. La lignée s'éteint : plus aucun versement
+/// n'est possible ensuite. `frais` et `frais_depot` sont pris sur chaque pièce et chaque dépôt.
+#[allow(clippy::too_many_arguments)]
+pub fn build_fermeture(
+    c: &Coeur,
+    sas: &Sas,
+    pieces: &[(TransactionOutpoint, u64, Option<Hash>)],
+    depots: &[(TransactionOutpoint, u64)],
+    retour: &ScriptPublicKey,
+    frais: u64,
+    frais_depot: u64,
+    owner: &Keypair,
+) -> Res<Transaction> {
+    let (art_c, art_s) = (c.artifact_v092()?, sas.artifact()?);
+    let h = crate::sequestre::spk_hash(retour);
+    if c.retour.as_deref() != Some(h.as_slice()) || sas.retour.as_slice() != h.as_slice() {
+        return Err("ce n'est pas l'adresse de retour du coffre et de son sas".into());
+    }
+    if pieces.is_empty() && depots.is_empty() {
+        return Err("rien à fermer".into());
+    }
+    if frais as i128 > c.capacite as i128 || pieces.iter().any(|p| p.1 <= frais) {
+        return Err("frais au-delà de la capacité ou d'une pièce".into());
+    }
+    if frais_depot as i128 > sas.max_frais as i128 || depots.iter().any(|d| d.1 <= frais_depot) {
+        return Err("frais au-delà du plafond du sas ou d'un dépôt".into());
+    }
+    let (m, s) = (vault_spk(&art_c), vault_spk(&art_s));
+    let mut inputs: Vec<TransactionInput> = pieces.iter().map(|p| TransactionInput::new_with_compute_budget(p.0, vec![], 0, CB_OWNER)).collect();
+    inputs.extend(depots.iter().map(|d| TransactionInput::new_with_compute_budget(d.0, vec![], 0, CB_RETOUR)));
+    let mut outputs: Vec<TransactionOutput> = pieces.iter().map(|p| TransactionOutput::new(p.1 - frais, retour.clone())).collect();
+    outputs.extend(depots.iter().map(|d| TransactionOutput::new(d.1 - frais_depot, retour.clone())));
+    let mut entries: Vec<UtxoEntry> = pieces.iter().map(|p| UtxoEntry::new(p.1, m.clone(), 0, false, p.2)).collect();
+    entries.extend(depots.iter().map(|d| UtxoEntry::new(d.1, s.clone(), 0, false, None)));
+    let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+    for i in 0..entries.len() {
+        let sig = sign(&tx, &entries, i, owner);
+        tx.inputs[i].signature_script =
+            if i < pieces.len() { vault_sigscript(&art_c, "ownerControl", &[sig.into()])? } else { vault_sigscript(&art_s, "retour", &[sig.into()])? };
+    }
+    tx.finalize();
+    Ok(tx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1017,6 +1063,22 @@ mod tests {
         // Sur une pièce hors lignée (poussière d'un tiers) : refusé, elle ne se retire qu'en entier.
         assert!(script_entree(&rp, &[UtxoEntry::new(V, m.clone(), 1_000, false, None)], 0).is_none(), "retrait partiel sur une pièce hors lignée");
         eprintln!("retrait partiel : {u_rp} unité(s) de calcul, masse {} / {} g, attente pour {} sompi de frais : {delai} DAA", mrp.compute, mrp.storage, FEE);
+
+        // Fermeture : deux pièces de la lignée, une poussière et deux dépôts en attente, en une transaction.
+        let fe = build_fermeture(&c, &sas, &[(op(1), V, Some(lignee)), (op(5), V, Some(lignee)), (op(3), P, None)], &[(op(2), D), (op(4), 2 * D)], &rt, FEE, FEE, &k(1)).unwrap();
+        let ef = vec![piece.clone(), piece.clone(), UtxoEntry::new(P, m.clone(), 3_000, false, None), UtxoEntry::new(D, vault_spk(&art_s), 0, false, None), UtxoEntry::new(2 * D, vault_spk(&art_s), 0, false, None)];
+        assert!(acceptee_a(&fe, &ef, 10_000), "fermeture acceptée");
+        for i in 0..5 {
+            assert!(script_entree(&fe, &ef, i).unwrap() <= CB_OWNER as u64);
+        }
+        assert!(fe.outputs.len() == 5 && fe.outputs.iter().all(|o| o.covenant.is_none() && o.script_public_key == rt), "tout part à l'adresse de retour, en pièces ordinaires");
+        assert_eq!(fe.outputs.iter().map(|o| o.value).sum::<u64>(), 2 * V + P + 3 * D - 5 * FEE);
+        let mf = crate::masse::masses(&fe, &ef).unwrap();
+        assert!(mf.standard() && mf.compute * 100 <= 5 * FEE && crate::garde_diffusion(&fe).is_ok(), "masse de la fermeture {} / {}", mf.compute, mf.storage);
+        assert!(build_fermeture(&c, &sas, &[(op(1), V, Some(lignee))], &[], &p2pk(10), FEE, FEE, &k(1)).is_err(), "autre adresse refusée");
+        assert!(build_fermeture(&c, &sas, &[], &[], &rt, FEE, FEE, &k(1)).is_err() && build_fermeture(&c, &sas, &[], &[(op(2), D)], &rt, FEE, F + 1, &k(1)).is_err());
+        assert!(build_fermeture(&c, &sas, &[], &[(op(2), D)], &rt, FEE, FEE, &k(1)).is_ok(), "dépôts seuls (coffre déjà fermé)");
+        eprintln!("fermeture (3 pièces + 2 dépôts) : masse {} / {} g", mf.compute, mf.storage);
 
         // Retour d'un dépôt par le propriétaire.
         let tx = build_retour(&sas, &[(op(2), D), (op(4), 2 * D)], &rt, FRAIS_RECHARGE, &k(1)).unwrap();
