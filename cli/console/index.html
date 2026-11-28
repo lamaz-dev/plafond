@@ -1608,6 +1608,8 @@ function retourSaisi(){const p=profilRetour();
 
 // ---------- coffre à lignée : adresse de dépôt, reprendre ----------
 function afficherDepot(d){
+  // Nombre réel de pièces différent des règles (création sur-allouée) : dit en clair, en haut de page.
+  if(d.alerte_pieces){$("erreur").hidden=false;$("erreur").textContent=d.alerte_pieces}
   const dp=d.depot,lignee=!!(d.technique&&d.technique.lignee);
   $("b-reprendre").hidden=!lignee;$("d-gestes-note").hidden=!lignee;$("d-depot-carte").hidden=!lignee;
   if(!lignee)return;
@@ -1788,7 +1790,7 @@ $("b-bandeau").onclick=()=>{page("securite");setTimeout(sauvegarderRecup,50)};
 $("b-recup").onclick=sauvegarderRecup;$("b-2fa").onclick=activerDoubleAuth;$("b-export").onclick=exporterCle;$("b-restaurer").onclick=restaurerCompte;$("s-fermer").onclick=fermerSecu;
 $("b-sauvegarde").onclick=()=>{ouvrirSecu(t("sauv_fichier"));identification(t("auth_txt"),async(mdp,code)=>{const j=await api("/api/cle-chiffree",{mot_de_passe:mdp,code});telecharger("cle-proprietaire-chiffree.json","application/json",JSON.stringify(j.fichier,null,2));message("s-msg","ok",t("fait"))},true)};
 $("b-lignee").onclick=async()=>{$("b-lignee").disabled=true;message("m-lignee","ok",t("en_cours"));
-  const res=[];for(const a of (etat.vue&&etat.vue.agents)||[]){if(!actif(a))continue;try{const r=await api("/api/verifier-lignee?agent="+encodeURIComponent(a.id));res.push(a.nom+" : "+(r.ok?t("lignee_ok"):t("lignee_ko").replace("{d}",r.detail||"")))}catch(e){res.push(a.nom+" : "+e.message)}}
+  const res=[];for(const a of (etat.vue&&etat.vue.agents)||[]){if(!actif(a))continue;try{const r=await api("/api/verifier-lignee?agent="+encodeURIComponent(a.id));res.push(a.nom+" : "+(r.ok?t("lignee_ok")+(r.pieces_creation?" ("+r.pieces_vivantes+"/"+r.pieces_creation+(r.pieces_etrangeres?" ; +"+r.pieces_etrangeres+" ✕":"")+(r.genese_relue?"":" ; ⚠")+")":""):t("lignee_ko").replace("{d}",r.detail||"")))}catch(e){res.push(a.nom+" : "+e.message)}}
   message("m-lignee","ok",res.length?res.join("\n"):t("aucun_agent_actif"));$("b-lignee").disabled=false};
 $("h-agent").onchange=chargerHisto;
 $("b-csv").onclick=()=>telecharger("rapport-controle.csv","text/csv;charset=utf-8",csv());

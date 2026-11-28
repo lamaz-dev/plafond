@@ -681,7 +681,7 @@ mod tests {
         assert_eq!((s, v["configure"].as_bool()), (200, Some(false)));
         // Coffre à lignée de l'agent a (propriétaire : clé 1, agent : clé 2), fiche signée par le propriétaire.
         let coeur = crate::coeur::Coeur { owner: xonly(&k(1)), agent: xonly(&k(2)), capacite: 50_000_000, periode: 36_000, retour: Some(crate::coffre::empreinte_retour(&crate::address(&k(11)))) };
-        let genese = Genese { txid: hex::encode([4u8; 32]), entree_txid: hex::encode([5u8; 32]), entree_index: 0, valeurs: vec![300_000_000] };
+        let genese = Genese { txid: hex::encode([4u8; 32]), entree_txid: hex::encode([5u8; 32]), entree_index: 0, valeurs: vec![300_000_000], repere: None };
         let bonne = crate::coffre092::fiche_d_essai(&coeur, genese.clone(), &k(1));
         let lu = |fiche: Value| json!({ "coffre": { "valeur_sompi": 150u64 * 20_000_000, "lignee": "aa" }, "depot": fiche });
         p.agents[0].recharge = Some(reglage(Some("kaspatest:adresse-de-la-configuration")));

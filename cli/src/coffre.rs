@@ -77,6 +77,11 @@ pub struct Genese {
     pub entree_txid: String,
     pub entree_index: u32,
     pub valeurs: Vec<u64>,
+    /// Bloc de tête du réseau noté juste AVANT la création : point de départ pour relire la
+    /// transaction de création sur un nœud, sans indexeur (src/verification.rs). Absent pour les
+    /// coffres créés avant le 28 nov. 2026 : leur création ne se relit pas, elle se prouve par calcul.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repere: Option<String>,
 }
 
 /// Un achat de l'agent, reconnu sur la chaîne : une pièce a disparu et sa continuation est apparue.

@@ -56,6 +56,7 @@ mod coeur;
 mod coffre;
 mod coffre092;
 mod retour;
+mod verification;
 mod course;
 mod risque;
 mod sobriete;
@@ -706,8 +707,13 @@ async fn client_testnet() -> Res<KaspaRpcClient> {
 }
 
 async fn client_testnet_essai() -> Res<KaspaRpcClient> {
+    client_vers(env::var("NOEUD_WRPC").ok().filter(|u| !u.trim().is_empty()).as_deref()).await
+}
+
+/// Connexion à un nœud précis (`Some(url)`), ou à un nœud public choisi par le découvreur (`None`).
+pub async fn client_vers(url: Option<&str>) -> Res<KaspaRpcClient> {
     let net = NetworkId::with_suffix(NetworkType::Testnet, 10);
-    let url = env::var("NOEUD_WRPC").ok().filter(|u| !u.trim().is_empty());
+    let url = url.map(String::from);
     let resolver = if url.is_some() { None } else { Some(Resolver::default()) };
     let client = KaspaRpcClient::new_with_args(WrpcEncoding::Borsh, url.as_deref(), resolver, Some(net), None)?;
     let opts = ConnectOptions {
@@ -1196,16 +1202,22 @@ async fn main() -> Res<()> {
         let texte = if source == "-" { std::io::read_to_string(std::io::stdin())? } else { fs::read_to_string(source)? };
         let f: coffre092::Fiche = serde_json::from_str(&texte).map_err(|e| format!("fiche illisible : {e}"))?;
         coffre092::verifier_fiche(&f)?;
-        println!("Fiche cohérente : l'adresse de dépôt est bien celle de ce coffre, et elle est signée par la clé du propriétaire.");
-        println!("  propriétaire (clé publique à comparer avec celle que vous connaissez) : {}", f.coffre.owner);
-        println!("  adresse de dépôt : {}", f.adresse_depot);
-        println!("  dépôt minimal versé automatiquement : {} KAS", f.depot_minimal_sompi as f64 / 1e8);
-        if !args.iter().any(|a| a == "--hors-ligne") {
-            let c = connect().await?;
-            let r = coffre092::fiche_en_ligne(&c, &f).await;
-            liberer(&c).await?;
-            println!("  sur le réseau : {}", r?);
+        // Le payeur peut exiger LE propriétaire qu'il connaît : `--proprietaire <clé publique>`.
+        if let Some(attendu) = args.iter().position(|a| a == "--proprietaire").and_then(|i| args.get(i + 1)) {
+            if !attendu.eq_ignore_ascii_case(&f.coffre.owner) {
+                return Err(format!("REFUSÉ : cette fiche est signée par un autre propriétaire ({}) que celui que vous attendez", f.coffre.owner).into());
+            }
         }
+        if args.iter().any(|a| a == "--hors-ligne") {
+            println!("Fiche COHÉRENTE (calcul seulement, rien n'a été lu sur le réseau) : l'adresse de dépôt est celle de ce coffre et elle est signée par la clé du propriétaire.");
+            println!("  propriétaire (clé publique à comparer avec celle que vous connaissez) : {}", f.coffre.owner);
+            println!("  adresse de dépôt : {} ; pièces à la création : {}", f.adresse_depot, f.genese.valeurs.len());
+            println!("  CE N'EST PAS « adresse vérifiée » : relancez sans --hors-ligne pour lire la création et les pièces sur deux nœuds.");
+            return Ok(());
+        }
+        // En ligne : création relue et auditée, pièces vivantes, accord exact d'au moins deux nœuds.
+        let r = verification::verifier_en_ligne(&f).await?;
+        println!("{}", verification::texte(&f, &r));
         return Ok(());
     }
     if cmd == "cles" {
@@ -1792,6 +1804,17 @@ async fn main() -> Res<()> {
             }
             println!("{fermes} ancien(s) coffre(s) fermé(s).");
         }
+        "coffre-reconstruire" => {
+            // Fichier d'état perdu : le coffre à lignée se reconstruit depuis sa fiche de dépôt.
+            if coffre::charger().is_some() {
+                return Err("un coffre est déjà suivi par le fichier d'état".into());
+            }
+            let f: coffre092::Fiche = serde_json::from_str(&fs::read_to_string(args.get(2).ok_or("fiche de dépôt manquante")?)?).map_err(|e| format!("fiche illisible : {e}"))?;
+            let e = coffre092::reconstruire(&f, &xonly(&owner), &agent_pk(&agent), args.get(3).map(String::as_str))?;
+            let r = verification::verifier_en_ligne(&f).await?;
+            coffre::enregistrer(&e)?;
+            println!("Coffre reconstruit depuis sa fiche et vérifié sur le réseau.\n{}", verification::texte(&f, &r));
+        }
         "sas-deposer" => {
             // Essais : le propriétaire de test envoie un dépôt ordinaire à l'adresse de dépôt, comme
             // le ferait un payeur. L'adresse vient de la fiche vérifiée, jamais d'une saisie.
@@ -1819,6 +1842,13 @@ async fn main() -> Res<()> {
             liberer(&c).await?;
             println!("Dépôt de {} TKAS envoyé à l'adresse de dépôt {} : {}", montant as f64 / 1e8, f.adresse_depot, explorer(&r?));
         }
+        "sas-fiche" => {
+            // Écrit la fiche de dépôt dans un fichier, pour la transmettre à un payeur (ou la garder en copie).
+            let f = coffre092::fiche(&xonly(&owner), &agent_pk(&agent))?;
+            let chemin = args.get(2).ok_or("fichier de sortie manquant")?;
+            fs::write(chemin, serde_json::to_string_pretty(&f)?)?;
+            println!("Fiche de dépôt écrite dans {chemin} (rien de secret : gardez-en une copie, elle sert aussi à reconstruire le coffre).");
+        }
         "sas-verser" => {
             // Sans clé : verse dans le coffre les dépôts en attente au sas.
             let faits = coffre092::verser_depots(&xonly(&owner), &agent_pk(&agent)).await?;
@@ -1835,7 +1865,7 @@ async fn main() -> Res<()> {
             x402::demo(&owner, &agent).await?;
         }
         _ => {
-            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | ajouter <sompi> | reprendre <sompi> | recuperer (fermer) | sas | sas-verser | sas-verifier <fiche.json> | sas-retour <archive> | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
+            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | ajouter <sompi> | reprendre <sompi> | recuperer (fermer) | sas | sas-verser | sas-verifier <fiche.json> [--proprietaire <clé>] [--hors-ligne] | coffre-reconstruire <fiche.json> [adresse_retour] | sas-retour <archive> | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
         }
     }
     Ok(())

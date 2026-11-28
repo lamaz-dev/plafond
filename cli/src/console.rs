@@ -327,6 +327,18 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
         },
     });
     if v.lignee.is_some() {
+        // Nombre RÉEL de pièces : celui de la création, engagé par la lignée. S'il diffère des
+        // règles (création sur-allouée, règles modifiées), les chiffres affichés suivent le réel.
+        if let Ok(k) = crate::coffre092::k_reel(&v.coeur, &etat) {
+            let reelles = crate::Regles { pieces: k as i64, ..rg };
+            r["pieces_reelles"] = json!(k);
+            r["regles"]["pieces"] = json!(k);
+            r["regles"]["exposition_immediate_max_sompi"] = json!(reelles.capacite * k as i64);
+            r["regles"]["maximum_24h_sompi"] = json!(reelles.maximum_sur(crate::JOUR_DAA));
+            r["regles"]["maximum_periode_sompi"] = json!(reelles.maximum_sur(reelles.periode_daa));
+            r["regles"]["pieces_explication"] = json!(crate::coffre092::avertissement_pieces(&reelles));
+            r["alerte_pieces"] = json!(crate::coffre092::ecart_pieces(rg.pieces, k, v.coeur.capacite));
+        }
         // L1 : ce qui est à l'adresse sans porter la lignée n'est pas le coffre ; affiché à part.
         r["hors_lignee_sompi"] = json!(v.hors_lignee.iter().map(|p| p.valeur).sum::<u64>());
         r["hors_lignee_pieces"] = json!(v.hors_lignee.len());
@@ -1710,6 +1722,20 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     Err(e) => json_rep(503, json!({ "erreur": e.to_string() })),
                 },
                 ("GET", "/api/verifier-lignee") => match (&cible, cle_cible) {
+                    // Coffre à lignée : la vérification qu'un tiers ferait (src/verification.rs) :
+                    // fiche recalculée, création relue et auditée, deux nœuds d'accord.
+                    (Some(a), Some(Ok(k))) if avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || crate::coffre::lignee_de(crate::coffre::charger().as_ref()).is_some()) => {
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || {
+                            let f = crate::coffre092::fiche(&xonly(&owner), &crate::agent_pk(&k))?;
+                            let r = handle.block_on(crate::verification::verifier_en_ligne(&f))?;
+                            Ok::<_, Box<dyn std::error::Error>>((f, r))
+                        });
+                        match r {
+                            Ok((f, r)) => json_rep(200, json!({ "ok": true, "lignee": f.lignee, "contrat": "Plafond, cœur v0.9.2", "pieces_creation": r.k, "pieces_vivantes": r.vivantes,
+                                "genese_relue": r.genese_relue, "noeuds": r.noeuds, "pieces_etrangeres": r.etrangeres, "notes": r.notes, "detail": crate::verification::texte(&f, &r) })),
+                            Err(e) => json_rep(200, json!({ "ok": false, "detail": e.to_string() })),
+                        }
+                    }
                     (Some(a), Some(Ok(k))) => {
                         let pk = xonly(&owner);
                         match avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(async {

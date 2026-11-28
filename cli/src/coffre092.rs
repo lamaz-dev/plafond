@@ -35,6 +35,63 @@ pub fn plancher() -> u64 {
     masse::survival_floor(FEE)
 }
 
+/// Le nombre RÉEL de pièces du coffre : celui de sa création, que l'identifiant de lignée engage
+/// (`sas_de` refuse si la lignée enregistrée ne se recalcule pas avec ces pièces). C'est ce nombre,
+/// et non celui demandé dans les règles, qui multiplie la borne.
+pub fn k_reel(coeur: &Coeur, e: &EtatCoeur) -> Res<usize> {
+    sas_de(coeur, e)?;
+    Ok(e.genese.as_ref().map(|g| g.valeurs.len()).unwrap_or(0))
+}
+
+/// Alerte si le coffre n'a pas le nombre de pièces que les règles annoncent (création sur-allouée,
+/// fichier de règles modifié) : l'interface doit alors afficher le nombre réel et ses conséquences.
+pub fn ecart_pieces(demande: i64, reel: usize, capacite: i64) -> Option<String> {
+    (reel as i64 != demande.max(1)).then(|| {
+        format!(
+            "ATTENTION : ce coffre a {reel} pièce(s) sur le réseau, pas {} comme l'indiquent ses règles. Les chiffres ci-dessous utilisent le nombre réel : au pire {} KAS d'un coup.",
+            demande.max(1),
+            (capacite as i128 * reel as i128) as f64 / 1e8
+        )
+    })
+}
+
+/// FICHIER D'ÉTAT PERDU. Le coffre se reconstruit depuis sa fiche de dépôt (publique : le
+/// propriétaire peut en garder des copies partout). La fiche est vérifiée comme le ferait un tiers,
+/// et doit être celle de CES clés. `retour` : l'adresse de retour du coffre, si ce n'est pas
+/// l'adresse du propriétaire ; elle doit correspondre à l'empreinte inscrite dans le coffre.
+pub fn reconstruire(f: &Fiche, owner_pk: &[u8], agent_pk: &[u8], retour: Option<&str>) -> Res<EtatCoeur> {
+    verifier_fiche(f)?;
+    if f.coffre.owner != hex::encode(owner_pk) || f.coffre.agent != hex::encode(agent_pk) {
+        return Err("cette fiche n'est pas celle d'un coffre de ces clés (propriétaire ou agent différent)".into());
+    }
+    let coeur = f.coffre.coeur()?;
+    let retour_adr = match retour {
+        Some(a) => coffre::valider_retour(a)?,
+        None => Address::new(Prefix::Testnet, Version::PubKey, owner_pk),
+    };
+    if coeur.retour.as_deref() != Some(coffre::empreinte_retour(&retour_adr).as_slice()) {
+        return Err("l'adresse de retour donnée n'est pas celle inscrite dans ce coffre : indiquez la bonne (le coffre ne peut renvoyer l'argent qu'à elle)".into());
+    }
+    Ok(EtatCoeur {
+        version: VERSION_V092.into(),
+        retour: retour.map(|_| retour_adr.to_string()),
+        capacite: coeur.capacite,
+        periode: coeur.periode,
+        agent: f.coffre.agent.clone(),
+        cree_daa: 0,
+        // Les apports ne se retrouvent pas : la courbe affichée repart des valeurs de la création.
+        apports: f.genese.valeurs.iter().map(|v| Apport { txid: f.genese.txid.clone(), sompi: *v, daa: 0 }).collect(),
+        vues: vec![],
+        achats: vec![],
+        lignee: Some(f.lignee.clone()),
+        genese: Some(f.genese.clone()),
+        sas_max_frais: Some(f.max_frais_sompi),
+        attestation: Some(f.attestation.clone()),
+        retraits: vec![],
+        versements: vec![],
+    })
+}
+
 /// Explication affichée quand le propriétaire choisit plusieurs pièces (décision du 28 nov. 2026 :
 /// une pièce par défaut).
 pub fn avertissement_pieces(r: &Regles) -> String {
@@ -229,6 +286,8 @@ pub async fn creer(owner: &Keypair, agent: &Keypair, retour: Option<&str>) -> Re
     }
     let c = connect().await?;
     let daa = virtual_daa(&c).await?;
+    // Repère pour relire la création plus tard, depuis n'importe quel nœud : la tête du réseau AVANT l'envoi.
+    let repere = noeud::tete(&c).await.ok();
     let (entries, inputs, total) = coffre::financer(&c, owner, r.depot).await?;
     let fonds: Vec<(TransactionOutpoint, UtxoEntry)> = inputs.iter().map(|i| i.previous_outpoint).zip(entries.iter().cloned()).collect();
     let rendu = total - r.depot - FEE * fonds.len() as u64;
@@ -245,7 +304,7 @@ pub async fn creer(owner: &Keypair, agent: &Keypair, retour: Option<&str>) -> Re
         vues: vec![],
         achats: vec![],
         lignee: Some(x.to_string()),
-        genese: Some(Genese { txid: txid.clone(), entree_txid: fonds[0].0.transaction_id.to_string(), entree_index: fonds[0].0.index, valeurs: valeurs.clone() }),
+        genese: Some(Genese { txid: txid.clone(), entree_txid: fonds[0].0.transaction_id.to_string(), entree_index: fonds[0].0.index, valeurs: valeurs.clone(), repere }),
         sas_max_frais: Some(lignee::FRAIS_MAX_DEFAUT),
         attestation: None,
         retraits: vec![], versements: vec![],
@@ -645,7 +704,7 @@ mod tests {
         Coeur { owner: xonly(&k(1)), agent: xonly(&k(agent)), capacite: 50_000_000, periode: 36_000, retour: Some(coffre::empreinte_retour(&address(&k(11)))) }
     }
     fn genese(n: u8) -> Genese {
-        Genese { txid: hex::encode([n; 32]), entree_txid: hex::encode([n + 1; 32]), entree_index: 0, valeurs: vec![300_000_000] }
+        Genese { txid: hex::encode([n; 32]), entree_txid: hex::encode([n + 1; 32]), entree_index: 0, valeurs: vec![300_000_000], repere: None }
     }
     fn fiche_de(c: &Coeur, g: Genese, cle: u8) -> Fiche {
         fiche_d_essai(c, g, &k(cle))
@@ -660,7 +719,7 @@ mod tests {
         let fonds = [(op, UtxoEntry::new(1_000_000_000, pay_to_address_script(&address(&k(1))), 5, false, None))];
         let valeurs = [300_000_000u64, 200_000_000];
         let (tx, x) = lignee::build_genese(&c, &fonds, &valeurs, None, &k(1)).unwrap();
-        let g = Genese { txid: tx.id().to_string(), entree_txid: op.transaction_id.to_string(), entree_index: 3, valeurs: valeurs.to_vec() };
+        let g = Genese { txid: tx.id().to_string(), entree_txid: op.transaction_id.to_string(), entree_index: 3, valeurs: valeurs.to_vec(), repere: None };
         assert_eq!(lignee_recalculee(&c, &g).unwrap(), x);
         // Une valeur, un indice ou une pièce dépensée différents donnent une autre lignée.
         assert_ne!(lignee_recalculee(&c, &Genese { valeurs: vec![300_000_000, 200_000_001], ..g.clone() }).unwrap(), x);
@@ -755,6 +814,44 @@ mod tests {
         let e = preparer_reprise(&c, x, &ps, &rt, 500_000_000 - plancher(), now, &k(1)).unwrap_err().to_string();
         assert!(e.contains("fermez le coffre"), "{e}");
         assert!(preparer_reprise(&c, x, &[], &rt, 1, now, &k(1)).is_err());
+    }
+
+    /// Fichier d'état perdu : la fiche de dépôt suffit à reconstruire le coffre, et rien d'autre
+    /// qu'une fiche authentique de CES clés n'est accepté.
+    #[test]
+    fn reconstruction_depuis_la_fiche() {
+        let c = coeur(2);
+        let f = fiche_de(&c, genese(1), 1);
+        let retour = address(&k(11)).to_string();
+        let e = reconstruire(&f, &c.owner, &c.agent, Some(&retour)).unwrap();
+        // L'état reconstruit redonne le même sas, la même fiche, et le bon nombre de pièces.
+        assert_eq!(adresse_de(&vault_spk(&sas_de(&c, &e).unwrap().artifact().unwrap())).unwrap().to_string(), f.adresse_depot);
+        assert_eq!((k_reel(&c, &e).unwrap(), e.attestation.as_deref(), e.retour.as_deref()), (1, Some(f.attestation.as_str()), Some(retour.as_str())));
+        // Mauvaise adresse de retour, adresse de retour oubliée, fiche d'un autre agent, d'un autre
+        // propriétaire, fiche signée par l'agent (sa propre lignée), fiche modifiée.
+        assert!(reconstruire(&f, &c.owner, &c.agent, Some(&address(&k(12)).to_string())).unwrap_err().to_string().contains("adresse de retour"));
+        assert!(reconstruire(&f, &c.owner, &c.agent, None).is_err());
+        assert!(reconstruire(&f, &c.owner, &xonly(&k(3)), Some(&retour)).is_err());
+        assert!(reconstruire(&f, &xonly(&k(9)), &c.agent, Some(&retour)).is_err());
+        assert!(reconstruire(&fiche_de(&c, genese(7), 2), &c.owner, &c.agent, Some(&retour)).is_err(), "lignée de l'agent à la même adresse");
+        assert!(reconstruire(&Fiche { lignee: hex::encode([5u8; 32]), ..f.clone() }, &c.owner, &c.agent, Some(&retour)).is_err());
+    }
+
+    /// Création sur-allouée : l'outil affiche le nombre RÉEL de pièces, pas celui des règles.
+    #[test]
+    fn nombre_reel_de_pieces_et_alerte() {
+        let c = coeur(2);
+        let g = Genese { valeurs: vec![300_000_000; 3], ..genese(1) };
+        let x = lignee_recalculee(&c, &g).unwrap();
+        let e = EtatCoeur { lignee: Some(x.to_string()), genese: Some(g.clone()), sas_max_frais: None, attestation: None, retraits: vec![], versements: vec![], version: VERSION_V092.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: hex::encode(&c.agent), cree_daa: 0, apports: vec![], vues: vec![], achats: vec![] };
+        assert_eq!(k_reel(&c, &e).unwrap(), 3);
+        let alerte = ecart_pieces(1, 3, c.capacite).expect("règles : 1 pièce ; réseau : 3");
+        assert!(alerte.contains("3 pièce(s)") && alerte.contains("1.5 KAS"), "{alerte}");
+        assert_eq!(ecart_pieces(3, 3, c.capacite), None);
+        assert!(ecart_pieces(0, 1, c.capacite).is_none(), "règles sans nombre : une pièce");
+        // Un fichier d'état qui annoncerait une pièce pour une lignée qui en a trois est refusé :
+        // la lignée ne se recalcule pas.
+        assert!(k_reel(&c, &EtatCoeur { genese: Some(Genese { valeurs: vec![300_000_000], ..g }), ..e }).is_err());
     }
 
     #[test]

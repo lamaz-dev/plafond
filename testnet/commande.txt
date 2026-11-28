@@ -1,6 +1,10 @@
-# Close what is left of the core v0.7 / v0.6 test vaults (28 Nov 2026): look at the vault addresses of the test
-# keys under yesterday's and today's test settings, and send any coin back to the return address (the owner).
-# No v0.7 vault is recreated; new vaults are core v0.9.2. Second run: the first one lost its node after one address.
+# Third-party verification of a deposit address on the network (28 Nov 2026): create a lineage vault, export its
+# deposit sheet, verify it as a payer would (sheet recomputed, creation read back and audited, two nodes in exact
+# agreement), close the vault, then verify the same sheet again: it must now be refused (old airlock).
 etat
-fermer-anciens
+deployer
+sas-fiche /tmp/fiche-depot.json
+sas-verifier /tmp/fiche-depot.json
+recuperer
+sas-verifier /tmp/fiche-depot.json
 etat
