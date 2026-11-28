@@ -38,7 +38,10 @@ le routeur ou le serveur sont compromis :
   `capacity + capacity × D / refillPeriod` (amounts plus fees), never more than the vault balance.
   With the "strict" setting (`capacity = budget / 2`, `refillPeriod = period`): at most the
   announced budget over any window of one period, and half of it immediately.
-- **Per-payment cap / Plafond par achat**, and the optional payee allowlist.
+- **Per-payment cap / Plafond par achat.** (No payee allowlist: since core v0.6 the contract does not
+  restrict which vendor is paid. A vendor list exists only in the gateway, which is software you run,
+  not a network guarantee. / Pas de liste de vendeurs dans le contrat depuis le cœur v0.6 : elle
+  n'existe que dans la passerelle, pas dans le réseau.)
 - **Owner control / Contrôle du propriétaire.** Only the owner key opens `ownerControl`
   (freeze, withdraw, refill). Since core v0.7, even the owner key can only send a vault coin back to
   the vault (refill, value never decreases) or to the **return address** fixed at creation, with at most

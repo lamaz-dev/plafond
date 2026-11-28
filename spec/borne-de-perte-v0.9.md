@@ -60,7 +60,8 @@ l'argent du propriétaire ni celui des payeurs.
 
 ## 2. Ce que le réseau garantit (KIP-20)
 
-Lu dans le code de rusty-kaspa 2.1.0 (celui que le dépôt compile et que la CI exécute), pas supposé.
+Lu dans le code que le dépôt compile et que la CI exécute (`kaspa-consensus-core` 2.1.0 pour les
+règles de lignée, `kaspa-txscript` 2.2.0 pour le moteur de script, figés par `cli/Cargo.lock`), pas supposé.
 
 **N1. Une sortie peut déclarer une lignée** : `covenant = (identifiant, entrée qui l'autorise)`
 (`consensus-core/src/tx.rs`, `CovenantBinding`). La pièce créée porte cet identifiant
@@ -232,7 +233,7 @@ ligne ci-dessus.
 
 ## 8. Validation automatique
 
-Tout s'exécute contre `kaspa-txscript` 2.1.0, avec le contexte de lignées construit par la fonction
+Tout s'exécute contre `kaspa-txscript` 2.2.0 (figé par `cli/Cargo.lock` ; structures de consensus : `kaspa-consensus-core` 2.1.0), avec le contexte de lignées construit par la fonction
 du nœud (`CovenantsContext::from_tx`), le compilateur SilverScript figé (`7eb04634`), et les règles de
 consensus copiées dans les tests (verrou relatif, sorties ≤ entrées).
 
@@ -381,6 +382,15 @@ coffre, qui n'est plus le même.
   (≈ 11 minutes) pour `C` = 2 KAS par jour. Tout événement sur la pièce (paiement, rechargement)
   remet l'attente à zéro : un agent qui paie sans arrêt retarde le retrait partiel. Le propriétaire
   garde toujours la fermeture (`ownerControl`, sans attente, frais ≤ `C`) et l'arrêt de son agent.
+- **Rechargement nul (W11).** `ownerControl` accepte que la pièce revienne au coffre « au moins
+  entière » : donc aussi exactement entière, les frais étant payés par une autre pièce. Rien ne
+  sort, mais l'âge de la pièce repart de zéro. Une clé de propriétaire volée peut le répéter et
+  empêcher l'agent de payer (et retarder « Reprendre »), sans rien voler ni rien brûler du coffre.
+  Ce n'est pas pire que ce que cette clé peut déjà faire (fermer le coffre). Parade écartée :
+  exiger `valeur de sortie > valeur d'entrée` dans le contrat changerait le bytecode pour un gain
+  nul (un sompi ajouté suffirait à la contourner). La console signale l'opération
+  (`spec/red-team/systeme-2026-11-28.md`, W11) ; la réponse est de fermer le coffre, ce qui reste
+  possible sans attente.
 - **Une pièce par transaction**, par construction (§9.2).
 - **Il doit rester quelque chose** : pour tout reprendre, c'est le gel (la pièce quitte la lignée).
   Le script accepte un reste minuscule ; c'est la masse de stockage du réseau (KIP-9) qui fixe le

@@ -27,7 +27,9 @@ L'attaquant détient la clé agent. Ce qu'il peut faire, au maximum :
 
 - dépenser `capacity` immédiatement (montant + frais), puis `capacity` par `refillPeriod` ;
 - jamais plus de `maxPerPayment` par paiement ;
-- vers n'importe quel destinataire si la liste blanche est désactivée (c'est un choix du propriétaire) ;
+- vers n'importe quel destinataire : depuis le cœur v0.6 (donc en v0.9.2), le contrat n'a plus de liste
+  blanche de vendeurs. Une liste de vendeurs n'existe que dans la passerelle (`origines`), qui est un
+  logiciel du client, pas une règle du réseau : elle ne protège pas si la clé agent est volée ;
 - rien de plus : ni plus vite, ni par les frais, ni via un clone, ni en combinant des couloirs.
 
 Parade côté propriétaire : récupérer le coffre (`recuperer`) ; la clé agent volée devient inutile.

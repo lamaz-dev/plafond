@@ -625,6 +625,10 @@ mod tests {
             ("gel par le propriétaire (la pièce quitte la lignée)", monter(&[ctrl.clone()], &[o(V - FR, &rt)], 0)),
             ("gel de deux pièces, chacune vers sa sortie", monter(&[ctrl.clone(), ctrl.clone()], &[o(V - FR, &rt), o(V - FR, &rt)], 0)),
             ("rechargement par le propriétaire (dans la lignée)", monter(&[ctrl.clone(), tiers(1, 2 * C)], &[l(V + C, &m), o(C - FR, &p2pk(1))], 0)),
+            // W11 (limite connue, spec/red-team/systeme-2026-11-28.md) : rechargement NUL. La pièce
+            // revient entière, les frais sont payés par une autre pièce, l'âge repart de zéro. Le
+            // contrat l'accepte (il exige « au moins entière ») ; seule la clé du propriétaire le peut.
+            ("W11 : rechargement nul par le propriétaire (âge remis à zéro)", monter(&[ctrl.clone(), tiers(1, 2 * C)], &[l(V, &m), o(2 * C - FR, &p2pk(1))], 0)),
             ("poussière d'un tiers (sans lignée) rapatriée par le propriétaire", monter(&[sg(&b.coffre, P, "ownerControl", 1)], &[o(P - FR, &rt)], 0)),
             ("pièce d'une autre lignée rapatriée par le propriétaire", monter(&[sg(&b.coffre, P, "ownerControl", 1).dans(y_id())], &[o(P - FR, &rt)], 0)),
             // ---- retrait partiel : sortie 0 = le reste (lignée), sortie 1 = adresse de retour ; frais
@@ -662,6 +666,9 @@ mod tests {
         let poussiere = sc(&b.coffre, P, "absorb");
         let fausse = sc(&b.coffre, P, "absorb").dans(y_id());
         vec![
+            // W11 : la remise à zéro de l'âge sans dépôt n'est ouverte qu'à la clé du propriétaire.
+            ("W11 : rechargement nul signé par l'agent", monter(&[sg(&b.coffre, V, "ownerControl", 2).dans(x_id()), tiers(2, 2 * C)], &[l(V, &m), o(2 * C - FR, &p2pk(2))], 0)),
+            ("W11 : rechargement nul sans clé (absorb)", monter(&[absorb.clone(), tiers(10, 2 * C)], &[l(V, &m), o(2 * C - FR, &x)], 0)),
             // ------------------------------------------------------------ attaques de la v0.8
             // Le dépôt ne va que dans CE coffre.
             ("autre coffre", monter(&[sc(&b.autre, V, "absorb").dans(x_id()), depot.clone()], &[l(V + D - FR, &vault_spk(&b.autre))], 0)),
@@ -974,6 +981,40 @@ mod tests {
     /// que le nœud appelle avant d'exécuter les scripts : une sortie ne porte une lignée existante
     /// que si l'entrée qui l'autorise la porte déjà ; sinon c'est une genèse, et l'identifiant doit
     /// être celui que le réseau recalcule (il dépend de la pièce dépensée : unique, non choisi).
+    /// Vérification 1 (Red Team système) : la signature engage le champ « lignée » de CHAQUE sortie
+    /// (kaspa-consensus-core 2.1.0, hashing/sighash.rs, `hash_output`, transactions de version 1).
+    /// Marquer après coup une sortie signée, changer sa lignée ou son entrée autorisante change
+    /// l'empreinte signée : la signature du propriétaire ou de l'agent ne vaut plus.
+    #[test]
+    fn la_signature_engage_la_lignee_des_sorties() {
+        use kaspa_consensus_core::hashing::sighash::calc_schnorr_signature_hash;
+        use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
+        let b = vrai();
+        let (m, rt) = (vault_spk(&b.coffre), p2pk(11));
+        let (tx, entries) = monter(&[sg(&b.coffre, V, "ownerControl", 1).dans(x_id())], &[l(V / 2 - FR, &m), o(V / 2, &rt)], attente_frais(FR));
+        let empreinte_signee = |t: &Transaction| {
+            let r = SigHashReusedValuesUnsync::new();
+            calc_schnorr_signature_hash(&PopulatedTransaction::new(t, entries.clone()), 0, SIG_HASH_ALL, &r)
+        };
+        let saine = empreinte_signee(&tx);
+        let mut vues = vec![saine];
+        for (sortie, liaison) in [
+            (1, Some(CovenantBinding { authorizing_input: 0, covenant_id: y_id() })), // retour marqué
+            (1, Some(CovenantBinding { authorizing_input: 0, covenant_id: x_id() })), // retour dans la lignée
+            (0, None),                                                                 // reste sorti de la lignée
+            (0, Some(CovenantBinding { authorizing_input: 0, covenant_id: y_id() })), // reste dans une autre lignée
+            (0, Some(CovenantBinding { authorizing_input: 1, covenant_id: x_id() })), // autre entrée autorisante
+        ] {
+            let mut t = tx.clone();
+            t.outputs[sortie].covenant = liaison;
+            let e = empreinte_signee(&t);
+            assert!(!vues.contains(&e), "sortie {sortie} : la lignée modifiée doit changer l'empreinte signée");
+            vues.push(e);
+            assert!(script_entree(&t, &entries, 0).is_none(), "sortie {sortie} : la signature d'origine ne vaut plus");
+        }
+        assert!(script_entree(&tx, &entries, 0).is_some());
+    }
+
     #[test]
     fn le_reseau_refuse_une_lignee_usurpee() {
         let b = vrai();

@@ -55,6 +55,10 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
 7. **Covenant payer profile for Kaspa x402**: the vault pays the vendor directly (proposal to be discussed with
    the Kaspa x402 maintainers).
 
+## After launch
+
+1. **Ledger support for the owner key** (the key that closes a vault and takes funds back never leaves a hardware wallet).
+
 ## On hold
 
 - Micropayments into a vendor's additive UTXO (KIP-9 mutual transaction): Kaspa x402 `exact` already covers

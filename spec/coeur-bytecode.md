@@ -54,7 +54,9 @@ python3 ../tools/desassembler.py /tmp/coeur.hex
 ```
 
 La table des opcodes (`tools/opcodes-kaspa-txscript-2.1.0.txt`) est extraite de `kaspa-txscript`
-2.1.0, `src/opcodes/mod.rs`.
+2.1.0, `src/opcodes/mod.rs`. Le moteur compilé par le dépôt est le 2.2.0 (`cli/Cargo.lock`) : la table
+a été recomparée à sa source le 28 novembre 2026, les 254 opcodes ont le même numéro et le même nom
+(`spec/red-team/systeme-2026-11-28.md`, vérification 5).
 
 ## Lecture commentée
 

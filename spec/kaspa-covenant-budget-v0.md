@@ -19,8 +19,9 @@ inputs with zero lock time. An agent that pays from a spending-limited covenant 
 therefore move funds to a hot wallet first, where the limits no longer apply.
 
 `covenant-budget` lets the payment come straight from an AgentBudget covenant, so the
-spending limits (per-payment cap, continuously refilled budget, optional allowlist) are
-enforced by consensus on every merchant payment, and adds merchant-side guarantees that
+spending limits (per-payment cap, continuously refilled budget) are
+enforced by consensus on every merchant payment (the payee allowlist of the first AgentBudget
+contract was dropped in core v0.6: current vaults do not restrict the payee on chain), and adds merchant-side guarantees that
 account-based agent wallets cannot offer.
 
 ## 2. Identifiers
@@ -145,7 +146,8 @@ beyond the loss bound; each one makes a correct integration fail or cost more th
   payment (idempotent settlement).
 - **Lock margin.** The client SHOULD wait until the coin is a little older than the announced
   lock (the tool uses 20 DAA, about 2 s): a node slightly behind would otherwise reject it.
-- **Allowlist and escrow.** A vault with a payee allowlist can pay an escrow only if the escrow
+- **Allowlist and escrow** (first-generation AgentBudget vaults only; cores v0.6 to v0.9.2 have no
+  payee allowlist). A vault with a payee allowlist can pay an escrow only if the escrow
   script is in the list. Escrow scripts change with every order, so in practice an allowlisted
   vault cannot use 9c; choose one or the other per lane.
 - **Refund destination.** Escrow refunds go to the owner's address (`refundSpkHash`), not back to
