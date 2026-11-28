@@ -32,6 +32,13 @@
 > `PLAFOND_EXPORT_BYTECODE_V091=/tmp/c.hex cargo test --release lignee::tests::transactions_de_l_outil`
 > puis `python3 ../tools/desassembler.py /tmp/c.hex`.
 
+> **v0.9.2 (28 nov. 2026).** Le retrait partiel devient une branche de `ownerControl` et toute sortie
+> vers l'adresse de retour doit ne déclarer aucune lignée (`OpOutputCovenantId`, opcode 0xd5, comparé
+> à 32 octets nuls ; preuve §10) : 550 octets avec les paramètres de référence, empreinte
+> `78375a86…`. `pay` et `absorb` ont le même source que la v0.9. Le sas v0.2.1 fait 264 octets (+37).
+> La v0.9.1 (`1f0ef263…`) et le sas v0.2 sont archivés à l'identique. Coûts mesurés : `pay` 11
+> unités de calcul, retrait partiel 11. La variable d'export devient `PLAFOND_EXPORT_BYTECODE_V092`.
+
 Compilateur SilverScript figé à `7eb04634` (v1.0.2 ; bytecode identique octet pour octet à `443d519e`, vérifié le 26 nov. 2026), paramètres de référence :
 - propriétaire et agent : clés de test 1 et 2 ;
 - capacité 200 000 000 sompi (2 TKAS) ;

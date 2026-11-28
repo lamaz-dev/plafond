@@ -1,0 +1,52 @@
+pragma silverscript ^0.1.0;
+
+// Sas de rechargement v0.2 (27 nov. 2026) — une adresse où l'on dépose de l'argent pour UN coffre.
+//
+// Celui qui paie (service d'achat par carte, conservateur, portefeuille) envoie simplement des KAS à
+// l'adresse du sas. Aucune clé ne peut ensuite détourner ce dépôt : il ne peut que
+//   - regonfler une pièce de la LIGNÉE du coffre (recharger, SANS clé : n'importe qui peut le faire,
+//     les frais sont pris sur le dépôt et bornés par `maxFrais`), ou
+//   - revenir à l'adresse de retour du coffre (retour, clé du propriétaire).
+// Plafond ne détient jamais l'argent : le sas n'a pas de clé de dépense.
+//
+// v0.2 : le sas est lié au coffre par l'empreinte de son script ET par l'identifiant de sa lignée
+// (KIP-20, fixé par le réseau à la création du coffre, infalsifiable). Une pièce qu'un tiers envoie
+// à l'adresse du coffre ne porte pas cet identifiant : le dépôt ne peut pas y être versé (c'était la
+// limite S3 du sas v0.1, contracts/archive/sas-v0.1.sil). Le cœur v0.9 garantit de son côté que la
+// lignée ne gagne jamais de pièce : un dépôt ne peut donc pas ajouter un rythme de dépense.
+//
+// Preuve : spec/borne-de-perte-v0.9.md. Analyse d'attaque : spec/red-team/lignee-2026-11-27.md.
+
+contract Sas(
+    byte[32] coffreSpkHash, // empreinte blake2b du script du coffre (cœur v0.9) à recharger
+    byte[32] lignee,        // identifiant de covenant (KIP-20) de la lignée du coffre
+    byte[32] retourSpkHash, // empreinte blake2b du script de l'adresse de retour (celle du coffre)
+    pubkey ownerKey,        // propriétaire : ne peut que renvoyer le dépôt à l'adresse de retour
+    int maxFrais            // frais maximum prélevés sur un dépôt, en sompi
+) {
+    // Forme imposée : entrée 0 = une pièce de la lignée du coffre, entrée 1 = ce dépôt, UNE sortie =
+    // la pièce du coffre regonflée. Deux entrées, pas plus : ni fusion de deux pièces du coffre, ni
+    // deux dépôts qui se partageraient le même crédit. Une sortie, pas plus : rien vers un tiers.
+    // Si ce dépôt était l'entrée 0, l'entrée 0 ne serait pas le coffre : refus.
+    // La pièce du coffre (entrée 0) obéit à son propre script : `absorb` (sans clé, la pièce doit
+    // grossir d'au moins `capacity`) ou `ownerControl` (propriétaire, pour un petit dépôt). Dans les
+    // deux cas ce script impose que la sortie reste dans la lignée.
+    entry recharger() {
+        require(tx.inputs.length == 2 && tx.outputs.length == 1);
+        byte[] coffre = tx.inputs[0].scriptPubKey;
+        require(blake2b(coffre) == coffreSpkHash);
+        require(OpInputCovenantId(0) == lignee);
+        require(tx.outputs[0].scriptPubKey == coffre);
+        require(tx.outputs[0].value >= tx.inputs[0].value + tx.inputs[1].value - maxFrais);
+    }
+
+    // Entrée i -> sortie i, comme le gel du coffre : les dépôts en attente et les pièces du coffre
+    // peuvent être renvoyés ensemble, chacun vers sa propre sortie.
+    entry retour(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        require(blake2b(tx.outputs[i].scriptPubKey) == retourSpkHash);
+        require(tx.outputs[i].value >= tx.inputs[i].value - maxFrais);
+    }
+}

@@ -1,6 +1,8 @@
 //! Cœur v0.7 : budget d'agent sans mémoire (contracts/archive/coeur-v0.7.sil), avec adresse de retour.
-//! Le cœur v0.9.1 (contracts/coeur.sil : rechargement sans clé, lignée KIP-20, retrait partiel) est
-//! compilé par `Coeur::artifact_v091` et utilisé par src/lignee.rs.
+//! Le cœur v0.9.2 (contracts/coeur.sil : rechargement sans clé, lignée KIP-20, retrait partiel,
+//! sorties de retour sans lignée) est compilé par `Coeur::artifact_v092` et utilisé par src/lignee.rs.
+//! Le cœur v0.9.1 (contracts/archive/coeur-v0.9.1.sil, retrait partiel en entrée séparée) reste
+//! compilé par `Coeur::artifact_v091` pour la comparaison ; il n'a jamais été déployé.
 //! Le cœur v0.9 (contracts/archive/coeur-v0.9.sil, sans retrait partiel) reste compilé par
 //! `Coeur::artifact_v09` pour la comparaison « avant, après » ; il n'a jamais été déployé.
 //! Le cœur v0.8 (contracts/archive/coeur-v0.8.sil, rechargement sans clé, sans lignée) reste
@@ -25,7 +27,10 @@ use crate::{Res, bytecode, sign, vault_sigscript, vault_spk};
 pub const SOURCE: &str = include_str!("../../contracts/archive/coeur-v0.7.sil");
 /// Cœur v0.9.1 (contracts/coeur.sil) : v0.9 plus l'entrée `ownerWithdraw` (retrait partiel par le
 /// propriétaire, frais au rythme du contrat). Utilisé par src/lignee.rs.
-pub const SOURCE_V091: &str = include_str!("../../contracts/coeur.sil");
+pub const SOURCE_V091: &str = include_str!("../../contracts/archive/coeur-v0.9.1.sil");
+/// Cœur v0.9.2 (contracts/coeur.sil) : le retrait partiel est une branche de `ownerControl`, et
+/// toute sortie vers l'adresse de retour est une pièce ordinaire, sans aucune lignée (W10 fermé).
+pub const SOURCE_V092: &str = include_str!("../../contracts/coeur.sil");
 /// Cœur v0.9, archivé à l'identique : v0.8 plus la lignée KIP-20 (le nombre de pièces du coffre ne
 /// peut plus augmenter), sans retrait partiel. Jamais déployé.
 pub const SOURCE_V09: &str = include_str!("../../contracts/archive/coeur-v0.9.sil");
@@ -154,6 +159,15 @@ impl Coeur {
         let args: Vec<ArtifactValue> =
             vec![self.owner.clone().into(), self.agent.clone().into(), self.capacite.into(), self.periode.into(), retour.into()];
         Ok(compile_to_sil_abi_artifact_with_options(SOURCE_V091, &args, CompileOptions::default())?)
+    }
+
+    /// Le même coffre en cœur v0.9.2 : autre script, donc autre adresse. Mêmes cinq paramètres.
+    pub fn artifact_v092(&self) -> Res<SilAbiArtifact> {
+        self.verifier()?;
+        let retour = self.retour.clone().ok_or("le cœur v0.9.2 exige une adresse de retour")?;
+        let args: Vec<ArtifactValue> =
+            vec![self.owner.clone().into(), self.agent.clone().into(), self.capacite.into(), self.periode.into(), retour.into()];
+        Ok(compile_to_sil_abi_artifact_with_options(SOURCE_V092, &args, CompileOptions::default())?)
     }
 
     /// Âge exigé (unités DAA) pour dépenser `spent`, paiement et frais compris.

@@ -1,0 +1,178 @@
+pragma silverscript ^0.1.0;
+
+// Cœur v0.9.1 — budget d'agent SANS MÉMOIRE, avec adresse de retour, rechargement sans clé, LIGNÉE
+// et retrait partiel.
+//
+// v0.9.1 (27 nov. 2026) : UNE entrée de plus, `ownerWithdraw`. Le propriétaire reprend une partie
+// d'une pièce sans fermer le coffre : la pièce reste dans la lignée, plus petite, et la différence
+// ne peut aller QU'À l'adresse de retour. Les entrées `pay`, `ownerControl` et `absorb` sont celles
+// de la v0.9, à l'identique (contracts/archive/coeur-v0.9.sil). Forme imposée, la même que `pay` :
+// une entrée, deux sorties ; donc ni fusion de pièces, ni pièce ajoutée à la lignée, ni sortie
+// partagée avec une autre entrée. Les frais sont pris sur la pièce et comptés AU RYTHME du contrat,
+// comme une dépense de l'agent : une clé de propriétaire volée ne peut pas vider le coffre en frais
+// à coups de petits retraits (spec/borne-de-perte-v0.9.md, §9 ; spec/red-team/retrait-2026-11-27.md).
+//
+// v0.9 (27 nov. 2026) : le coffre est une LIGNÉE de pièces (identifiant de covenant, KIP-20), suivie
+// par le réseau. Une seule règle de plus, répétée dans chaque entrée :
+//     une pièce de la lignée a AU PLUS UNE héritière, et c'est sa propre sortie, à la même adresse.
+// Conséquences (spec/borne-de-perte-v0.9.md) :
+//   - le nombre de pièces du coffre est fixé à la création et ne peut plus JAMAIS augmenter, quelle
+//     que soit la clé compromise ; chaque pièce garde son rythme, donc le plafond du coffre ENTIER
+//     est garanti sans condition ;
+//   - une pièce envoyée à l'adresse du coffre par un tiers n'est pas dans la lignée : l'agent ne peut
+//     pas la dépenser, personne ne peut la regonfler, le sas (contracts/sas.sil) ne peut rien y
+//     verser. Le propriétaire peut seulement la renvoyer à l'adresse de retour.
+// Le script reste sans état : il ne contient pas l'identifiant de la lignée, il lit celui de la pièce
+// qu'il dépense. Les règles de v0.7 (pay, ownerControl) et de v0.8 (absorb) sont inchangées.
+// Versions précédentes, à l'identique : contracts/archive/coeur-v0.9.sil, coeur-v0.8.sil,
+// coeur-v0.7.sil (coffres déployés par l'outil), coeur-v0.6.sil.
+//
+// v0.8 (27 nov. 2026) : entrée `absorb`, sans signature. N'importe qui peut REGONFLER une pièce du
+// coffre : elle revient à la même adresse, grossie d'au moins `capacity`. Rien ne sort, aucune pièce
+// n'est ajoutée, et la pièce repart d'un âge nul. C'est ce qui permet au sas de rechargement
+// (contracts/sas.sil) de verser un dépôt dans le coffre sans la clé du propriétaire.
+//
+// v0.7 (26 nov. 2026) : l'argent d'un coffre ne peut sortir que vers les vendeurs (pay, au rythme
+// permis) ou, par la clé du propriétaire, vers le coffre lui-même (rechargement) ou vers l'adresse
+// de retour fixée à la création (gel, retrait). Même si la clé du propriétaire est volée, l'argent
+// ne peut aller nulle part ailleurs.
+//
+// Règle unique du rythme : pour dépenser `spent` sompi (paiement + frais), la pièce du coffre doit
+// avoir attendu au moins ceil(spent × period / capacity) unités DAA depuis sa création.
+// Le délai est contrôlé par le réseau lui-même (verrou relatif : OpCheckSequenceVerify dans le
+// script, règle de consensus check_sequence_lock) : il n'y a ni compteur, ni horodatage fourni par
+// l'agent, ni état à faire suivre.
+//
+// Borne prouvée (spec/borne-de-perte-v0.9.md) : sur toute fenêtre de D unités DAA, un coffre créé
+// avec k pièces perd au plus k × (capacity + capacity × D / period), quels que soient les dépôts,
+// les rechargements, les retraits partiels et les pièces envoyées par des tiers. « Perd » compte
+// les paiements de l'agent, leurs frais ET les frais des retraits partiels.
+//
+// Ce que le script ne vérifie pas parce que le réseau le garantit déjà : les sorties ne dépassent
+// jamais les entrées (donc 0 ≤ paiement ≤ spent), la pièce a vraiment l'âge annoncé, et une sortie
+// ne porte l'identifiant d'une lignée que si l'entrée qui l'autorise le porte déjà (KIP-20).
+// Les frais sont comptés dans `spent` : la borne tient quels qu'ils soient.
+//
+//  - pay          : l'agent paie UN bénéficiaire ; le reste revient à la même adresse, dans la lignée.
+//  - ownerControl : le propriétaire gèle, retire ou recharge ; la pièce ne va qu'au coffre (dans la
+//                   lignée) ou à l'adresse de retour (hors lignée, au plus `capacity` de frais).
+//  - absorb       : sans clé ; la pièce revient au coffre, dans la lignée, grossie d'au moins `capacity`.
+//  - ownerWithdraw : le propriétaire reprend une partie de la pièce vers l'adresse de retour ; le
+//                   reste revient au coffre, dans la lignée ; frais au rythme du contrat (v0.9.1).
+
+contract Coeur(
+    pubkey ownerKey, // propriétaire : contrôle total
+    pubkey agentKey, // agent : ne peut que payer, au rythme permis
+    int capacity,    // dépense maximale d'un seul paiement (frais compris), en sompi
+    int period,      // unités DAA pour regagner toute la capacité (864 000 ≈ 1 jour)
+    byte[32] retourSpkHash // empreinte blake2b du script de l'adresse de retour (gel, retrait)
+) {
+    entry pay(sig agentSig) {
+        require(checkSig(agentSig, agentKey));
+
+        // Le verrou relatif ne compte que 32 bits : le délai exigé doit rester < 2^32. Le compilateur
+        // l'impose déjà (délai ∈ [0, 2^32) avant OpCheckSequenceVerify, spec/coeur-bytecode.md) ;
+        // cette garde le double, par prudence : spent ≤ capacity donne un délai ≤ period < 2^32.
+        // Porteur : capacity × period ne déborde pas, le calcul du délai reste exact.
+        // (Capacité ou période nulle ou négative : aucun paiement possible, sans danger.)
+        require(period < 4294967296 && capacity <= 9223372036854775807 / period);
+
+        // Une seule entrée : sinon deux pièces du coffre seraient fusionnées et la valeur de
+        // l'une partirait en frais sans être comptée (R26). Deux sorties : un seul bénéficiaire,
+        // ce qui rend chaque dépense attribuable à un vendeur (moteur de risque, M4).
+        require(tx.inputs.length == 1 && tx.outputs.length == 2);
+
+        byte[] moi = tx.inputs[this.activeInputIndex].scriptPubKey;
+        require(tx.outputs[1].scriptPubKey == moi); // le reste revient au coffre
+        // Non porteur de la borne (voir la preuve) : l'agent ne fragmente pas le coffre, donc
+        // seules les actions du propriétaire ajoutent des pièces et le moteur de risque compte juste.
+        require(tx.outputs[0].scriptPubKey != moi);
+
+        // Lignée (v0.9) : la pièce a exactement une héritière, la sortie 1 (le reste). Une pièce hors
+        // lignée (envoyée par un tiers à l'adresse du coffre) n'a aucune héritière possible : l'agent
+        // ne peut pas la dépenser. Le bénéficiaire (sortie 0) ne peut pas entrer dans la lignée.
+        require(OpAuthOutputCount(this.activeInputIndex) == 1 && OpAuthOutputIdx(this.activeInputIndex, 0) == 1);
+
+        int spent = tx.inputs[this.activeInputIndex].value - tx.outputs[1].value; // paiement + frais
+        require(spent <= capacity);
+
+        // Le cœur : attendre en proportion de ce qu'on dépense.
+        require(this.ageDaa >= (spent * period + capacity - 1) / capacity);
+    }
+
+    // Entrée i -> sortie i : chaque pièce a sa propre sortie, ce qui permet le gel par lots sans
+    // que deux pièces se partagent une sortie ; les autres sorties (rendu du propriétaire lors
+    // d'un rechargement) restent libres.
+    entry ownerControl(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        byte[] moi = tx.inputs[i].scriptPubKey;
+        int valeur = tx.inputs[i].value;
+        if (tx.outputs[i].scriptPubKey == moi) {
+            // Rechargement : la pièce revient au coffre, au moins entière.
+            require(tx.outputs[i].value >= valeur);
+            // Lignée (v0.9) : une seule héritière, cette sortie. Aucune pièce ajoutée à la lignée.
+            require(OpAuthOutputCount(i) == 1 && OpAuthOutputIdx(i, 0) == i);
+        } else {
+            // Gel ou retrait : uniquement vers l'adresse de retour, frais bornés par la capacité.
+            require(blake2b(tx.outputs[i].scriptPubKey) == retourSpkHash);
+            require(tx.outputs[i].value >= valeur - capacity);
+            // Lignée (v0.9) : la pièce quitte la lignée, sans héritière. L'adresse de retour ne
+            // reçoit jamais de pièce de la lignée, et une clé volée ne peut pas en fabriquer.
+            require(OpAuthOutputCount(i) == 0);
+        }
+    }
+
+    // Rechargement sans clé (v0.8). Entrée i -> sortie i, comme ownerControl : deux pièces du coffre
+    // ne peuvent pas se partager une sortie, donc pas de fusion. Rien ne sort du coffre : la pièce
+    // revient à la même adresse, plus grosse.
+    // Le minimum (`capacity`, le prix maximal d'un achat) est le prix de la gêne : regonfler remet
+    // l'âge de la pièce à zéro et retarde l'agent ; celui qui le fait pour nuire doit donc DONNER au
+    // propriétaire au moins `capacity` à chaque fois (spec/borne-de-perte-v0.9.md, §5).
+    // `capacity > 0` : avec une capacité négative, la règle laisserait fondre la pièce (R63 : ne pas
+    // compter sur un autre refus pour des réglages aberrants).
+    entry absorb() {
+        int i = this.activeInputIndex;
+        require(i < tx.outputs.length);
+        require(capacity > 0);
+        require(tx.outputs[i].scriptPubKey == tx.inputs[i].scriptPubKey);
+        require(tx.outputs[i].value >= tx.inputs[i].value + capacity);
+        // Lignée (v0.9) : une seule héritière, cette sortie. Une pièce hors lignée ne se regonfle pas.
+        require(OpAuthOutputCount(i) == 1 && OpAuthOutputIdx(i, 0) == i);
+    }
+
+    // Retrait partiel (v0.9.1). Même forme que `pay`, avec deux différences : c'est le propriétaire
+    // qui signe, et la sortie 0 est OBLIGATOIREMENT l'adresse de retour. Le montant repris est
+    // libre (c'est l'argent du propriétaire, il va chez lui) ; seuls les frais sont une perte.
+    //   sortie 0 : l'adresse de retour, hors lignée ;
+    //   sortie 1 : le reste, à la même adresse, seule héritière de la pièce.
+    // Une entrée, deux sorties : pas de fusion de deux pièces, pas de dépôt du sas ni d'autre pièce
+    // dans la même transaction, aucune sortie vers un tiers, aucune sortie comptée deux fois.
+    // Une pièce hors lignée n'a pas d'héritière possible : elle ne se retire qu'en entier
+    // (`ownerControl`).
+    // Les frais (ce qui ne va ni au coffre ni à l'adresse de retour) obéissent à la règle de `pay` :
+    // au plus `capacity`, et la pièce doit avoir attendu ceil(frais × period / capacity). Sans cela,
+    // une clé de propriétaire volée brûlerait le coffre en frais, retrait après retrait. La pièce qui
+    // reste repart d'un âge nul : un retrait ne donne aucune avance à l'agent.
+    entry ownerWithdraw(sig ownerSig) {
+        require(checkSig(ownerSig, ownerKey));
+
+        // Mêmes gardes que `pay` : le délai reste < 2^32 et son calcul ne déborde pas.
+        require(period < 4294967296 && capacity <= 9223372036854775807 / period);
+
+        require(tx.inputs.length == 1 && tx.outputs.length == 2);
+
+        int j = this.activeInputIndex;
+        require(blake2b(tx.outputs[0].scriptPubKey) == retourSpkHash); // le retrait : adresse de retour
+        require(tx.outputs[1].scriptPubKey == tx.inputs[j].scriptPubKey); // le reste revient au coffre
+
+        // Lignée : une seule héritière, la sortie 1 (le reste). La sortie 0 quitte la lignée.
+        require(OpAuthOutputCount(j) == 1 && OpAuthOutputIdx(j, 0) == 1);
+
+        int frais = tx.inputs[j].value - tx.outputs[0].value - tx.outputs[1].value;
+        require(frais <= capacity);
+        require(this.ageDaa >= (frais * period + capacity - 1) / capacity);
+    }
+}

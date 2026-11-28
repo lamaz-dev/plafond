@@ -1,24 +1,26 @@
-# Borne de perte du coffre entier : cœur v0.9 et v0.9.1, lignée KIP-20
+# Borne de perte du coffre entier : cœur v0.9 à v0.9.2, lignée KIP-20
 
 Statut : contrat écrit, prouvé et testé contre le vrai moteur de script (27 nov. 2026). **Pas encore
 déployé par l'outil, aucun essai sur le testnet.** Les coffres créés aujourd'hui restent en v0.7.
 
-> **v0.9.1 (27 nov. 2026).** `contracts/coeur.sil` est maintenant le cœur v0.9.1 : la v0.9 plus UNE
-> entrée, `ownerWithdraw` (retrait partiel par le propriétaire). Les trois entrées de la v0.9 sont
-> reprises au caractère près (vérifié par un test) ; la v0.9 est archivée à l'identique dans
-> `contracts/archive/coeur-v0.9.sil`. Les §1 à §8 ci-dessous valent pour les deux versions ; le **§9**
-> traite le retrait partiel et montre que la borne tient, frais des retraits compris. Taille : 577
-> octets avec les paramètres de référence (+201). Le sas v0.2 est inchangé (même source).
+> **v0.9.2 (28 nov. 2026).** `contracts/coeur.sil` est maintenant le cœur v0.9.2 (550 octets avec
+> les paramètres de référence) et `contracts/sas.sil` le sas v0.2.1 (264 octets). Par rapport à la
+> v0.9 : (1) `ownerControl` gagne une branche, le **retrait partiel** (§9) ; (2) tout ce qui part à
+> l'adresse de retour est une **pièce ordinaire, sans aucune lignée** (§10, limite W10 fermée), dans
+> le cœur comme dans le sas. `pay` et `absorb` sont ceux de la v0.9, au caractère près (vérifié par
+> un test). Les §1 à §8 valent pour toutes ces versions. Archives à l'identique : `coeur-v0.9.sil`,
+> `coeur-v0.9.1.sil` (retrait partiel en entrée séparée `ownerWithdraw`, 577 octets, jamais déployé),
+> `sas-v0.2.sil`.
 
-- Contrats : `contracts/coeur.sil` (cœur v0.9.1, 577 octets ; la v0.9 archivée fait 376 octets avec
-  les paramètres de référence, +43 par rapport à la v0.8) et `contracts/sas.sil` (sas v0.2, 227
-  octets, +37).
+- Contrats : `contracts/coeur.sil` (cœur v0.9.2, 550 octets ; la v0.9 archivée fait 376 octets avec
+  les paramètres de référence, +43 par rapport à la v0.8) et `contracts/sas.sil` (sas v0.2.1, 264
+  octets ; le sas v0.2 archivé en fait 227).
 - Ce document s'appuie sur `spec/borne-de-perte-v0.6.md` : §2 (les deux règles du réseau), §3 (un
   paiement, une chaîne), §7 (adresse de retour), §8 (`absorb`, sas, prix de la gêne). Il ne les répète
   pas ; il ajoute la lignée et en tire la borne **du coffre entier**.
 - Tests : `cli/src/lignee.rs`, `tests/coeur_tests.rs`, `tests/sas_tests.rs`.
 - Analyse d'attaque : `spec/red-team/lignee-2026-11-27.md` ; retrait partiel :
-  `spec/red-team/retrait-2026-11-27.md`.
+  `spec/red-team/retrait-2026-11-27.md` ; v0.9.2 : `spec/red-team/coeur-v0.9.2-2026-11-28.md`.
 
 Notations : `C` capacité, `R` période, `D` durée d'une fenêtre, `F` = `maxFrais` du sas, `S` le
 script du coffre (son adresse), `X` l'identifiant de sa lignée, `k` le nombre de pièces à la création.
@@ -249,44 +251,59 @@ consensus copiées dans les tests (verrou relatif, sorties ≤ entrées).
 observer sur testnet-10 : une genèse à plusieurs pièces, le relais d'une dépense sans signature
 portant une lignée, les frais réels (une pièce à lignée pèse deux unités de stockage, KIP-9).
 
-## 9. Retrait partiel (cœur v0.9.1)
+## 9. Retrait partiel (cœur v0.9.2)
 
 Besoin : le propriétaire veut reprendre une partie de l'argent d'une pièce sans fermer le coffre. En
 v0.9, `ownerControl` ne connaît que deux gestes : la pièce revient au coffre au moins entière, ou
 elle part en entier à l'adresse de retour et quitte la lignée.
 
-### 9.1 Ce que dit l'entrée `ownerWithdraw` (lecture directe)
+Le retrait partiel a d'abord été écrit comme une entrée séparée, `ownerWithdraw` (v0.9.1, archivée).
+En v0.9.2 c'est une **branche de `ownerControl`**, avec les mêmes règles : la signature, la clé et la
+règle d'héritière ne sont plus répétées (27 octets de moins que la v0.9.1 alors que la v0.9.2 porte
+en plus la règle du §10 ; une v0.9.1 portant cette règle aurait fait environ 650 octets, estimation). Seul l'ordre
+des deux sorties change, pour suivre la convention « entrée i, sortie i » de `ownerControl`.
 
-Pour une pièce de valeur `v` au script `S` :
+### 9.1 Ce que dit `ownerControl` (lecture directe)
 
-1. signature du propriétaire ;
-2. la transaction a **une** entrée et **deux** sorties ;
-3. sortie 0 : un script dont l'empreinte blake2b vaut `retourSpkHash` (l'adresse de retour) ;
-4. sortie 1 : le script `S` (la même adresse) ;
-5. `OpAuthOutputCount(moi) == 1` et `OpAuthOutputIdx(moi, 0) == 1` : la sortie 1 est la seule
-   héritière de la pièce ;
-6. `f = v − sortie 0 − sortie 1` (les frais) vérifie `f ≤ C` ;
-7. l'âge de la pièce vaut au moins `⌈f·R/C⌉` (verrou relatif, la règle de `pay`).
+Pour une pièce de valeur `v` au script `S`, en entrée `i`, avec la signature du propriétaire :
 
-C'est la forme de `pay`, avec deux différences : le signataire est le propriétaire, et le
-bénéficiaire (sortie 0) est obligatoirement l'adresse de retour. En échange, le montant repris n'est
-pas limité : seuls les frais le sont. Le réseau garantit `f ≥ 0` (sorties ≤ entrées, une seule entrée).
+| Sortie `i` | Geste | Règles |
+|---|---|---|
+| au script `S`, valeur `≥ v` | rechargement | une seule héritière, la sortie `i` |
+| au script `S`, valeur `< v` | **retrait partiel** | une seule héritière, la sortie `i` ; règles 1 à 5 ci-dessous |
+| autre script | gel | adresse de retour, valeur `≥ v − C`, aucune héritière, aucune lignée sur la sortie (§10) |
+
+Règles du retrait partiel :
+
+1. la transaction a **une** entrée et **deux** sorties (donc `i = 0` : la sortie 0 est le reste) ;
+2. sortie 1 : un script dont l'empreinte blake2b vaut `retourSpkHash` (l'adresse de retour) ;
+3. la sortie 1 ne déclare aucune lignée (§10) ;
+4. `f = v − sortie 0 − sortie 1` (les frais) vérifie `f ≤ C` ;
+5. l'âge de la pièce vaut au moins `⌈f·R/C⌉` (verrou relatif, la règle de `pay`).
+
+C'est la forme de `pay` (une entrée, deux sorties, le reste dans la lignée), avec deux différences :
+le signataire est le propriétaire, et le bénéficiaire est obligatoirement l'adresse de retour. En
+échange, le montant repris n'est pas limité : seuls les frais le sont. Le réseau garantit `f ≥ 0`
+(sorties ≤ entrées, une seule entrée).
+
+**L'aiguillage est sûr.** Une pièce qui revient au coffre plus petite ne peut pas passer pour un
+rechargement : la comparaison `sortie i < v` l'envoie dans la branche du retrait, qui exige d'être
+seule (attaque « pièce du coffre rognée sous couvert de rechargement »).
 
 ### 9.2 Où va la valeur
 
-**Lemme R (retrait).** Si une pièce de valeur `v` portant `X` au script `S` est dépensée par
-`ownerWithdraw`, alors `v = a + r + f` où : `a` va à l'adresse de retour dans une pièce **qui ne
-porte pas `X`** ; `r ≤ v` reste dans **une** pièce au script `S` portant `X`, dans le même emplacement ;
+**Lemme R (retrait).** Si une pièce de valeur `v` portant `X` au script `S` est dépensée par un
+retrait partiel, alors `v = a + r + f` où : `a` va à l'adresse de retour dans une pièce **sans
+aucune lignée** ; `r < v` reste dans **une** pièce au script `S` portant `X`, dans le même emplacement ;
 `f ≤ C` part en frais. Aucune autre pièce n'est consommée ni créée.
 *Démonstration.* Une entrée : aucune autre pièce du coffre (pas de fusion), aucun dépôt du sas,
 aucune pièce d'un tiers ne participe. Deux sorties : il n'y a pas de troisième destination. La sortie
-1 est au script `S` (règle 4) et c'est l'unique héritière (règle 5) : la sortie 0 ne porte donc pas
-`X` par cette entrée, et aucune autre entrée n'existe pour l'y autoriser (lemme N). La sortie 0 est
-à l'adresse de retour (règle 3). ∎
+0 est au script `S` et c'est l'unique héritière : elle porte `X`. La sortie 1 est à l'adresse de
+retour (règle 2) et ne déclare aucune lignée (règle 3). ∎
 
-**Les lemmes de la v0.9 tiennent.** Lemme H (au plus une héritière, au script `S`) : la quatrième
-entrée fixe elle aussi le nombre d'héritières (une) et son indice ; à cet indice, elle exige `S`.
-Lemme P (pièce hors lignée) : `ownerWithdraw` exige une héritière, une pièce sans lignée n'en a pas
+**Les lemmes de la v0.9 tiennent.** Lemme H (au plus une héritière, au script `S`) : la branche du
+retrait est sous la même règle d'héritière que le rechargement (une, la sortie `i`, au script `S`).
+Lemme P (pièce hors lignée) : le retrait exige une héritière, une pièce sans lignée n'en a pas
 (N4) ; elle ne sort toujours que par `ownerControl`, en entier, vers l'adresse de retour.
 L'**invariant de lignée** (§4) ne s'appuie que sur les lemmes N et H : il tient sans changement. Le
 retrait partiel ne fait ni monter ni baisser le nombre de pièces ; chaque emplacement contient
@@ -295,16 +312,16 @@ toujours zéro ou une pièce.
 **Une sortie n'est jamais comptée deux fois.** Avec `ownerControl` et `retour` (sas), l'entrée `i`
 contrôle la sortie `i` ; si le retrait acceptait d'autres entrées, sa sortie 0 pourrait être aussi
 « la sortie d'un gel » ou « le retour d'un dépôt », et une seule sortie satisferait deux règles : le
-surplus partirait en frais ou chez un tiers. La règle 2 (une entrée) l'exclut par construction ;
+surplus partirait en frais ou chez un tiers. La règle 1 (une entrée) l'exclut par construction ;
 c'est pour cela que le retrait ne se fait pas par lots. Attaques rejouées : « retrait partiel et gel
 ensemble », deux formes.
 
 ### 9.3 La borne tient, frais des retraits compris
 
 On appelle **fuite** d'un emplacement ce qui en sort sans aller ni au coffre ni à l'adresse de
-retour : la dépense d'un `pay` (paiement + frais) et les frais `f` d'un `ownerWithdraw`.
+retour : la dépense d'un `pay` (paiement + frais) et les frais `f` d'un retrait partiel.
 
-**Théorème (emplacement, v0.9.1).** Sur toute fenêtre `[a, a + D]`, la fuite d'un emplacement vaut
+**Théorème (emplacement, avec retraits).** Sur toute fenêtre `[a, a + D]`, la fuite d'un emplacement vaut
 au plus `min(C, C·g/R) + C·D/R ≤ C + C·D/R`, où `g` est l'âge de sa pièce au score `a`, quels que
 soient le nombre, l'ordre et les auteurs des paiements, retraits partiels, regonflements et
 versements.
@@ -312,25 +329,25 @@ versements.
 *Démonstration.* Chaque événement de l'emplacement consomme sa pièce et en recrée au plus une, dont
 le score de création est celui de l'acceptation (v0.6, §2) : après **tout** événement, y compris un
 retrait partiel, la pièce repart d'un âge nul. Soit un événement qui fuit `sᵢ > 0` au score `tᵢ`,
-sur une pièce créée au score `cᵢ`. Que ce soit un `pay` (v0.6, §3) ou un `ownerWithdraw` (règles 6
-et 7, la même inégalité, vérifiée par le même verrou) : `sᵢ ≤ C` et `sᵢ ≤ C·(tᵢ − cᵢ)/R`, avec `cᵢ`
+sur une pièce créée au score `cᵢ`. Que ce soit un `pay` (v0.6, §3) ou un retrait partiel (règles 4
+et 5, la même inégalité, vérifiée par le même verrou) : `sᵢ ≤ C` et `sᵢ ≤ C·(tᵢ − cᵢ)/R`, avec `cᵢ`
 au moins égal au score de l'événement précédent de l'emplacement. Les intervalles `(cᵢ, tᵢ]` sont
 disjoints et inclus dans `(a − g, a + D]` ; la somme télescope comme au §5, et le premier terme est
 plafonné par `C`. Les événements qui ne fuient rien (regonflement, versement, retrait sans frais)
 ne font que raccourcir ces intervalles. ∎
 
-**Corollaire (coffre entier).** Le théorème du §1 tient pour le cœur v0.9.1 en remplaçant « ce que
+**Corollaire (coffre entier).** Le théorème du §1 tient pour le cœur v0.9.2 en remplaçant « ce que
 la clé de l'agent peut faire sortir » par la fuite : paiements de l'agent, leurs frais **et** frais
 des retraits partiels, ensemble, valent au plus `k × (C + C·D/R)` sur toute fenêtre, même si les
 deux clés sont compromises à la fois. Les retraits ne s'ajoutent pas à la borne : ils la partagent
 (un retrait qui prend des frais remet l'âge à zéro, donc retire d'autant à l'agent).
 
-**La pièce ne fait que diminuer** (`r ≤ v`, lemme R) et **l'agent n'y gagne rien** : le reste est une
+**La pièce ne fait que diminuer** (`r < v`, lemme R) et **l'agent n'y gagne rien** : le reste est une
 pièce neuve, d'âge nul ; un retrait fait attendre l'agent comme le ferait un rechargement.
 
 ### 9.4 Ce que peut une clé de propriétaire volée
 
-| | v0.9 | v0.9.1 |
+| | v0.9 | v0.9.2 |
 |---|---|---|
 | Envoyer l'argent ailleurs qu'au coffre ou à l'adresse de retour | impossible | impossible (lemme R) |
 | Ajouter une pièce à la lignée, fusionner des pièces | impossible | impossible (§9.2) |
@@ -344,12 +361,13 @@ garantie « une clé volée ne détruit pas plus que le plafond » aurait été 
 `lignee::tests::cle_volee_ne_brule_pas_le_coffre_en_frais` (avec la règle : 9,5 KAS de frais en 19
 périodes pour `C` = 0,5 KAS, sous la borne de 10,05 ; sans la règle : 9,5 KAS sur 10 sans attendre).
 
-### 9.5 Le sas v0.2 reste compatible, sans modification
+### 9.5 Le sas reste compatible avec le retrait
 
-Le source du sas ne change pas. Sa démonstration (§5, théorème du dépôt) énumère ce que la pièce du
+L'entrée `recharger` du sas ne change pas (seule `retour` gagne une règle, §10). Sa démonstration (§5, théorème du dépôt) énumère ce que la pièce du
 coffre en entrée 0 peut faire dans un versement : `pay` est exclu (il exige une entrée), `absorb` et
-`ownerControl` gardent la sortie dans la lignée. `ownerWithdraw` est exclu comme `pay` : il exige une
-entrée, `recharger` en exige deux. De même `retour` ne peut pas partager une transaction avec un
+`ownerControl` gardent la sortie dans la lignée. La branche « retrait partiel » de `ownerControl` est
+exclue comme `pay` : elle exige une entrée, `recharger` en exige deux (et une seule sortie, alors que
+le retrait en exige deux). De même `retour` ne peut pas partager une transaction avec un
 retrait. Un dépôt ne peut donc pas être versé, ni renvoyé, dans la transaction d'un retrait partiel
 (attaques « retrait partiel avec un dépôt du sas » et « retrait partiel et retour d'un dépôt sur la
 même sortie »). Seule l'**adresse** du sas change, parce qu'elle engage l'empreinte du script du
@@ -371,46 +389,79 @@ coffre, qui n'est plus le même.
 - **Réglages aberrants** (capacité ou période nulle ou négative, période ≥ 2³²) : aucun retrait avec
   frais n'est possible ; un retrait sans frais reste possible quand la capacité est positive, sans
   perte pour personne.
-- **Pièce marquée d'une lignée neuve.** Le réseau laisse une entrée ouvrir une lignée neuve
-  `Z ≠ X` sur n'importe laquelle de ses sorties (genèse), et une genèse ne compte pas parmi les
-  héritières (N4). La part reprise peut donc naître marquée d'une telle lignée, comme la sortie d'un
-  gel, le retour d'un dépôt ou le bénéficiaire d'un paiement depuis la v0.7. Sans effet sur la
-  lignée `X` ni sur la borne ; conséquence pratique et parade : note Red Team, W10.
-- **Taille** : +201 octets (577). L'entrée répète la clé du propriétaire et l'empreinte de l'adresse
-  de retour (66 octets) ; fondre le retrait dans `ownerControl` aurait économisé ces octets, au prix
-  de modifier une entrée déjà relue. Choix retenu : une entrée séparée, les trois autres intactes.
+- **Taille** : 550 octets (+174 par rapport à la v0.9), dont 33 pour l'identifiant nul du §10 et 33
+  pour l'empreinte de l'adresse de retour, lue dans deux branches.
 
 ### 9.7 Règles du retrait, une par une
 
-| Règle de `ownerWithdraw` | Porteuse ? | Sans elle |
+| Règle | Porteuse ? | Sans elle |
 |---|---|---|
 | signature du propriétaire | oui | l'agent (ou n'importe qui) déplace l'argent vers l'adresse de retour et brûle des frais |
+| aiguillage `sortie i < v` | oui | une pièce rognée passe pour un rechargement : la différence part chez un tiers |
 | une entrée | oui | un gel et un retrait se partagent la sortie de retour : une pièce entière part en frais ou chez un tiers |
 | deux sorties | oui | les « frais » partent chez un tiers par une troisième sortie |
-| sortie 0 à l'adresse de retour | oui | la clé du propriétaire volée envoie l'argent où elle veut |
-| sortie 1 au script du coffre | oui | le reste, avec la lignée, part sous un autre script |
-| une seule héritière | non (doublée) | rien : avec deux sorties, « la première héritière est la sortie 1 » l'implique ; gardée pour se lire seule |
-| l'héritière est la sortie 1 | oui | la part retirée entre dans la lignée (une pièce de plus), ou le reste en sort ; une pièce hors lignée devient retirable |
+| sortie 1 à l'adresse de retour | oui | la clé du propriétaire volée envoie l'argent où elle veut |
+| une seule héritière, la sortie `i` (règle commune au rechargement) | oui | le reste sort de la lignée ; une pièce hors lignée devient retirable ; une pièce de plus dans la lignée |
+| aucune lignée sur la sortie 1 | oui | la part reprise naît marquée d'une lignée neuve (§10) |
 | `f ≤ C` | oui | une pièce ancienne laisse brûler plus que `C` d'un coup |
 | âge `≥ ⌈f·R/C⌉` | oui | le coffre se vide en frais sans attendre (§9.4) |
 | garde `period < 2³²`, `C ≤ MAX/period` | non (doublée par le compilateur) | rien avec des réglages sains ; gardée comme dans `pay` |
 
-### 9.8 Validation automatique (v0.9.1)
+### 9.8 Validation automatique (v0.9.2)
 
-Les chiffres du §8 deviennent : 20 transactions légitimes, **93 attaques nommées** (les 61 de la
-v0.9 et 32 sur le retrait partiel), **42 sabotages** (les 25 de la v0.9 et 17 sur les règles du
-retrait). Le moteur exécuté est `kaspa-txscript` tel que `cli/Cargo.lock` le fige (2.2.0 ; les
-structures de consensus sont celles de `kaspa-consensus-core` 2.1.0).
+Les chiffres du §8 deviennent : 20 transactions légitimes, **103 attaques nommées** (les 61 de la
+v0.9, 34 sur le retrait partiel, 8 sur les pièces de retour marquées), **41 sabotages**. Le moteur
+exécuté est `kaspa-txscript` tel que `cli/Cargo.lock` le fige (2.2.0 ; les structures de consensus
+sont celles de `kaspa-consensus-core` 2.1.0).
 
 | Test | Ce qu'il vérifie |
 |---|---|
-| `lignee::tests::coffre_a_lignee_legitimes_acceptees_attaques_refusees` | 5 retraits légitimes ; 32 attaques : autre destination, signataire, pièce ajoutée à la lignée (2 formes), lignée déplacée ou perdue, fusion, lots, sortie comptée deux fois, dépôt du sas, frais excessifs, frais trop tôt, verrou désactivé, pièce hors lignée (3 formes), autre lignée |
-| `lignee::tests::chaque_regle_sabotee_est_detectee` | chaque règle du §9.7 retirée ou affaiblie : l'attaque attendue passe, aucune transaction légitime n'est cassée |
-| `lignee::tests::coffre_entier_sous_la_borne` | le fuzzing du coffre entier compte les frais des retraits comme une fuite : toute fenêtre glissante reste sous `k(C + C·D/R)` et sous `C + C·D/R` par emplacement, avec un propriétaire qui retire et une clé volée qui brûle le maximum permis puis tente un sompi de plus ; scissions par retrait refusées ; valeur expliquée au sompi |
+| `lignee::tests::coffre_a_lignee_legitimes_acceptees_attaques_refusees` | 5 retraits légitimes ; attaques : autre destination, signataire, pièce ajoutée à la lignée (2 formes), lignée déplacée ou perdue, fusion, lots, sortie comptée deux fois, dépôt du sas, pièce rognée sous couvert de rechargement, frais excessifs, frais trop tôt, verrou désactivé, pièce hors lignée (3 formes), autre lignée, pièces de retour marquées (8 formes) |
+| `lignee::tests::chaque_regle_sabotee_est_detectee` | chaque règle du §9.7 et du §10 retirée ou affaiblie : l'attaque attendue passe, aucune transaction légitime n'est cassée |
+| `lignee::tests::coffre_entier_sous_la_borne` | le fuzzing du coffre entier compte les frais des retraits comme une fuite : toute fenêtre glissante reste sous `k(C + C·D/R)` et sous `C + C·D/R` par emplacement, avec un propriétaire qui retire et une clé volée qui brûle le maximum permis puis tente un sompi de plus ; scissions par retrait refusées ; gels et retraits marqués d'une lignée neuve refusés ; valeur expliquée au sompi |
 | `lignee::tests::cle_volee_ne_brule_pas_le_coffre_en_frais` | §9.4, avec son témoin |
+| `lignee::tests::w10_piece_de_retour_ordinaire` | §10, avec ses témoins sur les versions archivées |
 | `lignee::tests::transactions_de_l_outil` | `build_retrait_partiel` : accepté, budget de calcul, masse standard, verrou relatif du réseau, refus de l'outil |
-| `lignee::tests::versions_precedentes_archivees_a_l_identique` | source et bytecode v0.9 archivés inchangés ; le corps du source v0.9.1 privé de `ownerWithdraw` est celui de la v0.9, au caractère près |
-| `tests/coeur_tests.rs::retrait_partiel` | les mêmes règles dans le dépôt du compilateur figé |
+| `lignee::tests::versions_precedentes_archivees_a_l_identique` | sources et bytecodes v0.9 et v0.9.1, source du sas v0.2 : archivés inchangés ; `pay` et `absorb` de la v0.9.2 sont ceux de la v0.9 au caractère près ; `recharger` du sas inchangé, `retour` = v0.2 plus une règle |
+| `tests/coeur_tests.rs::retrait_partiel`, `piece_de_retour_sans_lignee`, `tests/sas_tests.rs` | les mêmes règles dans le dépôt du compilateur figé |
 
 **Non vérifié :** tout ce qui demande un nœud, comme au §8. En particulier le relais d'un retrait
 partiel et ses frais réels (donc l'attente réelle) sur testnet-10.
+
+## 10. Une pièce de retour est une pièce ordinaire (cœur v0.9.2, sas v0.2.1)
+
+**Le constat (W10).** Le réseau laisse une entrée ouvrir une lignée **neuve** `Z` sur n'importe
+laquelle des sorties de sa transaction (genèse, N2), et `OpAuthOutputCount` ne compte que les
+continuations (N4). Jusqu'à la v0.9.1, la règle « aucune héritière » du gel n'empêchait donc pas la
+pièce envoyée à l'adresse de retour de naître marquée d'une lignée neuve. Sans effet sur la lignée
+`X` ni sur la borne ; mais l'adresse de retour peut être celle d'une plateforme ou d'un portefeuille
+simple, qui pourrait ne pas afficher une pièce portant un identifiant de covenant (non vérifié).
+
+**La règle.** Partout où une sortie doit aller à l'adresse de retour, le script exige
+`OpOutputCovenantId(sortie) == 0…0` : c'est la valeur que le moteur rend pour une sortie qui ne
+déclare aucune lignée (`txscript/src/opcodes/mod.rs`, `covenant.map(…).unwrap_or(ZERO_HASH)`).
+Trois endroits : `ownerControl` branche gel (sortie `i`), `ownerControl` branche retrait partiel
+(sortie 1), `retour` du sas (sortie `i`).
+
+**Lemme O (pièce ordinaire).** Toute pièce créée à l'adresse de retour par le cœur v0.9.2 ou le sas
+v0.2.1 ne porte aucune lignée.
+*Démonstration.* Les seules sorties que ces scripts envoient à l'adresse de retour sont les trois
+ci-dessus ; chacune vérifie que la sortie ne déclare aucun identifiant ; la pièce créée porte
+l'identifiant déclaré par sa sortie, ou aucun (N1). Un identifiant déclaré vaut-il jamais `0…0` ?
+Une continuation exigerait une entrée portant l'identifiant nul, une genèse un hachage blake2b nul :
+dans les deux cas la règle serait satisfaite par une pièce « marquée zéro », ce qui supposerait une
+préimage de zéro. ∎
+
+**Ce que la règle ne couvre pas, volontairement.**
+- Le **bénéficiaire d'un `pay`**. Ce n'est pas l'adresse de retour : c'est un vendeur choisi par
+  l'agent. Un agent compromis peut déjà payer n'importe qui, dans la limite de la borne ; marquer la
+  pièce d'un vendeur ne lui fait rien gagner et ne coûte rien de plus au propriétaire. Durcir `pay`
+  aurait modifié l'entrée la plus relue du contrat (inchangée depuis la v0.7) pour 36 octets, sans
+  protéger les fonds du propriétaire. Conséquence pour l'outil : un vendeur qui vérifie un paiement
+  doit regarder le montant **et** l'absence de lignée sur la sortie.
+- Les **autres sorties** d'un rechargement (rendu du propriétaire) : elles ne sortent pas du coffre.
+- Les coffres **v0.7 déjà déployés** : leur script ne change pas ; la limite y demeure.
+
+**La règle d'origine reste porteuse.** « Aucune héritière » (`OpAuthOutputCount(i) == 0`) empêche
+toujours qu'une héritière de `X` parte sur une AUTRE sortie pendant un gel ; la nouvelle règle ne
+regarde que la sortie `i`.

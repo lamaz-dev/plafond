@@ -1,6 +1,6 @@
 pragma silverscript ^0.1.0;
 
-// Sas de rechargement v0.2 (27 nov. 2026) — une adresse où l'on dépose de l'argent pour UN coffre.
+// Sas de rechargement v0.2.1 (28 nov. 2026) — une adresse où l'on dépose de l'argent pour UN coffre.
 //
 // Celui qui paie (service d'achat par carte, conservateur, portefeuille) envoie simplement des KAS à
 // l'adresse du sas. Aucune clé ne peut ensuite détourner ce dépôt : il ne peut que
@@ -15,10 +15,14 @@ pragma silverscript ^0.1.0;
 // limite S3 du sas v0.1, contracts/archive/sas-v0.1.sil). Le cœur v0.9 garantit de son côté que la
 // lignée ne gagne jamais de pièce : un dépôt ne peut donc pas ajouter un rythme de dépense.
 //
+// v0.2.1 : un dépôt renvoyé à l'adresse de retour y arrive en pièce ORDINAIRE : la sortie ne déclare
+// aucune lignée, pas même une lignée neuve (limite W10, fermée ; comme le cœur v0.9.2). Le reste est
+// celui de la v0.2 (contracts/archive/sas-v0.2.sil).
+//
 // Preuve : spec/borne-de-perte-v0.9.md. Analyse d'attaque : spec/red-team/lignee-2026-11-27.md.
 
 contract Sas(
-    byte[32] coffreSpkHash, // empreinte blake2b du script du coffre (cœur v0.9) à recharger
+    byte[32] coffreSpkHash, // empreinte blake2b du script du coffre (cœur v0.9.2) à recharger
     byte[32] lignee,        // identifiant de covenant (KIP-20) de la lignée du coffre
     byte[32] retourSpkHash, // empreinte blake2b du script de l'adresse de retour (celle du coffre)
     pubkey ownerKey,        // propriétaire : ne peut que renvoyer le dépôt à l'adresse de retour
@@ -48,5 +52,7 @@ contract Sas(
         require(i < tx.outputs.length);
         require(blake2b(tx.outputs[i].scriptPubKey) == retourSpkHash);
         require(tx.outputs[i].value >= tx.inputs[i].value - maxFrais);
+        // v0.2.1 : une pièce ordinaire, sans aucune lignée (une genèse la marquerait).
+        require(OpOutputCovenantId(i) == byte[32](0x0000000000000000000000000000000000000000000000000000000000000000));
     }
 }

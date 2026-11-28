@@ -1,18 +1,19 @@
-//! Coffre à lignée (cœur v0.9.1, contracts/coeur.sil) et sas de rechargement v0.2 (contracts/sas.sil).
+//! Coffre à lignée (cœur v0.9.2, contracts/coeur.sil) et sas de rechargement v0.2.1 (contracts/sas.sil).
 //!
 //! Le coffre est une LIGNÉE de pièces, suivie par le réseau (identifiant de covenant, KIP-20) :
 //!  - l'identifiant naît à la création du coffre (genèse) ; le réseau le calcule à partir de la pièce
 //!    dépensée et des pièces créées, personne ne peut le choisir ni le recopier sur une autre pièce ;
 //!  - le cœur impose qu'une pièce de la lignée ait au plus une héritière, sa propre sortie :
 //!    le nombre de pièces du coffre ne peut plus jamais augmenter ;
-//!  - v0.9.1 : le propriétaire peut reprendre une partie d'une pièce (`build_retrait_partiel`) ; la
-//!    différence ne va qu'à l'adresse de retour, les frais sont comptés au rythme du contrat ;
+//!  - le propriétaire peut reprendre une partie d'une pièce (`build_retrait_partiel`) ; la différence
+//!    ne va qu'à l'adresse de retour, les frais sont comptés au rythme du contrat ;
+//!  - v0.9.2 : tout ce qui part à l'adresse de retour est une pièce ordinaire, sans aucune lignée ;
 //!  - le sas v0.2 ne verse un dépôt que dans une pièce de cette lignée.
 //! Une pièce envoyée à l'adresse du coffre par un tiers n'est donc ni rechargeable, ni dépensable
 //! par l'agent : la limite S3 du sas v0.1 (src/sas.rs) est fermée par construction.
 //!
 //! Preuve : spec/borne-de-perte-v0.9.md (§9 : retrait partiel) ; analyses d'attaque :
-//! spec/red-team/lignee-2026-11-27.md et spec/red-team/retrait-2026-11-27.md.
+//! spec/red-team/lignee-2026-11-27.md, retrait-2026-11-27.md et coeur-v0.9.2-2026-11-28.md.
 //! Pas encore branché sur les commandes de l'outil : à essayer d'abord sur le testnet.
 #![allow(dead_code)]
 
@@ -26,8 +27,11 @@ use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_wi
 use crate::coeur::Coeur;
 use crate::{FEE, Res, sign, vault_sigscript, vault_spk};
 
-/// Sas v0.2 : lié au coffre par l'empreinte de son script ET par l'identifiant de sa lignée.
+/// Sas v0.2.1 : lié au coffre par l'empreinte de son script ET par l'identifiant de sa lignée ; un
+/// dépôt renvoyé arrive en pièce ordinaire, sans lignée.
 pub const SOURCE: &str = include_str!("../../contracts/sas.sil");
+/// Sas v0.2, archivé à l'identique (sans la règle « pièce ordinaire »). Jamais déployé.
+pub const SOURCE_V02: &str = include_str!("../../contracts/archive/sas-v0.2.sil");
 /// Budgets de calcul déclarés (marge incluse), mesurés par `tests::transactions_de_l_outil`.
 pub const CB_ABSORB: u16 = 2;
 pub const CB_RECHARGER: u16 = 2;
@@ -65,7 +69,7 @@ pub struct Sas {
 impl Sas {
     /// Le sas d'un coffre v0.9 : lié à l'empreinte de son script, à sa lignée et à son adresse de retour.
     pub fn pour(coeur: &Coeur, lignee: Hash, max_frais: i64) -> Res<Sas> {
-        let art = coeur.artifact_v091()?;
+        let art = coeur.artifact_v092()?;
         let retour = coeur.retour.clone().ok_or("le sas exige un coffre avec adresse de retour")?;
         let s = Sas {
             coffre: crate::sequestre::spk_hash(&vault_spk(&art)).to_vec(),
@@ -124,7 +128,7 @@ pub fn build_genese(
     rendu: Option<(u64, ScriptPublicKey)>,
     owner: &Keypair,
 ) -> Res<(Transaction, Hash)> {
-    let art = coeur.artifact_v091()?;
+    let art = coeur.artifact_v092()?;
     if fonds.is_empty() || valeurs.is_empty() || valeurs.len() > PIECES_MAX {
         return Err(format!("un coffre a de 1 à {PIECES_MAX} pièces, et il faut au moins une pièce pour le financer").into());
     }
@@ -165,7 +169,7 @@ pub fn build_pay(
     agent: &Keypair,
     sequence: Option<u64>,
 ) -> Res<Transaction> {
-    let art = c.artifact_v091()?;
+    let art = c.artifact_v092()?;
     let spent = montant.checked_add(frais).filter(|s| *s <= piece.1).ok_or("montant + frais au-delà de la pièce")?;
     if spent as i64 > c.capacite {
         return Err(format!("dépense {spent} au-delà de la capacité {}", c.capacite).into());
@@ -184,7 +188,7 @@ pub fn build_pay(
 /// Rechargement sans clé : [pièce de la lignée, dépôt du sas] -> [pièce regonflée, dans la lignée].
 /// Aucune signature : n'importe qui peut construire et diffuser cette transaction.
 pub fn build_recharger(c: &Coeur, sas: &Sas, piece: (TransactionOutpoint, u64), depot: (TransactionOutpoint, u64), frais: u64) -> Res<Transaction> {
-    let (art_c, art_s) = (c.artifact_v091()?, sas.artifact()?);
+    let (art_c, art_s) = (c.artifact_v092()?, sas.artifact()?);
     if frais as i128 > sas.max_frais as i128 {
         return Err(format!("frais {frais} au-delà du plafond du sas {}", sas.max_frais).into());
     }
@@ -205,7 +209,7 @@ pub fn build_recharger(c: &Coeur, sas: &Sas, piece: (TransactionOutpoint, u64), 
 /// (le contrat l'exige). `pieces` : pièces à l'adresse du coffre, de la lignée ou non (une pièce
 /// envoyée par un tiers se rapatrie de la même façon). `frais` pris sur chaque pièce.
 pub fn build_gel(c: &Coeur, pieces: &[(TransactionOutpoint, u64, Option<Hash>)], retour: &ScriptPublicKey, frais: u64, owner: &Keypair) -> Res<Transaction> {
-    let art = c.artifact_v091()?;
+    let art = c.artifact_v092()?;
     if c.retour.as_deref() != Some(crate::sequestre::spk_hash(retour).as_slice()) {
         return Err("ce n'est pas l'adresse de retour du coffre".into());
     }
@@ -225,9 +229,9 @@ pub fn build_gel(c: &Coeur, pieces: &[(TransactionOutpoint, u64, Option<Hash>)],
     Ok(tx)
 }
 
-/// Retrait partiel par le propriétaire (cœur v0.9.1, entrée `ownerWithdraw`) : `montant` part à
-/// l'adresse de retour (sortie 0, hors lignée) ; le reste, moins les frais, revient au coffre
-/// (sortie 1, seule héritière, dans la lignée). Une seule pièce par transaction : le contrat
+/// Retrait partiel par le propriétaire (cœur v0.9.2, `ownerControl`) : le reste, moins les frais,
+/// revient au coffre (sortie 0, seule héritière, dans la lignée) ; `montant` part à l'adresse de
+/// retour (sortie 1, pièce ordinaire). Une seule pièce par transaction : le contrat
 /// l'exige. Les frais sont pris sur la pièce et comptés au rythme du contrat : la pièce doit avoir
 /// attendu `attente(frais)` ; `sequence` = ce délai, sauf valeur forcée.
 /// Pour tout reprendre, c'est `build_gel` (la pièce quitte la lignée).
@@ -242,7 +246,7 @@ pub fn build_retrait_partiel(
     owner: &Keypair,
     sequence: Option<u64>,
 ) -> Res<Transaction> {
-    let art = c.artifact_v091()?;
+    let art = c.artifact_v092()?;
     if c.retour.as_deref() != Some(crate::sequestre::spk_hash(retour).as_slice()) {
         return Err("ce n'est pas l'adresse de retour du coffre".into());
     }
@@ -255,11 +259,11 @@ pub fn build_retrait_partiel(
     }
     let m = vault_spk(&art);
     let input = TransactionInput::new_with_compute_budget(piece.0, vec![], sequence.unwrap_or_else(|| c.attente(frais as i64)), CB_RETRAIT);
-    let outputs = vec![TransactionOutput::new(montant, retour.clone()), sortie_liee(piece.1 - sorti, m.clone(), lignee, 0)];
+    let outputs = vec![sortie_liee(piece.1 - sorti, m.clone(), lignee, 0), TransactionOutput::new(montant, retour.clone())];
     let mut tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
     let entree = UtxoEntry::new(piece.1, m, 0, false, Some(lignee));
     let s = sign(&tx, std::slice::from_ref(&entree), 0, owner);
-    tx.inputs[0].signature_script = vault_sigscript(&art, "ownerWithdraw", &[s.into()])?;
+    tx.inputs[0].signature_script = vault_sigscript(&art, "ownerControl", &[s.into()])?;
     tx.finalize();
     Ok(tx)
 }
@@ -362,7 +366,7 @@ mod tests {
         }
     }
     fn vrai() -> Banc {
-        banc(crate::coeur::SOURCE_V091, SOURCE)
+        banc(crate::coeur::SOURCE_V092, SOURCE)
     }
 
     /// Une entrée d'une transaction d'essai : une pièce, la lignée qu'elle porte, et qui la dépense.
@@ -534,21 +538,22 @@ mod tests {
             ("rechargement par le propriétaire (dans la lignée)", monter(&[ctrl.clone(), tiers(1, 2 * C)], &[l(V + C, &m), o(C - FR, &p2pk(1))], 0)),
             ("poussière d'un tiers (sans lignée) rapatriée par le propriétaire", monter(&[sg(&b.coffre, P, "ownerControl", 1)], &[o(P - FR, &rt)], 0)),
             ("pièce d'une autre lignée rapatriée par le propriétaire", monter(&[sg(&b.coffre, P, "ownerControl", 1).dans(y_id())], &[o(P - FR, &rt)], 0)),
-            // ---- retrait partiel (v0.9.1) : frais au rythme du contrat (verrou = attente des frais)
-            ("retrait partiel par le propriétaire", monter(&[retrait(b)], &[o(V / 2, &rt), l(V / 2 - FR, &m)], attente_frais(FR))),
-            ("retrait partiel : presque tout repris", monter(&[retrait(b)], &[o(V - FR - 1_000, &rt), l(1_000, &m)], attente_frais(FR))),
-            ("retrait partiel : frais à la capacité exacte, après une période entière", monter(&[retrait(b)], &[o(V / 2, &rt), l(V / 2 - C, &m)], R)),
-            ("retrait partiel sans frais, sans attente", monter(&[retrait(b)], &[o(V / 2, &rt), l(V / 2, &m)], 0)),
+            // ---- retrait partiel : sortie 0 = le reste (lignée), sortie 1 = adresse de retour ; frais
+            // au rythme du contrat (verrou = attente des frais)
+            ("retrait partiel par le propriétaire", monter(&[retrait(b)], &[l(V / 2 - FR, &m), o(V / 2, &rt)], attente_frais(FR))),
+            ("retrait partiel : presque tout repris", monter(&[retrait(b)], &[l(1_000, &m), o(V - FR - 1_000, &rt)], attente_frais(FR))),
+            ("retrait partiel : frais à la capacité exacte, après une période entière", monter(&[retrait(b)], &[l(V / 2 - C, &m), o(V / 2, &rt)], R)),
+            ("retrait partiel sans frais, sans attente", monter(&[retrait(b)], &[l(V / 2, &m), o(V / 2, &rt)], 0)),
             (
                 "retrait partiel d'une pièce d'une autre lignée (don d'un tiers), dans sa lignée",
-                monter(&[sg(&b.coffre, V, "ownerWithdraw", 1).dans(y_id())], &[o(V / 2, &rt), la(V / 2 - FR, &m, y_id(), 0)], attente_frais(FR)),
+                monter(&[sg(&b.coffre, V, "ownerControl", 1).dans(y_id())], &[la(V / 2 - FR, &m, y_id(), 0), o(V / 2, &rt)], attente_frais(FR)),
             ),
         ]
     }
 
     /// La pièce du coffre dépensée par un retrait partiel signé du propriétaire (clé 1).
     fn retrait(b: &Banc) -> In<'_> {
-        sg(&b.coffre, V, "ownerWithdraw", 1).dans(x_id())
+        sg(&b.coffre, V, "ownerControl", 1).dans(x_id())
     }
     /// Délai exigé par le contrat pour prendre `frais` sur une pièce (même règle que `pay`).
     fn attente_frais(frais: u64) -> u64 {
@@ -642,48 +647,61 @@ mod tests {
             ("dépôt versé par la clé du propriétaire, pièce sortie de la lignée", monter(&[ctrl.clone(), depot.clone()], &[o(V + D - FR, &m)], 0)),
             ("dépôt versé dans une lignée neuve (genèse autorisée par le dépôt)", monter(&[absorb.clone(), depot.clone()], &[genese(0, V + D - FR, &m, 1)], 0)),
             ("gel du coffre avec le dépôt : dépôt fusionné vers l'adresse de retour, sans l'entrée retour", monter(&[ctrl.clone(), sc(&b.sas, D, "recharger")], &[o(V + D - FR, &rt)], 0)),
-            // ------------------------------------------------------------ retrait partiel (v0.9.1)
-            // Verrou large (2 périodes) partout où le rythme n'est pas le sujet : seule la règle visée refuse.
+            // ------------------------------------------------------------ retrait partiel (v0.9.1, branche de ownerControl en v0.9.2)
+            // Sortie 0 = le reste, sortie 1 = la part reprise. Verrou large (2 périodes) partout où le
+            // rythme n'est pas le sujet : seule la règle visée refuse.
             // Destination : l'adresse de retour, rien d'autre.
-            ("retrait partiel vers une autre adresse", monter(&[w.clone()], &[o(V / 2, &x), l(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel vers le coffre, hors lignée (pièce de plus à l'adresse)", monter(&[w.clone()], &[o(V / 2, &m), l(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel : sorties inversées", monter(&[w.clone()], &[la(V / 2 - FR, &m, x_id(), 0), o(V / 2, &rt)], 2 * R)),
-            ("retrait partiel : le reste vers un autre coffre", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - FR, &vault_spk(&b.autre))], 2 * R)),
-            ("retrait partiel : le reste vers un tiers", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - FR, &x)], 2 * R)),
+            ("retrait partiel vers une autre adresse", monter(&[w.clone()], &[l(V / 2 - FR, &m), o(V / 2, &x)], 2 * R)),
+            ("retrait partiel vers le coffre, hors lignée (pièce de plus à l'adresse)", monter(&[w.clone()], &[l(V / 2 - FR, &m), o(V / 2, &m)], 2 * R)),
+            ("retrait partiel : sorties inversées", monter(&[w.clone()], &[o(V / 2, &rt), la(V / 2 - FR, &m, x_id(), 0)], 2 * R)),
+            ("retrait partiel : le reste vers un autre coffre", monter(&[w.clone()], &[l(V / 2 - FR, &vault_spk(&b.autre)), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel : le reste vers un tiers", monter(&[w.clone()], &[l(V / 2 - FR, &x), o(V / 2, &rt)], 2 * R)),
             // Signature : le propriétaire seulement.
-            ("retrait partiel signé par l'agent", monter(&[sg(&b.coffre, V, "ownerWithdraw", 2).dans(x_id())], &[o(V / 2, &rt), l(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel signé par un tiers", monter(&[sg(&b.coffre, V, "ownerWithdraw", 10).dans(x_id())], &[o(V / 2, &rt), l(V / 2 - FR, &m)], 2 * R)),
+            ("retrait partiel signé par l'agent", monter(&[sg(&b.coffre, V, "ownerControl", 2).dans(x_id())], &[l(V / 2 - FR, &m), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel signé par un tiers", monter(&[sg(&b.coffre, V, "ownerControl", 10).dans(x_id())], &[l(V / 2 - FR, &m), o(V / 2, &rt)], 2 * R)),
             // Lignée : aucune pièce ajoutée, la lignée ne quitte pas le coffre.
-            ("retrait partiel qui ajoute une pièce à la lignée (la sortie de retrait rattachée)", monter(&[w.clone()], &[l(V / 2, &rt), l(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel : la lignée part à l'adresse de retour", monter(&[w.clone()], &[l(V / 2, &rt), o(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel : le reste sort de la lignée", monter(&[w.clone()], &[o(V / 2, &rt), o(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel qui ajoute une pièce à la lignée (troisième sortie au coffre)", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 4, &m), l(V / 4 - FR, &m)], 2 * R)),
-            ("retrait partiel : le reste rebaptisé dans une lignée neuve", monter(&[w.clone()], &[o(V / 2, &rt), genese(1, V / 2 - FR, &m, 0)], 2 * R)),
+            ("retrait partiel qui ajoute une pièce à la lignée (la part reprise rattachée)", monter(&[w.clone()], &[l(V / 2 - FR, &m), l(V / 2, &rt)], 2 * R)),
+            ("retrait partiel : la lignée part à l'adresse de retour", monter(&[w.clone()], &[o(V / 2 - FR, &m), l(V / 2, &rt)], 2 * R)),
+            ("retrait partiel : le reste sort de la lignée", monter(&[w.clone()], &[o(V / 2 - FR, &m), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel qui ajoute une pièce à la lignée (troisième sortie au coffre)", monter(&[w.clone()], &[l(V / 4, &m), o(V / 2, &rt), l(V / 4 - FR, &m)], 2 * R)),
+            ("retrait partiel : le reste rebaptisé dans une lignée neuve", monter(&[w.clone()], &[genese(0, V / 2 - FR, &m, 0), o(V / 2, &rt)], 2 * R)),
             // Une entrée, deux sorties : pas de fusion, pas de tiers, pas de sortie comptée deux fois.
-            ("retrait partiel : frais détournés vers un tiers (troisième sortie)", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - C, &m), o(C - FR, &x)], 2 * R)),
-            ("retrait partiel qui fusionne deux pièces", monter(&[w.clone(), w.clone()], &[o(V, &rt), l(V - FR, &m)], 2 * R)),
-            ("retrait partiel de deux pièces, chacune son reste", monter(&[w.clone(), w.clone()], &[o(V, &rt), l(V / 2, &m), la(V / 2 - FR, &m, x_id(), 1)], 2 * R)),
-            ("retrait partiel et gel ensemble : la sortie de retour comptée deux fois, une pièce brûlée", monter(&[ctrl.clone(), w.clone()], &[o(V - FR, &rt), la(FR, &m, x_id(), 1)], 2 * R)),
-            ("retrait partiel et gel ensemble : le surplus vers un tiers", monter(&[ctrl.clone(), w.clone()], &[o(V - FR, &rt), la(FR, &m, x_id(), 1), o(V - FR, &x)], 2 * R)),
-            ("retrait partiel avec un dépôt du sas", monter(&[w.clone(), depot.clone()], &[o(V / 2, &rt), l(V / 2 + D - FR, &m)], 2 * R)),
-            ("retrait partiel et retour d'un dépôt sur la même sortie", monter(&[w.clone(), sg(&b.sas, D, "retour", 1)], &[o(V / 2, &rt), o(D - FR, &rt)], 2 * R)),
-            ("retrait partiel financé par un tiers (seconde entrée)", monter(&[w.clone(), tiers(10, C)], &[o(V / 2, &rt), l(V / 2, &m)], 2 * R)),
+            ("retrait partiel : frais détournés vers un tiers (troisième sortie)", monter(&[w.clone()], &[l(V / 2 - C, &m), o(V / 2, &rt), o(C - FR, &x)], 2 * R)),
+            ("retrait partiel qui fusionne deux pièces", monter(&[w.clone(), w.clone()], &[l(V - FR, &m), o(V, &rt)], 2 * R)),
+            ("retrait partiel de deux pièces, chacune son reste", monter(&[w.clone(), w.clone()], &[l(V / 2, &m), la(V / 2 - FR, &m, x_id(), 1), o(V, &rt)], 2 * R)),
+            ("retrait partiel et gel ensemble : la sortie de retour comptée deux fois, une pièce brûlée", monter(&[w.clone(), ctrl.clone()], &[l(FR, &m), o(V - FR, &rt)], 2 * R)),
+            ("retrait partiel et gel ensemble : le surplus vers un tiers", monter(&[w.clone(), ctrl.clone()], &[l(FR, &m), o(V - FR, &rt), o(V - FR, &x)], 2 * R)),
+            ("retrait partiel avec un dépôt du sas", monter(&[w.clone(), depot.clone()], &[l(V / 2 + D - FR, &m), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel avec un dépôt du sas, une seule sortie", monter(&[w.clone(), depot.clone()], &[l(V - 1, &m)], 2 * R)),
+            ("retrait partiel et retour d'un dépôt sur la même sortie", monter(&[w.clone(), sg(&b.sas, D, "retour", 1)], &[l(V / 2 - FR, &m), o(D - FR, &rt)], 2 * R)),
+            ("retrait partiel financé par un tiers (seconde entrée)", monter(&[w.clone(), tiers(10, C)], &[l(V / 2, &m), o(V / 2, &rt)], 2 * R)),
+            ("pièce du coffre rognée sous couvert de rechargement (seconde entrée, un sompi de moins)", monter(&[w.clone(), tiers(10, C)], &[l(V - 1, &m), o(C, &x)], 2 * R)),
+            ("retrait partiel sans sortie de retour (pièce rognée, une seule sortie)", monter(&[w.clone()], &[l(V - FR, &m)], 2 * R)),
             // Frais : bornés par la capacité ET par le rythme.
-            ("retrait partiel : frais excessifs (un sompi au-delà de la capacité)", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - C - 1, &m)], 2 * R)),
-            ("retrait partiel : pièce brûlée en frais", monter(&[w.clone()], &[o(1_000, &rt), l(1_000, &m)], 2 * R)),
-            ("retrait partiel : frais pris sans attendre", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - FR, &m)], 0)),
+            ("retrait partiel : frais excessifs (un sompi au-delà de la capacité)", monter(&[w.clone()], &[l(V / 2 - C - 1, &m), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel : pièce brûlée en frais", monter(&[w.clone()], &[l(1_000, &m), o(1_000, &rt)], 2 * R)),
+            ("retrait partiel : frais pris sans attendre", monter(&[w.clone()], &[l(V / 2 - FR, &m), o(V / 2, &rt)], 0)),
             // Frais non multiples du pas : l'arrondi par excès du délai compte (FR + 1 exige un cran de plus que FR).
-            ("retrait partiel : frais un cran plus vite que le rythme", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - FR - 1, &m)], attente_frais(FR + 1) - 1)),
-            ("retrait partiel : frais à la capacité un cran avant la période", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - C, &m)], R - 1)),
-            ("retrait partiel : verrou relatif désactivé", monter(&[w.clone()], &[o(V / 2, &rt), l(V / 2 - FR, &m)], SEQUENCE_LOCK_TIME_DISABLED | (2 * R))),
-            // Pièce hors lignée : elle ne se retire qu'en entier (ownerControl).
-            ("retrait partiel sur une pièce hors lignée", monter(&[sg(&b.coffre, V, "ownerWithdraw", 1)], &[o(V / 2, &rt), o(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel sur une pièce hors lignée, lignée du coffre déclarée", monter(&[sg(&b.coffre, V, "ownerWithdraw", 1)], &[o(V / 2, &rt), l(V / 2 - FR, &m)], 2 * R)),
-            ("retrait partiel sur une pièce hors lignée, adoptée par une genèse", monter(&[sg(&b.coffre, V, "ownerWithdraw", 1)], &[o(V / 2, &rt), genese(1, V / 2 - FR, &m, 0)], 2 * R)),
-            ("retrait partiel d'une autre lignée rebaptisée dans celle du coffre", monter(&[sg(&b.coffre, V, "ownerWithdraw", 1).dans(y_id())], &[o(V / 2, &rt), l(V / 2 - FR, &m)], 2 * R)),
-            // L'agent ne détourne pas la forme du retrait, et le propriétaire ne paie pas un tiers par `pay`.
-            ("l'agent paie l'adresse de retour par l'entrée du retrait", monter(&[sg(&b.coffre, V, "ownerWithdraw", 2).dans(x_id())], &[o(C - FR, &rt), l(V - C, &m)], 2 * R)),
+            ("retrait partiel : frais un cran plus vite que le rythme", monter(&[w.clone()], &[l(V / 2 - FR - 1, &m), o(V / 2, &rt)], attente_frais(FR + 1) - 1)),
+            ("retrait partiel : frais à la capacité un cran avant la période", monter(&[w.clone()], &[l(V / 2 - C, &m), o(V / 2, &rt)], R - 1)),
+            ("retrait partiel : verrou relatif désactivé", monter(&[w.clone()], &[l(V / 2 - FR, &m), o(V / 2, &rt)], SEQUENCE_LOCK_TIME_DISABLED | (2 * R))),
+            // Pièce hors lignée : elle ne se retire qu'en entier (gel).
+            ("retrait partiel sur une pièce hors lignée", monter(&[sg(&b.coffre, V, "ownerControl", 1)], &[o(V / 2 - FR, &m), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel sur une pièce hors lignée, lignée du coffre déclarée", monter(&[sg(&b.coffre, V, "ownerControl", 1)], &[l(V / 2 - FR, &m), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel sur une pièce hors lignée, adoptée par une genèse", monter(&[sg(&b.coffre, V, "ownerControl", 1)], &[genese(0, V / 2 - FR, &m, 0), o(V / 2, &rt)], 2 * R)),
+            ("retrait partiel d'une autre lignée rebaptisée dans celle du coffre", monter(&[sg(&b.coffre, V, "ownerControl", 1).dans(y_id())], &[l(V / 2 - FR, &m), o(V / 2, &rt)], 2 * R)),
+            // Le propriétaire ne paie pas un tiers par `pay`.
             ("clé du propriétaire dans l'entrée de paiement", monter(&[sg(&b.coffre, V, "pay", 1).dans(x_id())], &[o(C - FR, &x), la(V - C, &m, x_id(), 0)], 2 * R)),
+            // ------------------------------------------------------------ W10 : pièce de retour marquée d'une lignée neuve (v0.9.2)
+            // Une genèse ne compte pas parmi les héritières : il faut une règle à part.
+            ("gel : la pièce de retour naît dans une lignée neuve (genèse)", monter(&[ctrl.clone()], &[genese(0, V - FR, &rt, 0)], 0)),
+            ("gel de deux pièces : la seconde naît dans une lignée neuve", monter(&[ctrl.clone(), ctrl.clone()], &[o(V - FR, &rt), genese(1, V - FR, &rt, 1)], 0)),
+            ("gel : genèse autorisée par une autre entrée (un tiers)", monter(&[ctrl.clone(), tiers(10, C)], &[genese(0, V - FR, &rt, 1), o(C, &x)], 0)),
+            ("gel d'une poussière sans lignée : la pièce de retour naît dans une lignée neuve", monter(&[sg(&b.coffre, P, "ownerControl", 1)], &[genese(0, P - FR, &rt, 0)], 0)),
+            ("retrait partiel : la part reprise naît dans une lignée neuve (genèse)", monter(&[w.clone()], &[l(V / 2 - FR, &m), genese(1, V / 2, &rt, 0)], 2 * R)),
+            ("retour d'un dépôt dans une lignée neuve (genèse)", monter(&[sg(&b.sas, D, "retour", 1)], &[genese(0, D - FR, &rt, 0)], 0)),
+            ("gel et retour ensemble : le dépôt renvoyé naît dans une lignée neuve", monter(&[ctrl.clone(), sg(&b.sas, D, "retour", 1)], &[o(V - FR, &rt), genese(1, D - FR, &rt, 1)], 0)),
+            ("gel et retour ensemble : la lignée du coffre déplacée sur le dépôt renvoyé", monter(&[ctrl.clone(), sg(&b.sas, D, "retour", 1)], &[o(V - FR, &rt), l(D - FR, &rt)], 0)),
         ]
     }
 
@@ -710,24 +728,18 @@ mod tests {
     /// aussi que la liste d'attaques sait voir cette règle.
     #[test]
     fn chaque_regle_sabotee_est_detectee() {
-        let (coeur, sas) = (crate::coeur::SOURCE_V091, SOURCE);
+        let (coeur, sas) = (crate::coeur::SOURCE_V092, SOURCE);
         const PAY: &str = "require(OpAuthOutputCount(this.activeInputIndex) == 1 && OpAuthOutputIdx(this.activeInputIndex, 0) == 1);";
         const HERITIERE: &str = "require(OpAuthOutputCount(i) == 1 && OpAuthOutputIdx(i, 0) == i);";
         const ABSORB_VALEUR: &str = "require(tx.outputs[i].value >= tx.inputs[i].value + capacity);\n";
-        const CTRL_VALEUR: &str = "require(tx.outputs[i].value >= valeur);\n";
-        // Règles de `ownerWithdraw`. Trois d'entre elles ont le même texte qu'une règle de `pay` ou
-        // de `ownerControl` : on les désigne avec la ligne qui les suit ou les précède.
-        const W_SIG: &str = "require(checkSig(ownerSig, ownerKey));\n\n        // Mêmes gardes que `pay`";
-        const W_SIG_SANS: &str = "// Mêmes gardes que `pay`";
-        const W_GARDE: &str = "calcul ne déborde pas.\n        require(period < 4294967296 && capacity <= 9223372036854775807 / period);";
-        const W_FORME: &str = "require(tx.inputs.length == 1 && tx.outputs.length == 2);\n\n        int j = this.activeInputIndex;";
-        const W_LIGNEE: &str = "require(OpAuthOutputCount(j) == 1 && OpAuthOutputIdx(j, 0) == 1);";
-        const W_RYTHME: &str = "require(this.ageDaa >= (frais * period + capacity - 1) / capacity);\n    }\n}";
-        const W_FIN: &str = "\n    }\n}";
-        // (contrat saboté : 0 = sas, 1 = cœur ; texte à trouver ; remplacement ; attaque qui doit passer)
-        // Les deux règles « héritière » du cœur ont le même texte : on les distingue par la ligne
-        // qui les précède (ownerControl : `>= valeur` ; absorb : `+ capacity`).
-        let ctrl = format!("{CTRL_VALEUR}            // Lignée (v0.9) : une seule héritière, cette sortie. Aucune pièce ajoutée à la lignée.\n            {HERITIERE}");
+        // Les deux règles « héritière » du cœur (ownerControl, absorb) ont le même texte : on les
+        // distingue par la ligne qui les précède.
+        const CTRL_AVANT: &str = "            // pièce ajoutée à la lignée.\n            ";
+        const AUCUNE: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
+        const W_GARDE: &str = "calcul ne déborde pas.\n                require(period < 4294967296 && capacity <= 9223372036854775807 / period);";
+        const W_FORME: &str = "require(tx.inputs.length == 1 && tx.outputs.length == 2);\n                require(blake2b(";
+        const W_RYTHME: &str = "require(this.ageDaa >= (frais * period + capacity - 1) / capacity);";
+        let ctrl = format!("{CTRL_AVANT}{HERITIERE}");
         let absorb = format!("{ABSORB_VALEUR}        // Lignée (v0.9) : une seule héritière, cette sortie. Une pièce hors lignée ne se regonfle pas.\n        {HERITIERE}");
         let sabotages: Vec<(u8, String, String, Option<&str>)> = vec![
             // ---- règles de la v0.8, toujours porteuses
@@ -763,36 +775,42 @@ mod tests {
             (1, absorb.clone(), format!("{ABSORB_VALEUR}require(OpAuthOutputCount(i) == 1);"), Some("regonflement sans clé : la lignée part sur une autre sortie")),
             (1, absorb.clone(), format!("{ABSORB_VALEUR}require(OpAuthOutputIdx(i, 0) == i);"), Some("scission sans clé : pièce de la lignée vers un tiers")),
             // ownerControl sans lignée : une clé de propriétaire volée multiplie les pièces du coffre.
-            (1, ctrl.clone(), CTRL_VALEUR.into(), Some("clé du propriétaire : seconde pièce dans la lignée")),
-            (1, ctrl.clone(), format!("{CTRL_VALEUR}require(OpAuthOutputCount(i) == 1);"), Some("clé du propriétaire : la lignée part sur une autre sortie")),
-            (1, ctrl.clone(), format!("{CTRL_VALEUR}require(OpAuthOutputIdx(i, 0) == i);"), Some("clé du propriétaire : pièce de la lignée vers un tiers")),
+            (1, ctrl.clone(), CTRL_AVANT.into(), Some("clé du propriétaire : seconde pièce dans la lignée")),
+            (1, ctrl.clone(), format!("{CTRL_AVANT}require(OpAuthOutputCount(i) == 1);"), Some("clé du propriétaire : la lignée part sur une autre sortie")),
+            (1, ctrl.clone(), format!("{CTRL_AVANT}require(OpAuthOutputIdx(i, 0) == i);"), Some("clé du propriétaire : pièce de la lignée vers un tiers")),
             (1, "require(OpAuthOutputCount(i) == 0);".into(), "".into(), Some("gel : une héritière de la lignée reste au coffre")),
-            (1, "require(OpAuthOutputCount(i) == 0);".into(), "".into(), Some("gel : la lignée suit la pièce à l'adresse de retour")),
-            // ---- retrait partiel (v0.9.1, entrée ownerWithdraw) : chaque règle, une par une
-            (1, W_SIG.into(), W_SIG_SANS.into(), Some("retrait partiel signé par l'agent")),
-            (1, W_SIG.into(), W_SIG_SANS.into(), Some("l'agent paie l'adresse de retour par l'entrée du retrait")),
+            // (« la lignée suit la pièce à l'adresse de retour » est maintenant refusée deux fois : par
+            // cette règle et par « aucune lignée sur la pièce de retour », v0.9.2.)
+            (1, "require(OpAuthOutputCount(i) == 0);".into(), "".into(), Some("gel : une héritière de la lignée part chez un tiers")),
+            // ---- retrait partiel (branche de ownerControl) : chaque règle, une par une
+            (1, "require(checkSig(ownerSig, ownerKey));".into(), "".into(), Some("retrait partiel signé par l'agent")),
+            // La même règle d'héritière sert au rechargement et au retrait.
+            // (« la part reprise rattachée à la lignée » est refusée deux fois : une seule héritière,
+            // et aucune lignée sur la part reprise.)
+            (1, ctrl.clone(), CTRL_AVANT.into(), Some("retrait partiel : le reste sort de la lignée")),
+            (1, ctrl.clone(), CTRL_AVANT.into(), Some("retrait partiel sur une pièce hors lignée")),
+            // L'aiguillage : sans lui, une pièce qui revient plus petite passe pour un rechargement.
+            (1, "if (tx.outputs[i].value < valeur) {".into(), "if (tx.outputs[i].value < valeur - capacity) {".into(), Some("pièce du coffre rognée sous couvert de rechargement (seconde entrée, un sompi de moins)")),
             // Une entrée : sinon le gel d'une autre pièce et le retrait se partagent la sortie de retour.
             (1, W_FORME.into(), W_FORME.replace("tx.inputs.length == 1 && ", ""), Some("retrait partiel et gel ensemble : la sortie de retour comptée deux fois, une pièce brûlée")),
             // Deux sorties : sinon les « frais » partent chez un tiers, au rythme du contrat.
             (1, W_FORME.into(), W_FORME.replace(" && tx.outputs.length == 2", ""), Some("retrait partiel : frais détournés vers un tiers (troisième sortie)")),
             (1, W_FORME.into(), W_FORME.replace("tx.inputs.length == 1 && tx.outputs.length == 2", "true"), Some("retrait partiel et gel ensemble : le surplus vers un tiers")),
-            (1, "require(blake2b(tx.outputs[0].scriptPubKey) == retourSpkHash); // le retrait : adresse de retour".into(), "".into(), Some("retrait partiel vers une autre adresse")),
-            (1, "require(tx.outputs[1].scriptPubKey == tx.inputs[j].scriptPubKey); // le reste revient au coffre".into(), "".into(), Some("retrait partiel : le reste vers un autre coffre")),
-            (1, W_LIGNEE.into(), "".into(), Some("retrait partiel qui ajoute une pièce à la lignée (la sortie de retrait rattachée)")),
-            (1, W_LIGNEE.into(), "".into(), Some("retrait partiel : le reste sort de la lignée")),
-            (1, W_LIGNEE.into(), "".into(), Some("retrait partiel sur une pièce hors lignée")),
-            (1, W_LIGNEE.into(), "require(OpAuthOutputCount(j) == 1);".into(), Some("retrait partiel : la lignée part à l'adresse de retour")),
-            // Non porteuse, comme dans `pay` : avec exactement deux sorties, « la première héritière
-            // est la sortie 1 » implique « une seule ». Gardée pour se lire seule (R63).
-            (1, W_LIGNEE.into(), "require(OpAuthOutputIdx(j, 0) == 1);".into(), None),
+            (1, "require(blake2b(tx.outputs[1].scriptPubKey) == retourSpkHash);".into(), "".into(), Some("retrait partiel vers une autre adresse")),
             (1, "require(frais <= capacity);".into(), "".into(), Some("retrait partiel : frais excessifs (un sompi au-delà de la capacité)")),
-            (1, W_RYTHME.into(), W_FIN.into(), Some("retrait partiel : frais pris sans attendre")),
-            (1, W_RYTHME.into(), W_FIN.into(), Some("retrait partiel : verrou relatif désactivé")),
+            (1, W_RYTHME.into(), "".into(), Some("retrait partiel : frais pris sans attendre")),
+            (1, W_RYTHME.into(), "".into(), Some("retrait partiel : verrou relatif désactivé")),
             // Affaiblie d'un cran : l'arrondi par défaut laisse passer un retrait un cran trop tôt.
-            (1, W_RYTHME.into(), format!("require(this.ageDaa >= (frais * period) / capacity);{W_FIN}"), Some("retrait partiel : frais un cran plus vite que le rythme")),
+            (1, W_RYTHME.into(), "require(this.ageDaa >= (frais * period) / capacity);".into(), Some("retrait partiel : frais un cran plus vite que le rythme")),
             // Garde de débordement, doublée par le compilateur (délai ∈ [0, 2^32) avant le verrou) :
             // non porteuse avec des réglages sains, gardée comme dans `pay`.
             (1, W_GARDE.into(), "".into(), None),
+            // ---- W10 (v0.9.2, sas v0.2.1) : la pièce de retour ne déclare aucune lignée
+            (1, "require(OpOutputCovenantId(i) == aucune);".into(), "".into(), Some("gel : la pièce de retour naît dans une lignée neuve (genèse)")),
+            (1, "require(OpOutputCovenantId(1) == aucune);".into(), "".into(), Some("retrait partiel : la part reprise naît dans une lignée neuve (genèse)")),
+            (0, format!("require(OpOutputCovenantId(i) == byte[32]({AUCUNE}));"), "".into(), Some("retour d'un dépôt dans une lignée neuve (genèse)")),
+            // La constante elle-même : toute autre valeur que l'identifiant nul bloquerait le gel
+            // (aucune transaction légitime ne passerait), ce que la boucle ci-dessous refuserait.
         ];
         for (lequel, texte, remplacement, attendue) in &sabotages {
             let source = if *lequel == 0 { sas } else { coeur };
@@ -896,7 +914,7 @@ mod tests {
     #[test]
     fn transactions_de_l_outil() {
         let c = coeur_avec(2, C as i64);
-        let (art_c, m, rt) = (c.artifact_v091().unwrap(), vault_spk(&c.artifact_v091().unwrap()), p2pk(11));
+        let (art_c, m, rt) = (c.artifact_v092().unwrap(), vault_spk(&c.artifact_v092().unwrap()), p2pk(11));
         let op = |i: u32| TransactionOutpoint::new(TransactionId::from_bytes([9; 32]), i);
         // Genèse : trois pièces, une lignée, la monnaie du propriétaire hors lignée.
         let fonds = [(op(0), UtxoEntry::new(4 * V, p2pk(1), 500, false, None))];
@@ -978,9 +996,9 @@ mod tests {
         let u_rp = script_entree(&rp, std::slice::from_ref(&piece), 0).expect("retrait partiel accepté");
         assert!(u_rp <= CB_RETRAIT as u64, "budget du retrait partiel : {u_rp}");
         assert_eq!((rp.inputs.len(), rp.outputs.len()), (1, 2));
-        assert_eq!((rp.outputs[0].value, &rp.outputs[0].script_public_key, rp.outputs[0].covenant), (100_000_000, &rt, None));
-        assert_eq!((rp.outputs[1].value, &rp.outputs[1].script_public_key), (V - 100_000_000 - FEE, &m));
-        assert_eq!(rp.outputs[1].covenant.map(|b| (b.covenant_id, b.authorizing_input)), Some((lignee, 0)));
+        assert_eq!((rp.outputs[1].value, &rp.outputs[1].script_public_key, rp.outputs[1].covenant), (100_000_000, &rt, None));
+        assert_eq!((rp.outputs[0].value, &rp.outputs[0].script_public_key), (V - 100_000_000 - FEE, &m));
+        assert_eq!(rp.outputs[0].covenant.map(|b| (b.covenant_id, b.authorizing_input)), Some((lignee, 0)));
         // Le réseau fait attendre les frais : ceil(frais × R / C) unités après la création de la pièce.
         let delai = c.attente(FEE as i64);
         assert_eq!(rp.inputs[0].sequence, delai);
@@ -1011,13 +1029,14 @@ mod tests {
         assert!(build_retour(&sas, &[(op(2), D)], &p2pk(10), FRAIS_RECHARGE, &k(1)).is_err(), "l'outil refuse une autre adresse");
 
         // Pour la lecture opcode par opcode (spec/coeur-bytecode.md) : bytecode de référence en hexadécimal.
-        if let Ok(f) = std::env::var("PLAFOND_EXPORT_BYTECODE_V091") {
+        if let Ok(f) = std::env::var("PLAFOND_EXPORT_BYTECODE_V092") {
             let r = Coeur { owner: crate::xonly(&k(1)), agent: crate::xonly(&k(2)), capacite: crate::CAPACITY, periode: crate::JOUR_DAA, retour: Some(empreinte(&p2pk(1))) };
-            std::fs::write(f, hex::encode(crate::bytecode(&r.artifact_v091().unwrap()))).unwrap();
+            std::fs::write(f, hex::encode(crate::bytecode(&r.artifact_v092().unwrap()))).unwrap();
         }
         eprintln!(
-            "cœur v0.9.1 : {} octets (v0.9 : {}, v0.8 : {}, v0.7 : {}) ; sas v0.2 : {} octets ; pay = {u_pay} unité(s), absorb = {u0}, recharger = {u1}",
+            "cœur v0.9.2 : {} octets (v0.9.1 : {}, v0.9 : {}, v0.8 : {}, v0.7 : {}) ; sas v0.2.1 : {} octets ; pay = {u_pay} unité(s), absorb = {u0}, recharger = {u1}",
             crate::bytecode(&art_c).len(),
+            crate::bytecode(&c.artifact_v091().unwrap()).len(),
             crate::bytecode(&c.artifact_v09().unwrap()).len(),
             crate::bytecode(&c.artifact_v08().unwrap()).len(),
             crate::bytecode(&c.artifact().unwrap()).len(),
@@ -1043,19 +1062,24 @@ mod tests {
         assert_eq!(b2(&crate::bytecode(&r.artifact_v08().unwrap())), "849d197be4edcd6843463214fa900e15b2649637af33aca32439b95bbb4f3181", "bytecode v0.8 inchangé");
         assert_eq!(b2(&crate::bytecode(&r.artifact().unwrap())), "b85e0c9df3a116287344ce7f0a11bc275758f14de64b62642fda39238b8122be", "bytecode v0.7 inchangé");
         let b = vrai();
-        assert_ne!(vault_spk(&b.coffre), vault_spk(&coeur_avec(2, C as i64).artifact_v09().unwrap()), "le cœur v0.9.1 a une autre adresse que le v0.9");
-        // Les trois entrées de la v0.9 sont reprises À L'IDENTIQUE : le source v0.9.1, privé de son
-        // en-tête et de l'entrée `ownerWithdraw`, est le source v0.9 (mêmes règles, même texte).
-        let corps = |src: &str| src[src.find("contract Coeur(").unwrap()..].to_string();
-        let v091 = corps(crate::coeur::SOURCE_V091);
-        let sans_retrait = format!("{}}}\n", &v091[..v091.find("\n    // Retrait partiel (v0.9.1).").unwrap()]);
-        assert_eq!(sans_retrait, corps(crate::coeur::SOURCE_V09), "pay, ownerControl et absorb doivent être ceux de la v0.9, au caractère près");
-        // Et le bytecode le confirme : tout ce qui précède la nouvelle entrée est celui de la v0.9,
-        // octet pour octet (il ne reste à la fin de la v0.9 que « OpReturn OpEndIf OpEndIf OpEndIf »).
-        let (b09, b091) = (crate::bytecode(&r.artifact_v09().unwrap()), crate::bytecode(&r.artifact_v091().unwrap()));
-        let commun = b09.len() - 4;
-        assert_eq!((b09.len(), commun), (376, 372));
-        assert_eq!(b091[..commun], b09[..commun], "les trois entrées de la v0.9 compilent au même bytecode dans la v0.9.1");
+        assert_ne!(vault_spk(&b.coffre), vault_spk(&coeur_avec(2, C as i64).artifact_v091().unwrap()), "le cœur v0.9.2 a une autre adresse que le v0.9.1");
+        assert_eq!(b2(crate::coeur::SOURCE_V091.as_bytes()), "7f41a36d65a3cd3ecc929f76afe655896ff5ac8e2f5d418f02ec091149f2e9a6", "source v0.9.1 archivé à l'identique");
+        assert_eq!(b2(&crate::bytecode(&r.artifact_v091().unwrap())), "1f0ef2637f0e94eed6ee1bd79417a49d87526bacd1ed8709764558ea7aee0062", "bytecode v0.9.1 inchangé");
+        assert_eq!(b2(SOURCE_V02.as_bytes()), "0679fd33a12a710e328752a456fa4e7eeb61d716139b3807b86de01fdc0426ed", "source du sas v0.2 archivé à l'identique");
+        // `pay` et `absorb` sont ceux de la v0.9, au caractère près (commentaires compris) ; seule
+        // `ownerControl` change en v0.9.2. Le sas v0.2.1 est le sas v0.2 plus une règle dans `retour`.
+        let entree = |src: &str, nom: &str| {
+            let d = src.find(&format!("    entry {nom}(")).unwrap();
+            src[d..d + src[d..].find("\n    }\n").unwrap()].to_string()
+        };
+        for nom in ["pay", "absorb"] {
+            assert_eq!(entree(crate::coeur::SOURCE_V092, nom), entree(crate::coeur::SOURCE_V09, nom), "l'entrée {nom} doit être celle de la v0.9");
+        }
+        assert_ne!(entree(crate::coeur::SOURCE_V092, "ownerControl"), entree(crate::coeur::SOURCE_V09, "ownerControl"));
+        assert!(!crate::coeur::SOURCE_V092.contains("entry ownerWithdraw"), "le retrait partiel est une branche de ownerControl");
+        assert_eq!(entree(SOURCE, "recharger"), entree(SOURCE_V02, "recharger"), "l'entrée recharger du sas est inchangée");
+        let regle = "\n        // v0.2.1 : une pièce ordinaire, sans aucune lignée (une genèse la marquerait).\n        require(OpOutputCovenantId(i) == byte[32](0x0000000000000000000000000000000000000000000000000000000000000000));";
+        assert_eq!(entree(SOURCE, "retour").replace(regle, ""), entree(SOURCE_V02, "retour"), "retour du sas : la v0.2 plus une règle");
         assert_ne!(vault_spk(&b.coffre), vault_spk(&b.v08));
         assert_ne!(vault_spk(&b.coffre), vault_spk(&b.v07));
         assert!(acceptee(&monter(&[sg(&b.v07, V, "ownerControl", 1)], &[o(V - FR, &p2pk(11))], 0)), "gel d'un coffre v0.7");
@@ -1086,8 +1110,8 @@ mod tests {
                     break;
                 }
                 // Le plus gros montant de frais accepté à cet instant, cherché de C vers 0.
-                let e = sg(&coffre, valeur, "ownerWithdraw", 1).dans(x_id());
-                let essai = |w: &mut Monde, frais: u64| w.diffuser(&[(e.clone(), op)], &[o(1, &rt), la(valeur - 1 - frais, &m, x_id(), 0)], c.attente(frais as i64).min(age));
+                let e = sg(&coffre, valeur, "ownerControl", 1).dans(x_id());
+                let essai = |w: &mut Monde, frais: u64| w.diffuser(&[(e.clone(), op)], &[la(valeur - 1 - frais, &m, x_id(), 0), o(1, &rt)], c.attente(frais as i64).min(age));
                 assert!(!essai(&mut w, C + 1), "frais au-delà de la capacité");
                 let permis = c.immediate(u64::MAX, age);
                 let pris = if essai(&mut w, C) {
@@ -1105,40 +1129,53 @@ mod tests {
             (brule, w.now - debut)
         };
         // Le vrai contrat : retraits enchaînés tous les R/10, puis sans attendre du tout.
-        let (brule, t) = campagne(crate::coeur::SOURCE_V091, R / 10, 200);
+        let (brule, t) = campagne(crate::coeur::SOURCE_V092, R / 10, 200);
         let t_vrai = t;
         let borne = C + (C as u128 * t as u128 / R as u128) as u64;
         assert!(brule > 0 && brule <= borne, "frais brûlés {brule} en {t} unités, borne {borne}");
         assert!(brule * 10 >= (borne - C) * 9, "le voleur a bien pris ce que le rythme permettait : {brule} sur {borne}");
-        let (sans_attendre, _) = campagne(crate::coeur::SOURCE_V091, 0, 200);
+        let (sans_attendre, _) = campagne(crate::coeur::SOURCE_V092, 0, 200);
         assert_eq!(sans_attendre, 0, "sans attendre, pas un sompi de frais");
         // Témoin : sans la règle du rythme (frais ≤ capacité seulement), le coffre fond sur place.
-        let regle = "require(this.ageDaa >= (frais * period + capacity - 1) / capacity);\n    }\n}";
-        assert_eq!(crate::coeur::SOURCE_V091.matches(regle).count(), 1);
-        let (temoin, t) = campagne(&crate::coeur::SOURCE_V091.replace(regle, "\n    }\n}"), 0, 200);
+        let regle = "require(this.ageDaa >= (frais * period + capacity - 1) / capacity);";
+        assert_eq!(crate::coeur::SOURCE_V092.matches(regle).count(), 1);
+        let (temoin, t) = campagne(&crate::coeur::SOURCE_V092.replace(regle, ""), 0, 200);
         assert!(t == 0 && temoin >= v0 - 2 * C, "témoin : sans la règle, {temoin} brûlés sur {v0} sans attendre");
         eprintln!("clé du propriétaire volée : {brule} sompi de frais en {} périodes (borne {borne}) ; sans la règle du rythme : {temoin} sur {v0}, sans attendre", t_vrai / R);
     }
 
-    /// LIMITE CONNUE (spec/red-team/retrait-2026-11-27.md, W10), figée ici pour qu'elle ne change pas
-    /// sans qu'on le voie. Le réseau laisse toute entrée ouvrir une lignée NEUVE sur une sortie
-    /// (genèse), et une genèse ne compte pas parmi les héritières. Aucune entrée ne l'interdit, depuis
-    /// la v0.7 : la sortie d'un gel, la part reprise par un retrait partiel, le retour d'un dépôt et
-    /// le bénéficiaire d'un paiement peuvent naître marqués d'une lignée neuve (jamais celle du
-    /// coffre). L'argent arrive à la bonne adresse et sa clé le dépense librement. Seule la
-    /// présentation de la pièce change : NON VÉRIFIÉ, un portefeuille ou une plateforme pourrait ne
-    /// pas l'afficher. Il faut la clé du signataire de l'entrée pour le faire ; l'outil ne le fait jamais.
+    /// W10 (spec/red-team/retrait-2026-11-27.md), FERMÉ en v0.9.2 et sas v0.2.1. Le réseau laisse
+    /// toute entrée ouvrir une lignée NEUVE sur une sortie (genèse), et une genèse ne compte pas
+    /// parmi les héritières : jusqu'à la v0.9.1, la pièce envoyée à l'adresse de retour pouvait naître
+    /// marquée d'une lignée neuve (un portefeuille ou une plateforme pourrait ne pas l'afficher).
+    /// Maintenant, tout ce qui part à l'adresse de retour (gel, retrait partiel, retour d'un dépôt)
+    /// est une pièce ordinaire. Témoins : la même transaction passe sur les versions archivées.
+    /// Le bénéficiaire d'un paiement de l'agent n'est PAS concerné (ce n'est pas l'adresse de
+    /// retour, et l'agent choisit déjà qui il paie) : figé ici pour que cela ne change pas sans
+    /// qu'on le voie. Les coffres v0.7 déployés gardent la limite.
     #[test]
-    fn limite_connue_sortie_marquee_d_une_lignee_neuve() {
+    fn w10_piece_de_retour_ordinaire() {
         let b = vrai();
         let (m, rt, x) = (vault_spk(&b.coffre), p2pk(11), p2pk(10));
         let ctrl = sg(&b.coffre, V, "ownerControl", 1).dans(x_id());
-        assert!(acceptee(&monter(&[retrait(&b)], &[genese(0, V / 2, &rt, 0), l(V / 2 - FR, &m)], 2 * R)), "retrait partiel : possible");
-        assert!(acceptee(&monter(&[ctrl], &[genese(0, V - FR, &rt, 0)], 0)), "gel (ownerControl, inchangé depuis la v0.7) : possible");
-        assert!(acceptee(&monter(&[sg(&b.sas, D, "retour", 1)], &[genese(0, D - FR, &rt, 0)], 0)), "retour d'un dépôt (sas v0.2) : possible");
-        assert!(acceptee(&monter(&[sg(&b.coffre, V, "pay", 2).dans(x_id())], &[genese(0, C - FR, &x, 0), l(V - C, &m)], R)), "bénéficiaire d'un paiement : possible");
-        assert!(acceptee(&monter(&[sg(&b.v07, V, "ownerControl", 1)], &[genese(0, V - FR, &rt, 0)], 0)), "gel d'un coffre v0.7 déployé : possible");
-        // La pièce marquée reste une pièce de l'adresse de retour : sa clé la dépense sans contrainte.
+        // Fermé : gel, retrait partiel, retour d'un dépôt.
+        assert!(!acceptee(&monter(&[ctrl.clone()], &[genese(0, V - FR, &rt, 0)], 0)), "gel marqué");
+        assert!(!acceptee(&monter(&[retrait(&b)], &[l(V / 2 - FR, &m), genese(1, V / 2, &rt, 0)], 2 * R)), "retrait partiel marqué");
+        assert!(!acceptee(&monter(&[sg(&b.sas, D, "retour", 1)], &[genese(0, D - FR, &rt, 0)], 0)), "retour d'un dépôt marqué");
+        // Les mêmes gestes, non marqués, passent.
+        assert!(acceptee(&monter(&[ctrl], &[o(V - FR, &rt)], 0)) && acceptee(&monter(&[sg(&b.sas, D, "retour", 1)], &[o(D - FR, &rt)], 0)));
+        // Témoins : avant (archives), la pièce marquée passait.
+        let c = coeur_avec(2, C as i64);
+        let (v091, v09) = (c.artifact_v091().unwrap(), c.artifact_v09().unwrap());
+        assert!(acceptee(&monter(&[sg(&v091, V, "ownerControl", 1).dans(x_id())], &[genese(0, V - FR, &rt, 0)], 0)), "témoin v0.9.1 : gel marqué");
+        assert!(acceptee(&monter(&[sg(&v091, V, "ownerWithdraw", 1).dans(x_id())], &[genese(0, V / 2, &rt, 0), l(V / 2 - FR, &vault_spk(&v091))], 2 * R)), "témoin v0.9.1 : retrait marqué");
+        assert!(acceptee(&monter(&[sg(&v09, V, "ownerControl", 1).dans(x_id())], &[genese(0, V - FR, &rt, 0)], 0)), "témoin v0.9 : gel marqué");
+        let sas02 = compiler_sas(SOURCE_V02, &m, x_id(), F as i64);
+        assert!(acceptee(&monter(&[sg(&sas02, D, "retour", 1)], &[genese(0, D - FR, &rt, 0)], 0)), "témoin sas v0.2 : retour marqué");
+        assert!(acceptee(&monter(&[sg(&b.v07, V, "ownerControl", 1)], &[genese(0, V - FR, &rt, 0)], 0)), "coffre v0.7 déployé : limite toujours là");
+        // Hors périmètre, assumé : le bénéficiaire d'un paiement.
+        assert!(acceptee(&monter(&[sg(&b.coffre, V, "pay", 2).dans(x_id())], &[genese(0, C - FR, &x, 0), l(V - C, &m)], R)), "bénéficiaire d'un paiement : inchangé");
+        // Une pièce marquée reste dépensable par sa clé, sans contrainte.
         let (tx, entries) = monter(&[tiers(11, V).dans(y_id())], &[o(V - FR, &x)], 0);
         assert!(acceptee_a(&tx, &entries, u32::MAX as u64 * 2), "une pièce marquée se dépense comme une autre");
     }
@@ -1147,7 +1184,7 @@ mod tests {
     #[test]
     fn absorb_refuse_avec_une_capacite_aberrante() {
         for cap in [0i64, -1, -(C as i64)] {
-            let art = compiler_coeur(crate::coeur::SOURCE_V091, &coeur_avec(2, cap));
+            let art = compiler_coeur(crate::coeur::SOURCE_V092, &coeur_avec(2, cap));
             let m = vault_spk(&art);
             for sortie in [V, V + 1, (V as i64 + cap) as u64, V + C] {
                 let essai = monter(&[sc(&art, V, "absorb").dans(x_id()), tiers(10, 2 * C)], &[l(sortie, &m)], 0);
@@ -1294,7 +1331,7 @@ mod tests {
         #[test]
         fn coffre_entier_sous_la_borne(pieces in 1usize..=4, age0 in prop_oneof![Just(0u64), 0u64..2 * R], gestes in proptest::collection::vec(geste(), 1..60)) {
             let c = coeur_avec(2, C as i64);
-            let coffre = c.artifact_v091().unwrap();
+            let coffre = c.artifact_v092().unwrap();
             let (m, x, rt) = (vault_spk(&coffre), p2pk(10), p2pk(11));
             let debut = 10 * R;
             // Création : la genèse construite par l'outil, validée par le réseau, à `debut − age0`.
@@ -1425,8 +1462,8 @@ mod tests {
                         if variante >= 5 {
                             // Par un retrait partiel (clé du propriétaire volée) : la part retirée
                             // rattachée à la lignée, ou une seconde pièce du coffre.
-                            let e = sg(&coffre, valeur, "ownerWithdraw", 1).dans(lx);
-                            let sorties = if variante == 5 { vec![l(valeur / 2, &rt), l(valeur - valeur / 2, &m)] } else { vec![o(valeur / 2, &rt), l(valeur / 4, &m), l(valeur - valeur / 2 - valeur / 4, &m)] };
+                            let e = sg(&coffre, valeur, "ownerControl", 1).dans(lx);
+                            let sorties = if variante == 5 { vec![l(valeur - valeur / 2, &m), l(valeur / 2, &rt)] } else { vec![l(valeur / 4, &m), o(valeur / 2, &rt), l(valeur - valeur / 2 - valeur / 4, &m)] };
                             prop_assert!(!w.diffuser(&[(e, p.op)], &sorties, 2 * R), "pièce ajoutée à la lignée par un retrait partiel (variante {variante})");
                             faits[4] += 1;
                             continue;
@@ -1470,6 +1507,9 @@ mod tests {
                         if valeur <= FR {
                             continue; // pièce réduite par des retraits partiels : trop petite pour ces frais
                         }
+                        // W10 : la pièce de retour ne peut pas naître marquée d'une lignée neuve.
+                        let marquee = { let out = TransactionOutput::new(valeur - FR, rt.clone()); (valeur - FR, rt.clone(), Some((covenant_id(p.op, std::iter::once((0u32, &out))), 0u16))) };
+                        prop_assert!(!w.diffuser(&[(sg(&coffre, valeur, "ownerControl", 1).dans(lx), p.op)], &[marquee], 0), "gel marqué d'une lignée neuve");
                         prop_assert!(w.diffuser(&[(sg(&coffre, valeur, "ownerControl", 1).dans(lx), p.op)], &[o(valeur - FR, &rt)], 0));
                         retire += valeur - FR;
                         frais_gel += FR;
@@ -1484,24 +1524,26 @@ mod tests {
                         }
                         let montant = (valeur - frais) * pct / 100;
                         let reste = valeur - frais - montant;
-                        let e = sg(&coffre, valeur, "ownerWithdraw", 1).dans(lx);
+                        let e = sg(&coffre, valeur, "ownerControl", 1).dans(lx);
                         if frais > permis {
                             // Trop tôt pour ces frais : refusé, que l'on annonce le vrai âge ou le délai exigé.
                             for seq in [age, c.attente(frais as i64), 0] {
-                                prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[o(montant, &rt), l(reste, &m)], seq), "frais {frais} pris à l'âge {age}");
+                                prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[l(reste, &m), o(montant, &rt)], seq), "frais {frais} pris à l'âge {age}");
                             }
                             continue;
                         }
                         if vole && reste > 1 {
                             // Un sompi de frais de plus que le rythme : refusé (pris sur le reste).
                             for seq in [age, c.attente(frais.min(C - 1) as i64 + 1), 0] {
-                                prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[o(montant, &rt), l(reste - 1, &m)], seq), "frais {} au-delà du rythme à l'âge {age}", frais + 1);
+                                prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[l(reste - 1, &m), o(montant, &rt)], seq), "frais {} au-delà du rythme à l'âge {age}", frais + 1);
                             }
                             // Ni vers un tiers, ni en sortant le reste de la lignée.
-                            prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[o(montant, &x), l(reste, &m)], c.attente(frais as i64)), "retrait vers un tiers");
-                            prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[o(montant, &rt), o(reste, &m)], c.attente(frais as i64)), "retrait hors lignée");
+                            prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[l(reste, &m), o(montant, &x)], c.attente(frais as i64)), "retrait vers un tiers");
+                            let marquee = { let out = TransactionOutput::new(montant, rt.clone()); (montant, rt.clone(), Some((covenant_id(p.op, std::iter::once((1u32, &out))), 0u16))) };
+                            prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[l(reste, &m), marquee], c.attente(frais as i64)), "part reprise marquée d'une lignée neuve");
+                            prop_assert!(!w.diffuser(&[(e.clone(), p.op)], &[o(reste, &m), o(montant, &rt)], c.attente(frais as i64)), "retrait hors lignée");
                         }
-                        prop_assert!(w.diffuser(&[(e, p.op)], &[o(montant, &rt), l(reste, &m)], c.attente(frais as i64)), "retrait partiel permis refusé : frais {frais} à l'âge {age}");
+                        prop_assert!(w.diffuser(&[(e, p.op)], &[l(reste, &m), o(montant, &rt)], c.attente(frais as i64)), "retrait partiel permis refusé : frais {frais} à l'âge {age}");
                         retire += montant;
                         // Les frais d'un retrait sont une PERTE, comptée comme une dépense de l'agent :
                         // ils entrent dans toutes les fenêtres glissantes vérifiées plus bas.

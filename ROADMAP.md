@@ -29,12 +29,14 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
    - anchor the head of the audit chain on Kaspa at regular intervals, so the log is tamper-evident
      without trusting any third party;
    - per-agent spending reports for finance teams, and an export for SIEM tools.
-2. **Keyless refill airlock with a vault lineage** (core v0.9.1 + airlock v0.2, proven and tested offline against the real
+2. **Keyless refill airlock with a vault lineage** (core v0.9.2 + airlock v0.2.1, proven and tested offline against the real
    script engine, see the [proof](spec/borne-de-perte-v0.9.md) and the red-team notes on the
-   [lineage](spec/red-team/lignee-2026-11-27.md) and the [partial withdrawal](spec/red-team/retrait-2026-11-27.md)).
+   [lineage](spec/red-team/lignee-2026-11-27.md), the [partial withdrawal](spec/red-team/retrait-2026-11-27.md) and
+   [v0.9.2](spec/red-team/coeur-v0.9.2-2026-11-28.md)).
    The open limit S3 of core v0.8 was settled in favour of a KIP-20 lineage: the number of vault coins is fixed at
-   creation, so the cap holds for the whole vault without any monitoring. Core v0.9.1 adds one entry, a partial
-   withdrawal by the owner (to the return address only, fees rate-limited like an agent payment). Decided: freezing
+   creation, so the cap holds for the whole vault without any monitoring. Core v0.9.2 adds a partial
+   withdrawal by the owner (to the return address only, fees rate-limited like an agent payment) and makes every
+   coin sent to the return address a plain coin with no covenant id (also in the airlock). Decided: freezing
    closes the vault for good (the lineage ends); one coin by default, more on request (the cap is multiplied by the
    number of coins). Next: a testnet-10 trial (sequence in the red-team notes, including a real dust-coin attack and a
    partial withdrawal), the airlock fee cap set from measured fees, then wiring into the tool (creation by genesis,

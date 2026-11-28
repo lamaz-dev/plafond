@@ -511,9 +511,10 @@ pub fn empreintes() -> Res<String> {
         retour: Some(sequestre::spk_hash(&refund).to_vec()),
     };
     let coeur = coeur_ref.artifact()?;
-    // Cœur v0.9.1 (lignée KIP-20, retrait partiel) et son sas v0.2, mêmes réglages de référence.
-    // Lignée de référence : l'identifiant du vecteur de test officiel de KIP-20 (kaspanet/kips#49,
-    // voir fuzz.rs). Le cœur v0.9 (sans retrait partiel) est une archive.
+    // Cœur v0.9.2 (lignée KIP-20, retrait partiel, pièces de retour sans lignée) et son sas v0.2.1,
+    // mêmes réglages de référence. Lignée de référence : l'identifiant du vecteur de test officiel
+    // de KIP-20 (kaspanet/kips#49, voir fuzz.rs). Les cœurs v0.9.1 et v0.9 sont des archives.
+    let coeur_v092 = coeur_ref.artifact_v092()?;
     let coeur_v091 = coeur_ref.artifact_v091()?;
     let coeur_v09 = coeur_ref.artifact_v09()?;
     let lignee_ref = Hash::from_bytes(<[u8; 32]>::try_from(hex::decode(LIGNEE_REF)?.as_slice()).expect("32 octets"));
@@ -528,8 +529,10 @@ pub fn empreintes() -> Res<String> {
     r.push_str(&format!("source agent_budget.sil : {}\n", b2(SOURCE.as_bytes())));
     r.push_str(&format!("source delivery_escrow.sil : {}\n", b2(sequestre::SOURCE.as_bytes())));
     r.push_str(&format!("source ardoise.sil : {}\n", b2(ardoise::SOURCE.as_bytes())));
-    r.push_str(&format!("source coeur.sil (v0.9.1, rechargement sans clé, lignée KIP-20 et retrait partiel) : {}\n", b2(coeur::SOURCE_V091.as_bytes())));
-    r.push_str(&format!("source sas.sil (v0.2, sas de rechargement lié à la lignée) : {}\n", b2(lignee::SOURCE.as_bytes())));
+    r.push_str(&format!("source coeur.sil (v0.9.2, lignée KIP-20, retrait partiel, pièces de retour sans lignée) : {}\n", b2(coeur::SOURCE_V092.as_bytes())));
+    r.push_str(&format!("source sas.sil (v0.2.1, sas de rechargement lié à la lignée, retour sans lignée) : {}\n", b2(lignee::SOURCE.as_bytes())));
+    r.push_str(&format!("source archive/coeur-v0.9.1.sil (retrait partiel en entrée séparée ; jamais déployé) : {}\n", b2(coeur::SOURCE_V091.as_bytes())));
+    r.push_str(&format!("source archive/sas-v0.2.sil (sas du cœur v0.9 et v0.9.1 ; jamais déployé) : {}\n", b2(lignee::SOURCE_V02.as_bytes())));
     r.push_str(&format!("source archive/coeur-v0.9.sil (lignée KIP-20, sans retrait partiel ; jamais déployé) : {}\n", b2(coeur::SOURCE_V09.as_bytes())));
     r.push_str(&format!("source archive/coeur-v0.8.sil (rechargement sans clé, sans lignée ; jamais déployé) : {}\n", b2(coeur::SOURCE_V08.as_bytes())));
     r.push_str(&format!("source archive/sas-v0.1.sil (sas du cœur v0.8 ; jamais déployé) : {}\n", b2(sas::SOURCE.as_bytes())));
@@ -539,8 +542,9 @@ pub fn empreintes() -> Res<String> {
         ("AgentBudget (paramètres de référence)", &vault),
         ("DeliveryEscrow (paramètres de référence)", &escrow),
         ("Ardoise (paramètres de référence)", &tab),
+        ("Coeur v0.9.2 (paramètres de référence)", &coeur_v092),
+        ("Sas v0.2.1 (coffre v0.9.2 de référence, lignée du vecteur KIP-20)", &sas_v02),
         ("Coeur v0.9.1 (paramètres de référence)", &coeur_v091),
-        ("Sas v0.2 (coffre v0.9.1 de référence, lignée du vecteur KIP-20)", &sas_v02),
         ("Coeur v0.9 (paramètres de référence)", &coeur_v09),
         ("Coeur v0.8 (paramètres de référence)", &coeur_v08),
         ("Sas v0.1 (coffre v0.8 de référence)", &sas_ref),

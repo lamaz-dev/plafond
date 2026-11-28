@@ -1,4 +1,4 @@
-//! Sas de rechargement v0.2 (contracts/sas.sil) avec le cœur v0.9.1 (contracts/coeur.sil) : comportement
+//! Sas de rechargement v0.2.1 (contracts/sas.sil) avec le cœur v0.9.2 (contracts/coeur.sil) : comportement
 //! des deux contrats ensemble contre le vrai moteur de script, compilateur figé. Chaque entrée de la
 //! transaction est exécutée. Banc complet (attaques nommées, sabotages, fuzzing) : cli/src/lignee.rs.
 //! Les pièces du coffre portent la lignée `LIGNEE` ; le sas est lié à cette lignée.
@@ -147,6 +147,15 @@ fn le_depot_ne_revient_qu_a_l_adresse_de_retour() {
     assert!(passe(&[(&s, D, "retour", Some(1)), (&s, D, "retour", Some(1))], vec![(D - FEE, rt.clone()), (D - FEE, rt.clone())]), "retour par lot accepté");
     assert!(!passe(&[(&s, D, "retour", Some(1)), (&s, D, "retour", Some(1))], vec![(2 * D - FEE, rt.clone())]), "deux dépôts sur une sortie : refusé");
     assert!(passe(&[(&c, V, "ownerControl", Some(1)), (&s, D, "retour", Some(1))], vec![(V - FEE, rt.clone()), (D - FEE, rt.clone())]), "gel du coffre et retour du dépôt ensemble");
+    // v0.2.1 (W10) : le dépôt renvoyé est une pièce ordinaire. Une lignée neuve (genèse autorisée
+    // par l'entrée du dépôt, valide pour le réseau) est refusée par le sas.
+    let neuve = {
+        let out = libre(D - FEE, rt.clone());
+        let id = kaspa_consensus_core::hashing::covenant_id::covenant_id(TransactionOutpoint::new(TransactionId::from_bytes([3; 32]), 0), std::iter::once((0u32, &out)));
+        liee(D - FEE, rt.clone(), id, 0)
+    };
+    assert!(passe_brut(&[(&s, D, "retour", Some(1))], &[None], vec![libre(D - FEE, rt.clone())]), "témoin : retour ordinaire");
+    assert!(!passe_brut(&[(&s, D, "retour", Some(1))], &[None], vec![neuve]), "dépôt renvoyé marqué d'une lignée neuve : refusé");
 }
 
 /// S3 (note du sas v0.1) : un attaquant crée une pièce de poussière à l'adresse du coffre et y fait
@@ -183,6 +192,7 @@ fn le_depot_ne_va_que_dans_la_lignee_du_coffre() {
 #[test]
 fn taille_du_sas() {
     let n = bytecode(&sas(&coffre(2))).len();
-    eprintln!("Sas v0.2 : {n} octets");
-    assert!(n < 240, "le sas doit rester minimal ({n} octets)");
+    eprintln!("Sas v0.2.1 : {n} octets");
+    // v0.2 : 227 octets ; la règle « retour sans lignée » en ajoute 37 (l'identifiant nul, 33 octets).
+    assert!(n < 270, "le sas doit rester minimal ({n} octets)");
 }
