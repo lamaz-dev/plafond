@@ -381,6 +381,50 @@ pub static OUVRIR_NAVIGATEUR: std::sync::atomic::AtomicBool = std::sync::atomic:
 /// trésorerie. Sa clé est sur le même ordinateur : elle sert à essayer, pas à se protéger.
 pub static RETOUR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Parcours « Je n'ai rien » : adresse du portefeuille de retour qui vient d'être affiché (phrase
+/// en attente de ressaisie), puis adresse confirmée par la ressaisie. Seules des ADRESSES sont
+/// gardées ici, en mémoire : la phrase de secours ne l'est jamais, nulle part.
+static RETOUR_AFFICHE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static RETOUR_CONFIRME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Adresse de retour d'un nouveau mandat, selon la situation choisie (src/retour.rs). Vérifiée
+/// côté serveur aussi : la page ne peut pas sauter une étape.
+fn retour_du_mandat(v: &Value, tresorerie: &str) -> Res<Option<String>> {
+    use crate::retour::{Profil, controler, message_a_signer, signature_valide};
+    let saisie = v["retour"].as_str().map(str::trim).filter(|a| !a.is_empty());
+    let Some(profil) = v["retour_profil"].as_str() else {
+        // Ancien appel, sans situation : vide = la trésorerie ; sinon l'adresse, validée.
+        return saisie.map(|a| crate::coffre::valider_retour(a).map(|adr| adr.to_string())).transpose();
+    };
+    let profil = Profil::lire(profil)?;
+    let c = controler(profil, saisie.ok_or("adresse de retour manquante")?, v["retour_confirmation"].as_str(), &[], Some(tresorerie))?;
+    match profil {
+        Profil::Portefeuille => {
+            // La signature est facultative (tous les portefeuilles ne signent pas de message) ; fournie, elle doit être juste.
+            if let Some(sig) = v["retour_signature"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                if !signature_valide(&c.adresse, &message_a_signer(&c.adresse), sig) {
+                    return Err("la signature ne correspond pas à cette adresse et à ce message : mandat non créé".into());
+                }
+            }
+            if v["retour_verifiee"].as_bool() != Some(true) {
+                return Err("confirmez que l'adresse affichée est bien celle de votre portefeuille".into());
+            }
+        }
+        Profil::Plateforme => {
+            if v["retour_avertissement_lu"].as_bool() != Some(true) {
+                return Err("confirmez avoir lu l'avertissement : cette adresse sera figée dans le coffre".into());
+            }
+        }
+        Profil::Nouveau => {
+            let confirmee = RETOUR_CONFIRME.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if confirmee.as_deref() != Some(c.adresse.to_string().as_str()) {
+                return Err("le portefeuille de retour n'a pas été vérifié par la ressaisie de ses 24 mots".into());
+            }
+        }
+    }
+    Ok(Some(c.adresse.to_string()))
+}
+
 /// Mode essai (interface d'essai, réseau de test) : compte créé sans mot de passe, dossier du compte.
 /// Le fichier `essai.json` garde la source de la clé en clair : des TKAS sans valeur, rien d'autre.
 pub static ESSAI: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
@@ -1168,6 +1212,46 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         "compte": { "mode": if cle_ch.is_some() { "fichier_chiffre" } else { "cles_de_test" }, "essai": est_essai(), "sauvegarde_faite": compte.sauvegarde_faite, "double_auth": compte.double_auth },
                     }))
                 }
+                // ---- Adresse de retour : trois situations (src/retour.rs)
+                ("POST", "/api/retour/controler") => {
+                    let r = crate::retour::Profil::lire(v["profil"].as_str().unwrap_or("")).and_then(|p| {
+                        crate::retour::controler(p, v["adresse"].as_str().unwrap_or(""), v["confirmation"].as_str(), &[], Some(&address(&owner).to_string()))
+                    });
+                    match r {
+                        Ok(c) => {
+                            let message = crate::retour::message_a_signer(&c.adresse);
+                            let signature = v["signature"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| crate::retour::signature_valide(&c.adresse, &message, s));
+                            json_rep(200, json!({ "ok": true, "adresse": c.adresse.to_string(), "apercu": c.apercu, "avertissements": c.avertissements,
+                                "signature_possible": c.signature_possible, "message_a_signer": message, "signature_verifiee": signature }))
+                        }
+                        Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                    }
+                }
+                // « Je n'ai rien » : la phrase est créée ici, renvoyée UNE fois à la page, jamais écrite
+                // (ni fichier, ni journal). Seule l'adresse est retenue, pour vérifier la ressaisie.
+                ("POST", "/api/retour/generer") => match crate::retour::generer() {
+                    Ok(n) => {
+                        *RETOUR_AFFICHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(n.adresse.to_string());
+                        *RETOUR_CONFIRME.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                        journal(json!({ "retour": "portefeuille de retour créé (phrase affichée une fois, non conservée)" }));
+                        json_rep(200, json!({ "phrase": n.phrase.as_str(), "adresse": n.adresse.to_string(), "apercu": crate::retour::apercu(&n.adresse), "chemin": crate::retour::CHEMIN }))
+                    }
+                    Err(e) => json_rep(500, json!({ "erreur": e.to_string() })),
+                },
+                ("POST", "/api/retour/confirmer") => {
+                    let affichee = RETOUR_AFFICHE.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    match affichee.and_then(|a| crate::coffre::valider_retour(&a).ok()) {
+                        None => json_rep(409, json!({ "erreur": "aucun portefeuille de retour en attente de vérification" })),
+                        Some(adr) => match crate::retour::ressaisie_correcte(&adr, v["phrase"].as_str().unwrap_or("")) {
+                            Ok(()) => {
+                                *RETOUR_AFFICHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                                *RETOUR_CONFIRME.lock().unwrap_or_else(|e| e.into_inner()) = Some(adr.to_string());
+                                json_rep(200, json!({ "ok": true, "adresse": adr.to_string(), "apercu": crate::retour::apercu(&adr) }))
+                            }
+                            Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                        },
+                    }
+                }
                 ("GET", "/api/evenements") => json_rep(200, json!({ "evenements": agents::evenements(&defaut, 30) })),
                 ("GET", "/api/tableau") => match (&cible, cle_cible) {
                     (Some(a), Some(Ok(k))) => {
@@ -1190,11 +1274,8 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                     } else {
                         let mandat = regles_mandat(&v);
                         let duree = mandat.as_ref().ok().and_then(|(_, d)| *d);
-                        // Adresse de retour : vide = la trésorerie (par défaut) ; sinon validée AVANT de créer.
-                        let retour = match v["retour"].as_str().map(str::trim).filter(|a| !a.is_empty()) {
-                            None => Ok(None),
-                            Some(a) => crate::coffre::valider_retour(a).map(|adr| Some(adr.to_string())),
-                        };
+                        // Adresse de retour : choisie selon la situation de l'utilisateur et validée AVANT de créer.
+                        let retour = retour_du_mandat(&v, &address(&owner).to_string());
                         match retour.and_then(|ret| mandat.and_then(|(r, _)| agents::nouveau(&defaut, v["nom"].as_str().unwrap_or(""), Some(r), enveloppe.as_ref())).map(|a| (a, ret))) {
                             Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
                             Ok((mut a, ret)) => {
@@ -2310,6 +2391,42 @@ mod tests {
         // sans durée : une période, comme avant
         assert_eq!(regles_mandat(&v(0)).unwrap(), (crate::Regles::calculer(2_000_000_000, crate::JOUR_DAA, 200_000_000).unwrap(), None));
         assert!(regles_mandat(&v(400)).is_err());
+    }
+
+    /// Adresse de retour d'un nouveau mandat : chaque situation a ses contrôles, refaits côté serveur.
+    #[test]
+    fn adresse_de_retour_selon_la_situation() {
+        use kaspa_addresses::{Address, Prefix, Version};
+        let k = |b: u8| Keypair::from_seckey_slice(secp256k1::SECP256K1, &[b; 32]).unwrap();
+        let adr = |b: u8| Address::new(Prefix::Testnet, Version::PubKey, &k(b).x_only_public_key().0.serialize()).to_string();
+        let (tresorerie, a) = (adr(1), adr(11));
+        // Ancien appel, sans situation : vide = trésorerie, sinon adresse validée.
+        assert_eq!(retour_du_mandat(&json!({}), &tresorerie).unwrap(), None);
+        assert_eq!(retour_du_mandat(&json!({ "retour": a }), &tresorerie).unwrap(), Some(a.clone()));
+        // Portefeuille : il faut avoir confirmé l'adresse affichée ; une signature fournie doit être juste.
+        assert!(retour_du_mandat(&json!({ "retour_profil": "portefeuille", "retour": a }), &tresorerie).is_err());
+        assert_eq!(retour_du_mandat(&json!({ "retour_profil": "portefeuille", "retour": a, "retour_verifiee": true }), &tresorerie).unwrap(), Some(a.clone()));
+        assert!(retour_du_mandat(&json!({ "retour_profil": "portefeuille", "retour": a, "retour_verifiee": true, "retour_signature": "00" }), &tresorerie).is_err());
+        assert!(retour_du_mandat(&json!({ "retour_profil": "portefeuille", "retour": "", "retour_verifiee": true }), &tresorerie).is_err());
+        assert!(retour_du_mandat(&json!({ "retour_profil": "portefeuille", "retour": a.replace("kaspatest:", "kaspa:"), "retour_verifiee": true }), &tresorerie).is_err());
+        // Plateforme : double saisie identique et avertissement lu.
+        let plateforme = |conf: &str, lu: bool| retour_du_mandat(&json!({ "retour_profil": "plateforme", "retour": a, "retour_confirmation": conf, "retour_avertissement_lu": lu }), &tresorerie);
+        assert!(plateforme(&adr(12), true).is_err() && plateforme(&a, false).is_err() && plateforme("", true).is_err());
+        assert_eq!(plateforme(&a, true).unwrap(), Some(a.clone()));
+        // Je n'ai rien : seule l'adresse vérifiée par la ressaisie des 24 mots est acceptée.
+        *RETOUR_CONFIRME.lock().unwrap() = None;
+        assert!(retour_du_mandat(&json!({ "retour_profil": "nouveau", "retour": a }), &tresorerie).is_err());
+        *RETOUR_CONFIRME.lock().unwrap() = Some(adr(12));
+        assert!(retour_du_mandat(&json!({ "retour_profil": "nouveau", "retour": a }), &tresorerie).is_err(), "une autre adresse que celle vérifiée");
+        *RETOUR_CONFIRME.lock().unwrap() = Some(a.clone());
+        assert_eq!(retour_du_mandat(&json!({ "retour_profil": "nouveau", "retour": a }), &tresorerie).unwrap(), Some(a));
+        *RETOUR_CONFIRME.lock().unwrap() = None;
+        assert!(retour_du_mandat(&json!({ "retour_profil": "inconnu", "retour": adr(11) }), &tresorerie).is_err());
+        // La phrase de secours n'est jamais écrite : ni la page ni le serveur ne la mettent dans un stockage.
+        assert!(!PAGE.contains("localStorage") || !PAGE.contains("rt-phrase\",localStorage"), "la page ne range pas la phrase");
+        let source = include_str!("console.rs");
+        let generer = &source[source.find("(\"POST\", \"/api/retour/generer\")").unwrap()..source.find("(\"POST\", \"/api/retour/confirmer\")").unwrap()];
+        assert!(!generer.contains("fs::") && !generer.contains("enregistrer") && generer.matches("journal(").count() == 1 && !generer[generer.find("journal(").unwrap()..generer.find("json_rep(200").unwrap()].contains("phrase.as"), "la phrase ne va ni sur disque ni au journal");
     }
 
     #[test]

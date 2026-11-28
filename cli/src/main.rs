@@ -55,6 +55,7 @@ mod ardoise;
 mod coeur;
 mod coffre;
 mod coffre092;
+mod retour;
 mod course;
 mod risque;
 mod sobriete;
@@ -1157,6 +1158,36 @@ async fn main() -> Res<()> {
         let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(5);
         tokio::time::sleep(Duration::from_secs(secs)).await;
         println!("(pause de {secs} s)");
+        return Ok(());
+    }
+    if cmd == "retour-verifier" {
+        // Situation « j'ai un portefeuille » : contrôle de l'adresse, aperçu à comparer, signature facultative.
+        let c = retour::controler(retour::Profil::Portefeuille, args.get(2).ok_or("adresse de retour manquante")?, None, &[], None)?;
+        println!("{}", retour::PRINCIPE);
+        println!("Adresse valide. Comparez-la, groupe par groupe, avec celle de votre appareil :\n  {}", c.apercu);
+        c.avertissements.iter().for_each(|a| println!("  note : {a}"));
+        let message = retour::message_a_signer(&c.adresse);
+        match args.get(3) {
+            Some(sig) if retour::signature_valide(&c.adresse, &message, sig) => println!("Signature vérifiée : vous détenez bien la clé de cette adresse."),
+            Some(_) => return Err("la signature ne correspond pas à cette adresse et à ce message".into()),
+            None if c.signature_possible => println!("Facultatif : signez ce message dans votre portefeuille, puis relancez avec la signature :\n  {message}"),
+            None => {}
+        }
+        return Ok(());
+    }
+    if cmd == "retour-nouveau" {
+        // Situation « je n'ai rien » : portefeuille de retour créé ici, phrase affichée une fois,
+        // vérifiée par ressaisie, jamais écrite. Seule l'adresse est à garder.
+        let n = retour::generer()?;
+        println!("{}\n", retour::PRINCIPE);
+        retour::CONSIGNES_NOUVEAU.iter().for_each(|c| println!("- {c}"));
+        println!("\nVos 24 mots (dérivation standard Kaspa, {}) :\n\n  {}\n", retour::CHEMIN, n.phrase.as_str());
+        println!("Retapez les 24 mots pour vérifier votre papier, puis Entrée :");
+        let mut saisie = zeroize::Zeroizing::new(String::new());
+        std::io::stdin().read_line(&mut saisie)?;
+        retour::ressaisie_correcte(&n.adresse, &saisie)?;
+        println!("\nPapier vérifié. Adresse de retour à donner à la création du coffre :\n  {}\n  {}", n.adresse, retour::apercu(&n.adresse));
+        println!("Cet ordinateur n'a rien gardé. Effacez l'écran de ce terminal (les mots y sont encore visibles).");
         return Ok(());
     }
     if cmd == "sas-verifier" {
