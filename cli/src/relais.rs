@@ -853,6 +853,26 @@ mod tests {
         assert_eq!(pl["requestHash"].as_str().unwrap(), hash_requete("GET", "https://api.exemple.test/meteo", None, &accepted));
     }
 
+    /// Mission D (Red Team système) : une « pièce marquée » (sortie portant un identifiant de
+    /// lignée) n'existe pas dans ce profil. Notre lecture la refuse, en version 0 comme en version 1.
+    #[test]
+    fn piece_marquee_refusee_dans_le_profil_exact() {
+        let (agent, vendeur) = (cle(2), cle(3));
+        let (requis, accepted) = offre(&vendeur, 20_000_000);
+        let p = construire_paiement(
+            &agent, &pieces(&agent, &[50_000_000]), &requis, &accepted, "GET", "https://api.exemple.test/meteo", None,
+            "lamaz_test_paiement_0002", 1_795_000_000_000, &politique(),
+        )
+        .unwrap();
+        let sain: Value = serde_json::from_str(p.charge["payload"]["transaction"].as_str().unwrap()).unwrap();
+        depuis_safe_json(&sain).unwrap();
+        let mut marquee = sain.clone();
+        marquee["outputs"][0]["covenant"] = json!({ "authorizingInput": 0, "covenantId": "c0".repeat(32) });
+        assert!(depuis_safe_json(&marquee).err().unwrap().to_string().contains("covenant interdite"));
+        marquee["version"] = json!(1);
+        assert!(depuis_safe_json(&marquee).err().unwrap().to_string().contains("version 0"));
+    }
+
     pub(crate) fn verifier_scripts(tx: &Transaction, utxos: &[UtxoEntry]) {
         use kaspa_txscript::caches::Cache;
         use kaspa_txscript::{EngineCtx, EngineFlags, TxScriptEngine};

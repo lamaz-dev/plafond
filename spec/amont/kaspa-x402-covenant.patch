@@ -1,0 +1,93 @@
+diff --git a/protocol/packages/adapters/src/adapters.ts b/protocol/packages/adapters/src/adapters.ts
+index a400c32..260dc43 100644
+--- a/protocol/packages/adapters/src/adapters.ts
++++ b/protocol/packages/adapters/src/adapters.ts
+@@ -4470,6 +4470,15 @@ export function assertChainTransactionMatchesSafe(
+         "accepted transaction output script does not match exact artifact",
+       );
+     }
++    // Exact artifacts never carry covenant bindings (parseSafeOutput). A coin
++    // bound to a covenant lineage can stay subject to rules the merchant does
++    // not control, so the accepted transaction must not carry one either,
++    // whatever the indexer reports for the transaction id.
++    if (restOutputCovenant(actual)) {
++      throw invalidTransaction(
++        `accepted transaction output ${index} carries a covenant binding`,
++      );
++    }
+   }
+ }
+ 
+diff --git a/protocol/packages/adapters/test/adapters.test.ts b/protocol/packages/adapters/test/adapters.test.ts
+index ea01879..37e74b8 100644
+--- a/protocol/packages/adapters/test/adapters.test.ts
++++ b/protocol/packages/adapters/test/adapters.test.ts
+@@ -2091,6 +2091,7 @@ describe("VerifiedExactTransactionVerifier", () => {
+     };
+     let candidateAccepted = false;
+     let acceptedComputeBudget: number | null | "absent" = "absent";
++    let acceptedPaymentCovenant: string | null = null;
+     let inputUnspent = true;
+     const fetchMock = vi.fn(async (request: Parameters<typeof fetch>[0]) => {
+       const url = new URL(request.toString());
+@@ -2154,6 +2155,12 @@ describe("VerifiedExactTransactionVerifier", () => {
+               index,
+               amount: entry.value,
+               script_public_key: entry.scriptPublicKey.slice(4),
++              ...(index === 0 && acceptedPaymentCovenant
++                ? {
++                    covenant_authorizing_input: 0,
++                    covenant_id: acceptedPaymentCovenant,
++                  }
++                : {}),
+             })),
+           });
+         }
+@@ -2376,6 +2383,32 @@ describe("VerifiedExactTransactionVerifier", () => {
+       "standard-native transaction storage mass does not match contextual KIP-9 mass",
+     );
+ 
++    // A payer whose funds live in a covenant (an agent spending from a
++    // budget-limited vault) can hand the merchant a coin that still carries
++    // the covenant lineage. Such a coin pays the right script and the right
++    // amount, but it is not free money: reject it before any chain read.
++    const markedCoinReads = fetchMock.mock.calls.length;
++    for (const version of [0, 1]) {
++      const markedCoin = JSON.parse(artifact) as {
++        version: number;
++        outputs: Array<{
++          covenant: { authorizingInput: number; covenantId: string } | null;
++        }>;
++      };
++      markedCoin.version = version;
++      markedCoin.outputs[0]!.covenant = {
++        authorizingInput: 0,
++        covenantId: "c0".repeat(32),
++      };
++      await expect(
++        verifier.verifyExactPayment({
++          ...request,
++          transaction: JSON.stringify(markedCoin),
++        }),
++      ).rejects.toThrow("transaction output 0 covenant must be null");
++    }
++    expect(fetchMock).toHaveBeenCalledTimes(markedCoinReads);
++
+     candidateAccepted = true;
+     inputUnspent = false;
+     await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({
+@@ -2383,6 +2416,14 @@ describe("VerifiedExactTransactionVerifier", () => {
+       finality: "accepted",
+     });
+ 
++    // Same coin, other door: the artifact hides the binding but the accepted
++    // transaction reported for that id carries it.
++    acceptedPaymentCovenant = "c0".repeat(32);
++    await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
++      "accepted transaction output 0 carries a covenant binding",
++    );
++    acceptedPaymentCovenant = null;
++
+     sdkSafeArtifact.inputs[0]!.computeBudget = 0;
+     acceptedComputeBudget = "absent";
+     await expect(
