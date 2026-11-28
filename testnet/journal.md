@@ -1672,3 +1672,31 @@ Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
 Coffre : pas encore déployé
 
 ```
+
+## 2026-11-28 03:38 UTC
+
+```
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 635013605
+Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+$ vault-cli fermer-anciens
+Connecté au testnet-10 : wss://boson-10.kaspa.red/kaspa/testnet-10/wrpc/borsh
+coeur-v0.7, réglages de test jusqu'au 27 nov. (4 pièces) : 0 pièce(s), 0 TKAS à l'adresse kaspatest:prexx2zf6yf6syp8hgcxrf3fzn9ygd3h6qc0nlpkgkt6c5re5mvpy6dr4gm90
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+coeur-v0.6, réglages de test jusqu'au 27 nov. (4 pièces) : 0 pièce(s), 0 TKAS à l'adresse kaspatest:ppunu6a5274nn79m3rrg0ysvqmvf69zd3p9dxnuwla5lgxll44h5cfzmcqdp2
+Connecté au testnet-10 : wss://neutrino-10.kaspa.stream/kaspa/testnet-10/wrpc/borsh
+coeur-v0.7, réglages de test actuels : 0 pièce(s), 0 TKAS à l'adresse kaspatest:pr2gxnfkxxghxjalz0a576unecpd4rqmdzj5fqkc3zyrmjhs02prj8zd3h86y
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+coeur-v0.6, réglages de test actuels : 0 pièce(s), 0 TKAS à l'adresse kaspatest:pp4me74nq5xs3llwv4lxjyd6tzsst29m2q29efjqs6fm83g39r8tz4y3ufxxr
+0 ancien(s) coffre(s) fermé(s).
+
+$ vault-cli etat
+Connecté au testnet-10 : wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh
+Score DAA du réseau : 635013645
+Solde du propriétaire : 987.42000823 TKAS (10 UTXO)
+Coffre : pas encore déployé
+
+```
