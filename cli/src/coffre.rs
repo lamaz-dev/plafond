@@ -9,6 +9,9 @@ use crate::coeur::{self, Coeur};
 use crate::*;
 
 pub const VERSION: &str = "coeur-v0.7";
+/// Coffres à lignée (cœur v0.9.2, src/coffre092.rs) : ceux que l'outil crée maintenant. Le coffre
+/// s'identifie par son adresse ET sa lignée ; son budget, ce sont les pièces de cette lignée.
+pub const VERSION_V092: &str = "coeur-v0.9.2";
 /// Coffres créés avant l'adresse de retour : retrouvés et gelables, plus créés.
 pub const VERSION_V06: &str = "coeur-v0.6";
 /// Marge (unités DAA, ≈ 2 s) entre l'âge lu et l'âge exigé : le bloc qui accepte le paiement est
@@ -43,6 +46,33 @@ pub struct EtatCoeur {
     /// Achats reconnus (les 50 derniers), plus récents en dernier.
     #[serde(default)]
     pub achats: Vec<AchatVu>,
+    /// Coffre à lignée (v0.9.2) : identifiant de covenant de la lignée, en hexadécimal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lignee: Option<String>,
+    /// Coffre à lignée : ce qu'il faut pour recalculer l'identifiant de la lignée sans faire
+    /// confiance à personne (pièce dépensée par la création et valeurs des pièces créées).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genese: Option<Genese>,
+    /// Coffre à lignée : plafond de frais inscrit dans le sas (adresse de dépôt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sas_max_frais: Option<i64>,
+    /// Coffre à lignée : signature du propriétaire sur l'adresse de dépôt (publique, vérifiable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<String>,
+    /// Retraits partiels du propriétaire : de l'argent repris, pas une dépense de l'agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retraits: Vec<Apport>,
+}
+
+/// La création d'un coffre à lignée, telle que le réseau l'a vue : l'identifiant de la lignée est
+/// blake2b(pièce dépensée en entrée 0 ; indice, valeur et script de chaque pièce créée).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Genese {
+    pub txid: String,
+    /// Pièce dépensée par l'entrée 0 de la création.
+    pub entree_txid: String,
+    pub entree_index: u32,
+    pub valeurs: Vec<u64>,
 }
 
 /// Un achat de l'agent, reconnu sur la chaîne : une pièce a disparu et sa continuation est apparue.
@@ -124,7 +154,7 @@ pub fn memoriser(e: &EtatCoeur) {
 
 pub fn charger() -> Option<EtatCoeur> {
     let e: EtatCoeur = serde_json::from_str(&fs::read_to_string(state_path()).ok()?).ok()?;
-    (e.version == VERSION || e.version == VERSION_V06).then_some(e)
+    (e.version == VERSION || e.version == VERSION_V06 || (e.version == VERSION_V092 && e.lignee.is_some())).then_some(e)
 }
 
 /// Adresse de retour d'un coffre : celle fixée à la création, sinon l'adresse du propriétaire
@@ -176,6 +206,33 @@ pub fn coeur_de(owner_pk: &[u8], agent_pk: &[u8]) -> Coeur {
     Coeur { owner: owner_pk.to_vec(), agent: agent_pk.to_vec(), capacite, periode, retour }
 }
 
+/// Lignée d'un coffre v0.9.2 (aucune pour un coffre v0.7 ou v0.6).
+pub fn lignee_de(e: Option<&EtatCoeur>) -> Option<Hash> {
+    let e = e.filter(|e| e.version == VERSION_V092)?;
+    let octets = hex::decode(e.lignee.as_deref()?).ok()?;
+    Some(Hash::from_bytes(<[u8; 32]>::try_from(octets.as_slice()).ok()?))
+}
+
+/// Le script du coffre selon sa version : v0.9.2 s'il a une lignée, sinon v0.7 (ou v0.6).
+pub fn art_de(coeur: &Coeur, e: Option<&EtatCoeur>) -> Res<SilAbiArtifact> {
+    if lignee_de(e).is_some() { coeur.artifact_v092() } else { coeur.artifact() }
+}
+
+/// Le script du coffre en cours (fichier d'état local).
+pub fn art_courant(coeur: &Coeur) -> Res<SilAbiArtifact> {
+    art_de(coeur, charger().as_ref())
+}
+
+/// L1 : les pièces qui SONT le coffre. Coffre à lignée : celles qui portent sa lignée, et elles
+/// seules (une pièce envoyée par un tiers à la même adresse n'en fait pas partie). Coffre v0.7 :
+/// toutes les pièces de l'adresse, comme avant.
+pub fn du_coffre(pieces: Vec<Piece>, lignee: Option<Hash>) -> (Vec<Piece>, Vec<Piece>) {
+    match lignee {
+        Some(x) => pieces.into_iter().partition(|p| p.lignee == Some(x)),
+        None => (pieces, vec![]),
+    }
+}
+
 pub fn adresse(art: &SilAbiArtifact) -> Res<Address> {
     Ok(extract_script_pub_key_address(&vault_spk(art), Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?)
 }
@@ -186,6 +243,8 @@ pub struct Piece {
     pub valeur: u64,
     /// Score DAA du bloc qui a inscrit la pièce ; `None` : pas encore confirmée.
     pub creation: Option<u64>,
+    /// Lignée (identifiant de covenant) portée par la pièce, lue sur le nœud.
+    pub lignee: Option<Hash>,
 }
 
 /// Pièces de l'adresse du coffre, lues sur le nœud (le nœud fait foi).
@@ -196,6 +255,7 @@ pub async fn pieces(c: &KaspaRpcClient, art: &SilAbiArtifact) -> Res<Vec<Piece>>
         .into_iter()
         .filter(|u| u.utxo_entry.script_public_key == spk)
         .map(|u| Piece {
+            lignee: u.utxo_entry.covenant_id,
             outpoint: u.outpoint.clone().into(),
             valeur: u.utxo_entry.amount,
             creation: (u.utxo_entry.block_daa_score != u64::MAX).then_some(u.utxo_entry.block_daa_score),
@@ -256,6 +316,11 @@ pub async fn deployer_vers(owner: &Keypair, agent: &Keypair, retour: Option<&str
     if charger().is_some() || load_state().is_ok() {
         return Err("un coffre est déjà déployé".into());
     }
+    // Nouveaux coffres : cœur v0.9.2, à lignée. PLAFOND_COEUR=v0.7 garde l'ancien cœur (essais de
+    // comparaison) ; les coffres v0.7 existants restent gérés par les fonctions ci-dessous.
+    if std::env::var("PLAFOND_COEUR").as_deref() != Ok("v0.7") {
+        return crate::coffre092::creer(owner, agent, retour).await;
+    }
     let r = regles();
     let retour_adr = match retour {
         Some(a) => valider_retour(a)?,
@@ -273,6 +338,11 @@ pub async fn deployer_vers(owner: &Keypair, agent: &Keypair, retour: Option<&str
     let daa = virtual_daa(&c).await?;
     let txid = verser(&c, owner, &art, r.depot, r.pieces).await?;
     let e = EtatCoeur {
+        lignee: None,
+        genese: None,
+        sas_max_frais: None,
+        attestation: None,
+        retraits: vec![],
         version: VERSION.into(),
         // Rien d'enregistré pour l'adresse par défaut : le coffre suit l'adresse du propriétaire.
         retour: retour.map(|_| retour_adr.to_string()),
@@ -365,7 +435,10 @@ pub fn tx_regonfler(
 /// progressivement, au rythme du mandat. La courbe promise reste une borne juste : l'apport est
 /// noté comme une racine à sa date, et la pièce regonflée a déjà sa propre courbe.
 pub async fn recharger(owner: &Keypair, agent: &Keypair, montant: u64) -> Res<String> {
-    let mut e = charger().ok_or("aucun coffre v0.6 déployé")?;
+    let mut e = charger().ok_or("aucun coffre déployé")?;
+    if lignee_de(Some(&e)).is_some() {
+        return crate::coffre092::ajouter(owner, agent, montant).await;
+    }
     let coeur = coeur_de(&xonly(owner), &agent_pk(agent));
     let art = coeur.artifact()?;
     let c = connect().await?;
@@ -411,7 +484,9 @@ pub fn delai(coeur: &Coeur, pieces: &[Piece], now: u64, spent: u64) -> Option<u6
 /// transaction annonce tout l'âge réel de la pièce et le réseau tranche.
 pub async fn payer(owner_pk: &[u8], agent: &Keypair, montant: u64, dest: ScriptPublicKey, forcer: bool, attente_max: u64) -> Res<String> {
     let coeur = coeur_de(owner_pk, &xonly(agent));
-    let art = coeur.artifact()?;
+    let etat = charger();
+    let lignee = lignee_de(etat.as_ref());
+    let art = art_de(&coeur, etat.as_ref())?;
     let spent = montant + FEE;
     if spent as i64 > coeur.capacite && !forcer {
         return Err(format!("refusé localement : {} TKAS (frais compris) dépasse le plafond par achat de {} TKAS", spent as f64 / 1e8, coeur.capacite as f64 / 1e8).into());
@@ -420,7 +495,8 @@ pub async fn payer(owner_pk: &[u8], agent: &Keypair, montant: u64, dest: ScriptP
     let debut = std::time::Instant::now();
     let (piece, now) = loop {
         let now = virtual_daa(&c).await?;
-        let ps = pieces(&c, &art).await?;
+        // L1 : seules les pièces de la lignée sont le budget (coffre v0.7 : toutes).
+        let ps = du_coffre(pieces(&c, &art).await?, lignee).0;
         if forcer {
             let p = ps.iter().filter(|p| p.creation.is_some()).max_by_key(|p| p.valeur).cloned().ok_or("aucune pièce confirmée dans le coffre")?;
             break (p, now);
@@ -444,8 +520,8 @@ pub async fn payer(owner_pk: &[u8], agent: &Keypair, montant: u64, dest: ScriptP
     // Agent compromis simulé : l'outil ne bride rien (capacité levée côté construction), la
     // transaction part telle quelle et c'est le script, exécuté par le réseau, qui tranche.
     let permissif = Coeur { capacite: i64::MAX / coeur.periode.max(1), ..coeur.clone() };
-    let tx = coeur::build_pay(if forcer { &permissif } else { &coeur }, &art, piece.outpoint, piece.valeur, dest, montant, FEE, agent, sequence)?;
-    let entree = UtxoEntry::new(piece.valeur, vault_spk(&art), piece.creation.unwrap_or(0), false, None);
+    let tx = tx_payer(if forcer { &permissif } else { &coeur }, &art, lignee, &piece, dest, montant, FEE, agent, sequence)?;
+    let entree = UtxoEntry::new(piece.valeur, vault_spk(&art), piece.creation.unwrap_or(0), false, lignee);
     if let Some(m) = masse::masses(&tx, std::slice::from_ref(&entree)) {
         if !m.standard() && !masse::FORCER.load(std::sync::atomic::Ordering::Relaxed) {
             liberer(&c).await?;
@@ -462,6 +538,26 @@ pub async fn payer(owner_pk: &[u8], agent: &Keypair, montant: u64, dest: ScriptP
     match r {
         Ok(id) => Ok(id.to_string()),
         Err(err) => Err(format!("REFUSÉ par le réseau : {err}").into()),
+    }
+}
+
+/// Transaction de paiement de l'agent, selon la version du coffre : avec lignée (v0.9.2, le reste
+/// garde la lignée) ou sans (v0.7).
+#[allow(clippy::too_many_arguments)]
+pub fn tx_payer(
+    coeur: &Coeur,
+    art: &SilAbiArtifact,
+    lignee: Option<Hash>,
+    piece: &Piece,
+    dest: ScriptPublicKey,
+    montant: u64,
+    frais: u64,
+    agent: &Keypair,
+    sequence: Option<u64>,
+) -> Res<Transaction> {
+    match lignee {
+        Some(x) => crate::lignee::build_pay(coeur, (piece.outpoint, piece.valeur), x, dest, montant, frais, agent, sequence),
+        None => coeur::build_pay(coeur, art, piece.outpoint, piece.valeur, dest, montant, frais, agent, sequence),
     }
 }
 
@@ -594,6 +690,9 @@ impl SuiviGel {
 /// quand même, sa continuation est une nouvelle pièce, rapatriée au tour suivant. Le gel n'est
 /// annoncé terminé qu'une fois l'adresse restée vide pendant `GEL_STABLE` (R58).
 pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
+    if lignee_de(charger().as_ref()).is_some() {
+        return crate::coffre092::fermer(owner, agent).await;
+    }
     let coeur = coeur_de(&xonly(owner), &agent_pk(agent));
     let art = coeur.artifact()?;
     let c = connect().await?;
@@ -673,6 +772,11 @@ pub async fn geler(owner: &Keypair, agent: &Keypair) -> Res<String> {
 
 /// Ce que le moteur de risque et la console lisent : les pièces et l'instant, sur le nœud.
 pub struct Vue {
+    /// Lignée du coffre (v0.9.2) ; `None` : coffre v0.7 ou v0.6.
+    pub lignee: Option<Hash>,
+    /// Pièces à l'adresse du coffre qui ne portent pas sa lignée (envoyées par un tiers) : elles ne
+    /// comptent ni dans le solde ni dans le budget ; seul le propriétaire peut les rapatrier.
+    pub hors_lignee: Vec<Piece>,
     pub coeur: Coeur,
     pub adresse: String,
     pub pieces: Vec<Piece>,
@@ -697,7 +801,16 @@ impl Vue {
     }
     /// Apports du propriétaire depuis la création, et perte nette depuis la création.
     pub fn apports(&self) -> u64 {
-        self.etat.as_ref().map(|e| e.apports.iter().map(|a| a.sompi).sum()).unwrap_or(0)
+        // Un retrait partiel est de l'argent repris par le propriétaire : il se déduit des apports.
+        self.etat.as_ref().map(|e| e.apports.iter().map(|a| a.sompi).sum::<u64>().saturating_sub(e.retraits.iter().map(|a| a.sompi).sum())).unwrap_or(0)
+    }
+    /// Paramètres publics du coffre, lignée comprise : ce qu'un vendeur reçoit pour le reconnaître.
+    pub fn publics(&self) -> coeur::Publics {
+        coeur::Publics { lignee: self.lignee.map(|x| x.to_string()), ..self.coeur.publics() }
+    }
+    /// Le script du coffre, selon sa version.
+    pub fn art(&self) -> Res<SilAbiArtifact> {
+        art_de(&self.coeur, self.etat.as_ref())
     }
     /// Courbe promise à la création : perte nette maximale à l'instant `t` (spec v0.6, §1b).
     pub fn courbe(&self, t: u64) -> u64 {
@@ -708,10 +821,12 @@ impl Vue {
 
 pub async fn vue(c: &KaspaRpcClient, owner_pk: &[u8], agent_pk: &[u8]) -> Res<Vue> {
     let coeur = coeur_de(owner_pk, agent_pk);
-    let art = coeur.artifact()?;
-    let pieces = pieces(c, &art).await?;
+    let etat = charger();
+    let lignee = lignee_de(etat.as_ref());
+    let art = art_de(&coeur, etat.as_ref())?;
+    let (pieces, hors_lignee) = du_coffre(pieces(c, &art).await?, lignee);
     let now = virtual_daa(c).await?;
-    Ok(Vue { adresse: adresse(&art)?.to_string(), coeur, pieces, now, etat: charger() })
+    Ok(Vue { lignee, hors_lignee, adresse: adresse(&art)?.to_string(), coeur, pieces, now, etat })
 }
 
 #[cfg(test)]
@@ -728,9 +843,9 @@ mod tests {
         let c = coeur(50_000_000, 288_000);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
         let ps = vec![
-            Piece { outpoint: op, valeur: 1_000_000_000, creation: Some(1_000) },
-            Piece { outpoint: op, valeur: 10_000, creation: Some(0) }, // trop petite
-            Piece { outpoint: op, valeur: 1_000_000_000, creation: None }, // non confirmée
+            Piece { lignee: None, outpoint: op, valeur: 1_000_000_000, creation: Some(1_000) },
+            Piece { lignee: None, outpoint: op, valeur: 10_000, creation: Some(0) }, // trop petite
+            Piece { lignee: None, outpoint: op, valeur: 1_000_000_000, creation: None }, // non confirmée
         ];
         let spent = 5_000_000;
         let attente = c.attente(spent as i64);
@@ -747,7 +862,7 @@ mod tests {
         let c = coeur(50_000_000, 288_000);
         let art = c.artifact().unwrap();
         let dest = address(&k(11));
-        let p = |i: u32, v: u64| Piece { outpoint: TransactionOutpoint::new(TransactionId::from_bytes([7; 32]), i), valeur: v, creation: Some(1) };
+        let p = |i: u32, v: u64| Piece { lignee: None, outpoint: TransactionOutpoint::new(TransactionId::from_bytes([7; 32]), i), valeur: v, creation: Some(1) };
         let mut ps: Vec<Piece> = (0..500).map(|i| p(i, 5_000)).collect(); // poussière
         ps.extend((500..600).map(|i| p(i, coeur_plancher()))); // 100 pièces juste au plancher
         ps.push(p(600, 3_000_000_000));
@@ -777,9 +892,9 @@ mod tests {
     fn achats_reconnus_sans_lignee() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
-        let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
+        let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         assert!(suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10));
         assert!(e.achats.is_empty(), "première lecture : aucun achat");
         assert!(!suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 11), "rien n'a changé");
@@ -802,19 +917,19 @@ mod tests {
         let c = coeur(200_000_000, 864_000);
         let depot = TransactionId::from_bytes([1; 32]);
         let (note, inscrit) = (1_000u64, 997u64); // noté par l'outil ; réellement inscrit
-        let mut e = EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: note,
             apports: vec![Apport { txid: depot.to_string(), sompi: 1_000_000_000, daa: note }], vues: vec![], achats: vec![] };
-        let pieces = vec![Piece { outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(inscrit) }];
+        let pieces = vec![Piece { lignee: None, outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(inscrit) }];
         // L'agent paie 0,5 TKAS dès que le réseau le permet : à inscription + attente.
         let spent = 50_000_000u64;
         let x = inscrit + c.attente(spent as i64);
         assert!(c.immediate(1_000_000_000, x - inscrit) >= spent, "le réseau accepte ce paiement à l'instant x");
         assert!(suivre(&mut e, &pieces, inscrit + 10), "la première lecture recale l'apport");
         assert_eq!((e.apports[0].daa, e.cree_daa), (inscrit, inscrit));
-        let v = Vue { coeur: c, adresse: String::new(), pieces, now: x, etat: Some(e.clone()) };
+        let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces, now: x, etat: Some(e.clone()) };
         assert!(v.courbe(x) >= spent, "courbe promise {} < perte possible {spent}", v.courbe(x));
         // Jamais dans l'autre sens : une inscription plus tardive que la note ne resserre pas la courbe.
-        let tard = vec![Piece { outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(2_000) }];
+        let tard = vec![Piece { lignee: None, outpoint: TransactionOutpoint::new(depot, 0), valeur: 1_000_000_000, creation: Some(2_000) }];
         suivre(&mut e, &tard, 2_010);
         assert_eq!(e.apports[0].daa, inscrit);
     }
@@ -827,14 +942,14 @@ mod tests {
     #[test]
     fn r58_gel_confirme_seulement_s_il_est_stable() {
         let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 1);
-        let grosse = Piece { outpoint: op(1), valeur: 1_000_000_000, creation: Some(500) };
+        let grosse = Piece { lignee: None, outpoint: op(1), valeur: 1_000_000_000, creation: Some(500) };
         let mut suivi = SuiviGel::default();
         assert_eq!(suivi.observer(std::slice::from_ref(&grosse), 1_000), EtatGel::ARapatrier);
         // Le gel est inscrit (vu du nœud) : l'adresse paraît vide. Pas encore terminé.
         assert_eq!(suivi.observer(&[], 1_003), EtatGel::EnAttente, "l'ancienne règle disait « terminé » ici");
         assert_eq!(suivi.observer(&[], 1_003 + GEL_STABLE - 1), EtatGel::EnAttente);
         // Réordonnancement : le paiement de l'agent l'emporte, sa continuation apparaît.
-        let continuation = Piece { outpoint: op(2), valeur: 950_000_000, creation: Some(1_002) };
+        let continuation = Piece { lignee: None, outpoint: op(2), valeur: 950_000_000, creation: Some(1_002) };
         assert_eq!(suivi.observer(std::slice::from_ref(&continuation), 1_010), EtatGel::ARapatrier, "le gel reprend");
         // Nouveau gel inscrit ; il faut de nouveau toute la durée de stabilité, à partir de là.
         assert_eq!(suivi.observer(&[], 1_020), EtatGel::EnAttente);
@@ -843,7 +958,7 @@ mod tests {
 
         // Une continuation pas encore confirmée fait attendre, et remet le compteur à zéro.
         let mut suivi = SuiviGel::default();
-        let en_vol = Piece { outpoint: op(3), valeur: 950_000_000, creation: None };
+        let en_vol = Piece { lignee: None, outpoint: op(3), valeur: 950_000_000, creation: None };
         assert_eq!(suivi.observer(&[], 2_000), EtatGel::EnAttente);
         assert_eq!(suivi.observer(std::slice::from_ref(&en_vol), 2_050), EtatGel::EnAttente);
         assert_eq!(suivi.observer(&[], 2_000 + GEL_STABLE), EtatGel::EnAttente, "le compteur est reparti de zéro");
@@ -854,7 +969,7 @@ mod tests {
         assert_eq!(suivi.observer(&[], 2_990 + GEL_STABLE - 1), EtatGel::EnAttente);
         assert_eq!(suivi.observer(&[], 2_990 + GEL_STABLE), EtatGel::Stable);
         // La poussière sous le plancher (R53) n'empêche pas de conclure.
-        let poussiere = Piece { outpoint: op(4), valeur: 5_000, creation: Some(1) };
+        let poussiere = Piece { lignee: None, outpoint: op(4), valeur: 5_000, creation: Some(1) };
         let mut suivi = SuiviGel::default();
         assert_eq!(suivi.observer(std::slice::from_ref(&poussiere), 10), EtatGel::EnAttente);
         assert_eq!(suivi.observer(std::slice::from_ref(&poussiere), 10 + GEL_STABLE), EtatGel::Stable);
@@ -868,9 +983,9 @@ mod tests {
     fn suivre_face_aux_depots_de_tiers() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let neuf = || EtatCoeur { version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let neuf = || EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
-        let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
+        let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         let total = |e: &EtatCoeur| e.achats.iter().map(|a| a.sompi).sum::<u64>();
         let perte_nette = |e: &EtatCoeur, ps: &[Piece]| e.apports.iter().map(|a| a.sompi).sum::<u64>().saturating_sub(ps.iter().map(|p| p.valeur).sum());
 
@@ -920,15 +1035,15 @@ mod tests {
     #[test]
     fn r62_budget_par_periode_tenu_apres_rechargement() {
         // 4 TKAS par heure, 0,5 au plus par achat : 4 pièces de 1 TKAS.
-        let r = crate::Regles::calculer(400_000_000, 36_000, 50_000_000).unwrap();
+        let r = crate::Regles::calculer_k(400_000_000, 36_000, 50_000_000, Some(4)).unwrap();
         let c = coeur(r.capacite, r.recharge_daa);
         let op = |i: u32| TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), i);
         let now = 10 * r.periode_daa as u64;
         // Pièces d'âges différents ; la 2 a payé récemment (continuation jeune).
         let mut pieces: Vec<Piece> =
-            decouper(r.depot, r.pieces).iter().enumerate().map(|(i, v)| Piece { outpoint: op(i as u32), valeur: *v, creation: Some(0) }).collect();
-        pieces[2] = Piece { outpoint: op(9), valeur: 60_000_000, creation: Some(now - 100) };
-        let vue = |pieces: Vec<Piece>| Vue { coeur: c.clone(), adresse: String::new(), pieces, now, etat: None };
+            decouper(r.depot, r.pieces).iter().enumerate().map(|(i, v)| Piece { lignee: None, outpoint: op(i as u32), valeur: *v, creation: Some(0) }).collect();
+        pieces[2] = Piece { lignee: None, outpoint: op(9), valeur: 60_000_000, creation: Some(now - 100) };
+        let vue = |pieces: Vec<Piece>| Vue { lignee: None, hors_lignee: vec![], coeur: c.clone(), adresse: String::new(), pieces, now, etat: None };
         assert!(vue(pieces.clone()).fenetre(r.periode_daa as u64) <= r.budget as u64, "avant rechargement : le budget tient");
 
         // Le propriétaire ajoute 4 TKAS : la pièce la plus jeune est regonflée, pas de cinquième pièce.
@@ -936,11 +1051,11 @@ mod tests {
         assert_eq!(choix, Recharge::Regonfler(op(9), 60_000_000), "la plus jeune est regonflée");
         let Recharge::Regonfler(o, v) = choix else { unreachable!() };
         let mut apres: Vec<Piece> = pieces.iter().filter(|p| p.outpoint != o).cloned().collect();
-        apres.push(Piece { outpoint: op(20), valeur: v + 400_000_000, creation: Some(now) });
+        apres.push(Piece { lignee: None, outpoint: op(20), valeur: v + 400_000_000, creation: Some(now) });
         assert_eq!(apres.len(), r.pieces as usize);
         // Le maximum sur une période, mesuré à toute date après le rechargement, reste sous le budget.
         for d in [0, 1, 10_000, r.periode_daa as u64, 5 * r.periode_daa as u64] {
-            let v = Vue { coeur: c.clone(), adresse: String::new(), pieces: apres.clone(), now: now + d, etat: None };
+            let v = Vue { lignee: None, hors_lignee: vec![], coeur: c.clone(), adresse: String::new(), pieces: apres.clone(), now: now + d, etat: None };
             let pire = v.fenetre(r.periode_daa as u64);
             assert!(pire <= r.budget as u64, "{d} après : {pire} sompi possibles sur une période, budget {}", r.budget);
         }
@@ -949,7 +1064,7 @@ mod tests {
         for n in 0..5u32 {
             let Recharge::Regonfler(o, v) = choisir_recharge(&c, &ps, r.pieces as usize, now + 1 + n as u64) else { panic!("regonfler attendu") };
             ps.retain(|p| p.outpoint != o);
-            ps.push(Piece { outpoint: op(30 + n), valeur: v + 100_000_000, creation: Some(now + 1 + n as u64) });
+            ps.push(Piece { lignee: None, outpoint: op(30 + n), valeur: v + 100_000_000, creation: Some(now + 1 + n as u64) });
             assert_eq!(ps.len(), r.pieces as usize);
         }
     }
@@ -960,7 +1075,7 @@ mod tests {
     fn r62_recharge_recree_seulement_les_pieces_manquantes() {
         let c = coeur(50_000_000, 36_000);
         let op = |i: u32| TransactionOutpoint::new(TransactionId::from_bytes([2; 32]), i);
-        let p = |i: u32, v: u64, cr: Option<u64>| Piece { outpoint: op(i), valeur: v, creation: cr };
+        let p = |i: u32, v: u64, cr: Option<u64>| Piece { lignee: None, outpoint: op(i), valeur: v, creation: cr };
         let poussiere = p(0, 5_000, Some(1));
         assert_eq!(choisir_recharge(&c, &[poussiere.clone()], 4, 100), Recharge::Nouvelle);
         assert_eq!(choisir_recharge(&c, &[], 1, 100), Recharge::Nouvelle);
@@ -1025,10 +1140,10 @@ mod tests {
     fn r62_regonflement_n_est_pas_un_achat() {
         let op = |t: u8, i: u32| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), i);
         let depot = TransactionId::from_bytes([1; 32]).to_string();
-        let mut e = EtatCoeur { version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
+        let mut e = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: 1, periode: 1, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }, Apport { txid: depot.clone(), sompi: 1_000, daa: 0 }], vues: vec![], achats: vec![] };
         assert_eq!(pieces_du_mandat(&e), 2);
-        let p = |t: u8, i: u32, v: u64| Piece { outpoint: op(t, i), valeur: v, creation: Some(1) };
+        let p = |t: u8, i: u32, v: u64| Piece { lignee: None, outpoint: op(t, i), valeur: v, creation: Some(1) };
         suivre(&mut e, &[p(1, 0, 1_000), p(1, 1, 1_000)], 10);
         // Regonflement de 1:1 avec 500 : nouvelle pièce 3:0 de 1 500.
         e.apports.push(Apport { txid: TransactionId::from_bytes([3; 32]).to_string(), sompi: 500, daa: 20 });
@@ -1050,7 +1165,7 @@ mod tests {
     fn r62_courbe_promise_tenue_apres_regonflement() {
         let c = coeur(50_000_000, 36_000);
         let op = |t: u8| TransactionOutpoint::new(TransactionId::from_bytes([t; 32]), 0);
-        let etat = |apports: Vec<Apport>| EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
+        let etat = |apports: Vec<Apport>| EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0, apports, vues: vec![], achats: vec![] };
         let v0 = 200_000_000u64;
         let mut apports = vec![Apport { txid: String::new(), sompi: v0, daa: 0 }];
         // L'agent dépense au maximum jusqu'à t_r, puis la pièce est regonflée de m.
@@ -1058,7 +1173,7 @@ mod tests {
         let perdu_avant = c.fenetre(v0, 0, t_r);
         let m = 300_000_000u64;
         apports.push(Apport { txid: String::new(), sompi: m, daa: t_r });
-        let v = Vue { coeur: c.clone(), adresse: String::new(), pieces: vec![Piece { outpoint: op(1), valeur: v0 - perdu_avant + m, creation: Some(t_r) }], now: t_r, etat: Some(etat(apports)) };
+        let v = Vue { lignee: None, hors_lignee: vec![], coeur: c.clone(), adresse: String::new(), pieces: vec![Piece { lignee: None, outpoint: op(1), valeur: v0 - perdu_avant + m, creation: Some(t_r) }], now: t_r, etat: Some(etat(apports)) };
         for d in [0u64, 1, 1_000, 36_000, 500_000, 10_000_000] {
             let possible = perdu_avant + c.fenetre(v0 - perdu_avant + m, 0, d);
             assert!(v.courbe(t_r + d) >= possible, "courbe {} < perte possible {possible} à {d}", v.courbe(t_r + d));
@@ -1082,17 +1197,21 @@ mod tests {
     /// Plusieurs pièces : k achats d'affilée, et la courbe promise est celle du budget total.
     #[test]
     fn plusieurs_pieces_rafale_et_budget_tenus() {
-        let r = crate::Regles::calculer(4_000_000_000, crate::JOUR_DAA, 200_000_000).unwrap(); // 40/jour, 2 par achat
+        // Une pièce par défaut ; quatre sur demande explicite ; cinq, ou plus que le budget ne permet : refusé.
+        assert_eq!(crate::Regles::calculer(4_000_000_000, crate::JOUR_DAA, 200_000_000).unwrap().pieces, 1);
+        assert!(crate::Regles::calculer_k(4_000_000_000, crate::JOUR_DAA, 200_000_000, Some(5)).is_err() && crate::Regles::calculer_k(4_000_000_000, crate::JOUR_DAA, 200_000_000, Some(0)).is_err());
+        assert!(crate::Regles::calculer_k(400_000_000, crate::JOUR_DAA, 200_000_000, Some(2)).is_err(), "deux pièces exigent un budget de quatre plafonds");
+        let r = crate::Regles::calculer_k(4_000_000_000, crate::JOUR_DAA, 200_000_000, Some(4)).unwrap(); // 40/jour, 2 par achat
         assert_eq!(r.pieces, crate::PIECES_MAX);
         assert!(r.maximum_sur(r.periode_daa) <= r.budget, "jamais plus que le budget sur la période");
         let c = coeur(r.capacite, r.recharge_daa);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
         let parts = decouper(r.depot, r.pieces);
         assert_eq!(parts.iter().sum::<u64>(), r.depot);
-        let pieces: Vec<Piece> = parts.iter().map(|v| Piece { outpoint: op, valeur: *v, creation: Some(0) }).collect();
-        let etat = EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let pieces: Vec<Piece> = parts.iter().map(|v| Piece { lignee: None, outpoint: op, valeur: *v, creation: Some(0) }).collect();
+        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: parts.iter().map(|v| Apport { txid: String::new(), sompi: *v, daa: 0 }).collect(), vues: vec![], achats: vec![] };
-        let v = Vue { coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
+        let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces, now: r.recharge_daa as u64, etat: Some(etat) };
         // Au bout d'une période de recharge, k achats au plafond sont possibles d'affilée.
         assert_eq!(v.immediate(), r.pieces as u64 * r.capacite as u64);
         // La courbe promise sur la période ne dépasse pas le budget.
@@ -1103,9 +1222,9 @@ mod tests {
     fn vue_courbe_et_risque() {
         let c = coeur(50_000_000, 288_000);
         let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
-        let etat = EtatCoeur { version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
+        let etat = EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: VERSION.into(), retour: None, capacite: c.capacite, periode: c.periode, agent: String::new(), cree_daa: 0,
             apports: vec![Apport { txid: String::new(), sompi: 2_000_000_000, daa: 0 }], vues: vec![], achats: vec![] };
-        let v = Vue { coeur: c, adresse: String::new(), pieces: vec![Piece { outpoint: op, valeur: 2_000_000_000, creation: Some(0) }], now: 0, etat: Some(etat) };
+        let v = Vue { lignee: None, hors_lignee: vec![], coeur: c, adresse: String::new(), pieces: vec![Piece { lignee: None, outpoint: op, valeur: 2_000_000_000, creation: Some(0) }], now: 0, etat: Some(etat) };
         assert_eq!(v.immediate(), 0, "un mandat neuf démarre à zéro");
         assert_eq!(v.courbe(0), 0);
         assert_eq!(v.courbe(288_000), 50_000_000, "une capacité au bout d'une période");

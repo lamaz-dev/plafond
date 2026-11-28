@@ -70,9 +70,26 @@ pub struct Publics {
     /// Empreinte de l'adresse de retour (hexadécimal) ; absente pour un coffre v0.6.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retour: Option<String>,
+    /// Coffre à lignée (cœur v0.9.2) : identifiant de sa lignée (hexadécimal). Absente : coffre v0.7
+    /// ou v0.6. Le coffre s'identifie alors par son adresse ET cette lignée.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lignee: Option<String>,
 }
 
 impl Publics {
+    /// Lignée annoncée (coffre v0.9.2), décodée ; erreur si elle est mal formée.
+    pub fn lignee(&self) -> Res<Option<kaspa_consensus_core::Hash>> {
+        match &self.lignee {
+            None => Ok(None),
+            Some(h) => Ok(Some(kaspa_consensus_core::Hash::from_bytes(<[u8; 32]>::try_from(hex::decode(h)?.as_slice()).map_err(|_| "lignée du coffre invalide (32 octets attendus)")?))),
+        }
+    }
+    /// Le script du coffre annoncé, selon sa version.
+    pub fn artifact(&self) -> Res<SilAbiArtifact> {
+        let c = self.coeur()?;
+        if self.lignee()?.is_some() { c.artifact_v092() } else { c.artifact() }
+    }
+
     pub fn coeur(&self) -> Res<Coeur> {
         let retour = self.retour.as_deref().map(hex::decode).transpose()?;
         let c = Coeur { owner: hex::decode(&self.owner)?, agent: hex::decode(&self.agent)?, capacite: self.capacite, periode: self.periode, retour };
@@ -109,6 +126,7 @@ impl Coeur {
             capacite: self.capacite,
             periode: self.periode,
             retour: self.retour.as_ref().map(hex::encode),
+            lignee: None,
         }
     }
 
@@ -932,10 +950,10 @@ mod tests {
             }
             let op = TransactionOutpoint::new(TransactionId::from_bytes([1; 32]), 0);
             let x = 1u64 << 40;
-            let etat = crate::coffre::EtatCoeur { version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
+            let etat = crate::coffre::EtatCoeur { lignee: None, genese: None, sas_max_frais: None, attestation: None, retraits: vec![], version: crate::coffre::VERSION.into(), retour: None, capacite: cap, periode: r, agent: String::new(), cree_daa: x,
                 apports: vec![crate::coffre::Apport { txid: String::new(), sompi: v, daa: x }], vues: vec![], achats: vec![] };
-            let vue = crate::coffre::Vue { coeur: c.clone(), adresse: String::new(),
-                pieces: vec![crate::coffre::Piece { outpoint: op, valeur: v, creation: Some(x) }], now: x.saturating_add(age), etat: Some(etat) };
+            let vue = crate::coffre::Vue { lignee: None, hors_lignee: vec![], coeur: c.clone(), adresse: String::new(),
+                pieces: vec![crate::coffre::Piece { lignee: None, outpoint: op, valeur: v, creation: Some(x) }], now: x.saturating_add(age), etat: Some(etat) };
             prop_assert_eq!(vue.immediate(), c.immediate(v, x.saturating_add(age) - x));
             prop_assert_eq!(vue.courbe(x.saturating_add(d)) as i128, ref_fenetre(ci, ri, v as i128, 0, (x.saturating_add(d) - x) as i128));
             prop_assert_eq!(vue.courbe(x - 1), 0, "avant l'apport : rien");

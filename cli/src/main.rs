@@ -54,6 +54,7 @@ mod retrouver;
 mod ardoise;
 mod coeur;
 mod coffre;
+mod coffre092;
 mod course;
 mod risque;
 mod sobriete;
@@ -137,7 +138,16 @@ impl Regles {
         Regles { depot: FUND, ..Regles::calculer(2 * CAPACITY, 36_000, MAX_PER_PAYMENT).expect("réglages de test valides") }
     }
 
+    /// Une pièce par défaut (décision du 28 nov. 2026) : un achat à la fois, borne de perte la plus
+    /// basse. `calculer_k` permet d'en demander davantage, en connaissance de cause.
     pub fn calculer(budget: i64, periode_daa: i64, plafond: i64) -> Res<Self> {
+        Self::calculer_k(budget, periode_daa, plafond, None)
+    }
+
+    /// `pieces` : nombre de pièces demandé (1 à 4) ; `None` = une. k pièces = k achats d'affilée et
+    /// une perte immédiate possible de k × plafond ; la période de recharge est allongée pour que la
+    /// dépense sur la période reste égale au budget.
+    pub fn calculer_k(budget: i64, periode_daa: i64, plafond: i64, pieces: Option<i64>) -> Res<Self> {
         if ![36_000, JOUR_DAA, 7 * JOUR_DAA, 30 * JOUR_DAA].contains(&periode_daa) {
             return Err("période inconnue (heure, jour, semaine ou mois)".into());
         }
@@ -154,7 +164,14 @@ impl Regles {
         // k pièces : k achats d'affilée possibles. Il faut budget > k·C (au moins la moitié du budget
         // reste pour la recharge) et des pièces au-dessus du plancher KIP-9.
         let depot_prevu = (budget as u64).max(100_000_000);
-        let k = (budget / (2 * capacite)).clamp(1, PIECES_MAX).min((depot_prevu / (2 * coeur_plancher())).max(1) as i64);
+        let k_max = (budget / (2 * capacite)).clamp(1, PIECES_MAX).min((depot_prevu / (2 * coeur_plancher())).max(1) as i64);
+        let k = pieces.unwrap_or(1);
+        if !(1..=PIECES_MAX).contains(&k) {
+            return Err(format!("nombre de pièces : de 1 à {PIECES_MAX}").into());
+        }
+        if k > k_max {
+            return Err(format!("{k} pièces : trop pour ce budget (au plus {k_max} : il faut un budget d'au moins deux plafonds d'achat par pièce)").into());
+        }
         let kc = k * capacite;
         // R = ⌈k·C·P / (budget − k·C)⌉ : arrondi au-dessus, la dépense sur la période reste ≤ budget.
         let recharge = ((kc as i128 * periode_daa as i128 + (budget - kc) as i128 - 1) / (budget - kc) as i128) as i64;
@@ -1142,6 +1159,24 @@ async fn main() -> Res<()> {
         println!("(pause de {secs} s)");
         return Ok(());
     }
+    if cmd == "sas-verifier" {
+        // CÔTÉ PAYEUR, sans aucune clé : vérifie une fiche de dépôt avant d'y envoyer de l'argent.
+        let source = args.get(2).ok_or("fiche de dépôt manquante (fichier JSON, ou - pour l'entrée standard)")?;
+        let texte = if source == "-" { std::io::read_to_string(std::io::stdin())? } else { fs::read_to_string(source)? };
+        let f: coffre092::Fiche = serde_json::from_str(&texte).map_err(|e| format!("fiche illisible : {e}"))?;
+        coffre092::verifier_fiche(&f)?;
+        println!("Fiche cohérente : l'adresse de dépôt est bien celle de ce coffre, et elle est signée par la clé du propriétaire.");
+        println!("  propriétaire (clé publique à comparer avec celle que vous connaissez) : {}", f.coffre.owner);
+        println!("  adresse de dépôt : {}", f.adresse_depot);
+        println!("  dépôt minimal versé automatiquement : {} KAS", f.depot_minimal_sompi as f64 / 1e8);
+        if !args.iter().any(|a| a == "--hors-ligne") {
+            let c = connect().await?;
+            let r = coffre092::fiche_en_ligne(&c, &f).await;
+            liberer(&c).await?;
+            println!("  sur le réseau : {}", r?);
+        }
+        return Ok(());
+    }
     if cmd == "cles" {
         if env::var("GITHUB_ACTIONS").is_ok() || env::var("CI").is_ok() {
             return Err("commande « cles » interdite en CI : elle afficherait des clés secrètes dans le journal public".into());
@@ -1402,7 +1437,10 @@ async fn main() -> Res<()> {
             match coffre::charger() {
                 Some(_) => {
                     let v = coffre::vue(&c, &xonly(&owner), &agent_pk(&agent)).await?;
-                    println!("Coffre (cœur {}) {} : {} TKAS en {} pièce(s)", if v.coeur.retour.is_some() { "v0.7" } else { "v0.6" }, v.adresse, v.solde() as f64 / 1e8, v.pieces.len());
+                    println!("Coffre (cœur {}) {} : {} TKAS en {} pièce(s)", if v.lignee.is_some() { "v0.9.2, à lignée" } else if v.coeur.retour.is_some() { "v0.7" } else { "v0.6" }, v.adresse, v.solde() as f64 / 1e8, v.pieces.len());
+                    if let Some(x) = v.lignee {
+                        println!("  lignée : {x} ; pièces d'un tiers à la même adresse (hors budget) : {} ({} TKAS)", v.hors_lignee.len(), v.hors_lignee.iter().map(|p| p.valeur).sum::<u64>() as f64 / 1e8);
+                    }
                     println!("  disponible maintenant : {} TKAS ; pire cas sur 24 h : {} TKAS", v.immediate() as f64 / 1e8, v.fenetre(JOUR_DAA as u64) as f64 / 1e8);
                     println!("  perte nette depuis la création : {} TKAS (courbe promise : {} TKAS)", v.apports().saturating_sub(v.solde()) as f64 / 1e8, v.courbe(v.now) as f64 / 1e8);
                 }
@@ -1618,15 +1656,78 @@ async fn main() -> Res<()> {
             let version = match cmd { "recuperer-v04" => 4, "recuperer-v05" => 5, _ => 0 };
             geler(&owner, &agent, args.iter().any(|a| a == "--sans-etat"), version).await?;
         }
-        "recharger" => {
+        "recharger" | "ajouter" => {
             let add: u64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
             recharger(&owner, &agent, add).await?;
+        }
+        "reprendre" => {
+            // Retrait partiel vers l'adresse de retour (coffre à lignée). Attend au plus 10 minutes
+            // que les frais soient permis par le rythme du coffre.
+            let montant: u64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
+            coffre092::reprendre(&owner, &agent, montant, 600).await?;
+        }
+        "sas" => {
+            // Adresse de dépôt du coffre : recalculée, signée par le propriétaire, avec sa fiche vérifiable.
+            let mut e = coffre::charger().ok_or("aucun coffre")?;
+            let coeur = coffre::coeur_de(&xonly(&owner), &agent_pk(&agent));
+            let c = connect().await?;
+            let r = coffre092::publier_depot(&c, &owner, &coeur, &mut e).await;
+            let attente = match coffre092::sas_de(&coeur, &e) {
+                Ok(sas) => coffre092::depots(&c, &sas).await.unwrap_or_default(),
+                Err(_) => vec![],
+            };
+            liberer(&c).await?;
+            r?;
+            let f = coffre092::fiche(&xonly(&owner), &agent_pk(&agent))?;
+            println!("Adresse de dépôt (sas) : {}", f.adresse_depot);
+            println!("Dépôt minimal versé automatiquement : {} TKAS (en dessous, le dépôt attend le propriétaire)", f.depot_minimal_sompi as f64 / 1e8);
+            println!("Dépôts en attente : {} ({} TKAS)", attente.len(), attente.iter().map(|d| d.1).sum::<u64>() as f64 / 1e8);
+            println!("Fiche de dépôt à transmettre au payeur (il la vérifie avec `sas-verifier`) :\n{}", serde_json::to_string(&f)?);
+        }
+        "sas-deposer" => {
+            // Essais : le propriétaire de test envoie un dépôt ordinaire à l'adresse de dépôt, comme
+            // le ferait un payeur. L'adresse vient de la fiche vérifiée, jamais d'une saisie.
+            let montant: u64 = args.get(2).ok_or("montant en sompi manquant")?.parse()?;
+            let f = coffre092::fiche(&xonly(&owner), &agent_pk(&agent))?;
+            coffre092::verifier_fiche(&f)?;
+            let dest = pay_to_address_script(&Address::try_from(f.adresse_depot.as_str())?);
+            let c = connect().await?;
+            let r: Res<String> = async {
+                let (entries, inputs, total) = coffre::financer(&c, &owner, montant).await?;
+                let fee = FEE * inputs.len() as u64;
+                let mut outputs = vec![TransactionOutput::new(montant, dest)];
+                if total - montant - fee > 0 {
+                    outputs.push(TransactionOutput::new(total - montant - fee, pay_to_address_script(&address(&owner))));
+                }
+                let mut tx = Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![]);
+                for i in 0..tx.inputs.len() {
+                    let s = sign(&tx, &entries, i, &owner);
+                    tx.inputs[i].signature_script = ScriptBuilder::new().add_data(&s)?.drain();
+                }
+                tx.finalize();
+                Ok(c.submit_transaction(garde_diffusion(&tx)?, false).await?.to_string())
+            }
+            .await;
+            liberer(&c).await?;
+            println!("Dépôt de {} TKAS envoyé à l'adresse de dépôt {} : {}", montant as f64 / 1e8, f.adresse_depot, explorer(&r?));
+        }
+        "sas-verser" => {
+            // Sans clé : verse dans le coffre les dépôts en attente au sas.
+            let faits = coffre092::verser_depots(&xonly(&owner), &agent_pk(&agent)).await?;
+            match faits.len() {
+                0 => println!("Aucun dépôt à verser (aucun dépôt confirmé au-dessus du minimum)."),
+                _ => faits.iter().for_each(|t| println!("Dépôt versé dans le coffre, sans clé : {}", explorer(t))),
+            }
+        }
+        "sas-retour" => {
+            let archive = args.get(2).ok_or("fichier d'archive du coffre fermé manquant")?;
+            coffre092::retour_tardif(&owner, archive).await?;
         }
         "demo-x402" => {
             x402::demo(&owner, &agent).await?;
         }
         _ => {
-            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | recharger <sompi> | recuperer | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
+            println!("Commandes : cles | adresses | etat | deployer [adresse_retour] | payer <sompi> [--sans-verif] | ajouter <sompi> | reprendre <sompi> | recuperer (fermer) | sas | sas-verser | sas-verifier <fiche.json> | sas-retour <archive> | ardoise-ouvrir <sompi> | ardoise-bon <sompi> | ardoise-clore | ardoise-rembourser | demo-x402");
         }
     }
     Ok(())

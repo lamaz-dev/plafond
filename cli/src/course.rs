@@ -78,6 +78,9 @@ fn dire(nom: &str, r: &Result<String, String>) {
 
 /// Paiement de l'agent contre gel du propriétaire, sur la même pièce.
 pub async fn gel(owner: &Keypair, agent: &Keypair) -> Res<bool> {
+    if coffre::lignee_de(coffre::charger().as_ref()).is_some() {
+        return Err("essais de course : écrits pour les coffres v0.7 (créer le coffre avec PLAFOND_COEUR=v0.7) ; pas encore adaptés au coffre à lignée".into());
+    }
     let coeur = coffre::coeur_de(&xonly(owner), &agent_pk(agent));
     let art = coeur.artifact()?;
     let c = connect().await?;
@@ -118,6 +121,9 @@ pub async fn gel(owner: &Keypair, agent: &Keypair) -> Res<bool> {
 
 /// Paiement de l'agent contre rechargement de la même pièce par le propriétaire.
 pub async fn recharge(owner: &Keypair, agent: &Keypair) -> Res<bool> {
+    if coffre::lignee_de(coffre::charger().as_ref()).is_some() {
+        return Err("essais de course : écrits pour les coffres v0.7 (créer le coffre avec PLAFOND_COEUR=v0.7) ; pas encore adaptés au coffre à lignée".into());
+    }
     let coeur = coffre::coeur_de(&xonly(owner), &agent_pk(agent));
     let art = coeur.artifact()?;
     let c = connect().await?;

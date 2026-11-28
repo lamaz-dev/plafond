@@ -25,7 +25,7 @@ use silverscript_abi::{ArtifactValue, SilAbiArtifact};
 use silverscript_lang::compiler::{CompileOptions, compile_to_sil_abi_artifact_with_options};
 
 use crate::coeur::Coeur;
-use crate::{FEE, Res, sign, vault_sigscript, vault_spk};
+use crate::{Res, sign, vault_sigscript, vault_spk};
 
 /// Sas v0.2.1 : lié au coffre par l'empreinte de son script ET par l'identifiant de sa lignée ; un
 /// dépôt renvoyé arrive en pièce ordinaire, sans lignée.
@@ -344,6 +344,7 @@ pub fn build_fermeture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FEE;
     use kaspa_consensus_core::constants::{SEQUENCE_LOCK_TIME_DISABLED, SEQUENCE_LOCK_TIME_MASK};
     use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
     use kaspa_consensus_core::tx::{PopulatedTransaction, TransactionId, VerifiableTransaction};

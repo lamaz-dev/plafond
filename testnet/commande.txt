@@ -1,7 +1,18 @@
-# Core v0.9.2 + airlock v0.2.1, first testnet-10 trial (28 Nov 2026): genesis with two coins, deposit to the
-# airlock, keyless refill at rising fee levels (measures what the network really asks), agent payment too early
-# then on time, partial withdrawal, real attacks (dust coin and diverted deposit, marked return coin), then
-# closing the vault with a pending deposit in the same transaction.
+# Lineage vault through the tool's own commands (28 Nov 2026): create (core v0.9.2, one coin), publish the signed
+# deposit address, deposit as a payer would, keyless pour, agent payment, take part back, add, leave a pending
+# deposit, then close (coins and pending deposit go to the return address together).
 etat
-essai-lignee
+deployer
+sas
+sas-deposer 200000000
+pause 15
+sas-verser
+pause 90                       # the poured coin restarts from age zero
+payer 5000000
+reprendre 100000000
+ajouter 100000000
+sas-deposer 200000000
+pause 15
+sas
+recuperer
 etat

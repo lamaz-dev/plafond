@@ -67,7 +67,12 @@ fn regles_mandat(v: &Value) -> Res<(crate::Regles, Option<i64>)> {
     let (Some(b), Some(p), Some(m)) = (v["budget_sompi"].as_i64(), v["periode_daa"].as_i64(), v["plafond_sompi"].as_i64()) else {
         return Err("budget, période et plafond par achat requis".into());
     };
-    let mut r = crate::Regles::calculer(b, p, m)?;
+    // Nombre de pièces : une par défaut ; de 1 à 4 sur demande explicite (borne multipliée d'autant).
+    let pieces = match &v["pieces"] {
+        Value::Null => None,
+        k => Some(k.as_i64().ok_or("nombre de pièces invalide")?),
+    };
+    let mut r = crate::Regles::calculer_k(b, p, m, pieces)?;
     let duree = v["duree_jours"].as_i64().filter(|j| *j > 0);
     if let Some(j) = duree {
         if j > 366 {
@@ -88,6 +93,7 @@ fn regles_json(r: &crate::Regles) -> Value {
         "plafond_par_achat_sompi": r.plafond,
         "exposition_immediate_max_sompi": r.capacite * r.pieces.max(1),
         "pieces": r.pieces.max(1),
+        "pieces_explication": crate::coffre092::avertissement_pieces(r),
         "maximum_24h_sompi": r.maximum_sur(crate::JOUR_DAA),
         "maximum_periode_sompi": r.maximum_sur(r.periode_daa),
         "recharge_secondes": r.recharge_daa / 10,
@@ -126,6 +132,8 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
     let c = connect_silencieux().await?;
     let v = crate::coffre::vue(&c, &pk, &crate::agent_pk(agent)).await;
     let solde_proprio: Res<u64> = async { Ok(c.get_utxos_by_addresses(vec![address(owner)]).await?.iter().map(|u| u.utxo_entry.amount).sum()) }.await;
+    // Coffre à lignée : adresse de dépôt (recalculée et signée, jamais lue telle quelle) et dépôts en attente.
+    let depot = depot_json(&c, owner, agent, &mut etat).await;
     liberer(&c).await?;
     let (mut v, solde_proprio) = (v?, solde_proprio?);
     if crate::coffre::suivre(&mut etat, &v.pieces, v.now) {
@@ -179,16 +187,71 @@ async fn tableau(owner: &Keypair, agent: &Keypair, cours: Option<Value>) -> Res<
         "cours": cours,
         "technique": {
             "reseau": "Kaspa testnet-10",
-            "contrat": if v.coeur.retour.is_some() { "Plafond, cœur v0.7 (sans mémoire, adresse de retour, covenant SilverScript)" } else { "Plafond, cœur v0.6 (sans mémoire, covenant SilverScript)" },
+            "contrat": if v.lignee.is_some() { "Plafond, cœur v0.9.2 (sans mémoire, lignée de pièces, adresse de retour, covenant SilverScript)" } else if v.coeur.retour.is_some() { "Plafond, cœur v0.7 (sans mémoire, adresse de retour, covenant SilverScript)" } else { "Plafond, cœur v0.6 (sans mémoire, covenant SilverScript)" },
+            "lignee": v.lignee.map(|x| x.to_string()),
             "adresse_coffre": v.adresse,
             "pieces": v.pieces.len(),
             "capacite_sompi": v.coeur.capacite,
             "periode_daa": v.coeur.periode,
-            "empreinte_source_contrat": hex::encode(blake2b_simd::Params::new().hash_length(32).hash(crate::coeur::SOURCE.as_bytes()).as_bytes()),
+            "empreinte_source_contrat": hex::encode(blake2b_simd::Params::new().hash_length(32).hash(if v.lignee.is_some() { crate::coeur::SOURCE_V092 } else { crate::coeur::SOURCE }.as_bytes()).as_bytes()),
         },
     });
+    if v.lignee.is_some() {
+        // L1 : ce qui est à l'adresse sans porter la lignée n'est pas le coffre ; affiché à part.
+        r["hors_lignee_sompi"] = json!(v.hors_lignee.iter().map(|p| p.valeur).sum::<u64>());
+        r["hors_lignee_pieces"] = json!(v.hors_lignee.len());
+        r["depot"] = depot;
+        // Les trois gestes du propriétaire : Ajouter, Reprendre, Fermer.
+        r["gestes"] = json!(["ajouter", "reprendre", "fermer"]);
+        if let Some(rp) = crate::coffre092::reprise_possible(&v.coeur, &v.pieces, v.now) {
+            r["reprise"] = json!({ "maximum_sompi": rp.maximum, "frais_sompi": rp.frais, "attente_secondes": rp.attente_secondes,
+                "explication": "Reprendre renvoie une partie du coffre à l'adresse de retour sans le fermer. Une courte attente peut être demandée après un achat ou un ajout. Fermer est immédiat et définitif." });
+        }
+    }
     fusion(&mut r, &commun);
     Ok(r)
+}
+
+/// Adresse de dépôt d'un coffre à lignée, pour le tableau de bord. L5 : rien n'est publié tant que
+/// la création n'est pas confirmée ; S7 : l'adresse est recalculée et signée ; S6 : le minimum est dit.
+async fn depot_json(c: &kaspa_wrpc_client::KaspaRpcClient, owner: &Keypair, agent: &Keypair, etat: &mut crate::coffre::EtatCoeur) -> Value {
+    if crate::coffre::lignee_de(Some(etat)).is_none() {
+        return Value::Null;
+    }
+    let coeur = crate::coffre::coeur_de(&xonly(owner), &crate::agent_pk(agent));
+    if etat.attestation.is_none() {
+        // Sans attendre : si la création n'est pas encore inscrite, on le dit et on réessaiera.
+        let inscrite = match coeur.artifact_v092() {
+            Ok(art) => crate::coffre::pieces(c, &art).await.map(|ps| ps.iter().any(|p| p.creation.is_some())).unwrap_or(false),
+            Err(_) => false,
+        };
+        if !inscrite {
+            return json!({ "publie": false, "raison": "création du coffre pas encore confirmée par le réseau" });
+        }
+        if let Err(e) = crate::coffre092::publier_depot(c, owner, &coeur, etat).await {
+            return json!({ "publie": false, "raison": e.to_string() });
+        }
+    }
+    let fiche = match crate::coffre092::fiche(&coeur.owner, &coeur.agent) {
+        Ok(f) => f,
+        Err(e) => return json!({ "publie": false, "raison": e.to_string() }),
+    };
+    let attente = match crate::coffre092::sas_de(&coeur, etat) {
+        Ok(sas) => crate::coffre092::depots(c, &sas).await.unwrap_or_default(),
+        Err(_) => vec![],
+    };
+    json!({
+        "publie": true,
+        "adresse": fiche.adresse_depot,
+        "qr": qr(&fiche.adresse_depot),
+        "minimum_sompi": fiche.depot_minimal_sompi,
+        "frais_max_sompi": fiche.max_frais_sompi,
+        "en_attente_sompi": attente.iter().map(|d| d.1).sum::<u64>(),
+        "en_attente": attente.len(),
+        "sous_le_minimum": attente.iter().filter(|d| d.1 < fiche.depot_minimal_sompi).count(),
+        "fiche": fiche,
+        "explication": "Tout ce qui est envoyé à cette adresse ne peut que recharger ce coffre ou revenir à votre adresse de retour. Transmettez la fiche, pas seulement l'adresse : le payeur peut la vérifier.",
+    })
 }
 
 /// Tableau de bord d'un ancien coffre v0.5.1 (historique vérifié saut par saut).
@@ -1290,6 +1353,31 @@ pub fn servir(serveur: &tiny_http::Server, session: &Session, handle: Handle, ow
                         let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(recharger(&owner, &k, m)));
                         journal(json!({ "alimenter": m, "agent": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
                         resultat(r)
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                // Reprendre : retrait partiel vers l'adresse de retour (coffre à lignée). Les frais
+                // sont comptés au rythme du coffre : l'outil attend au plus une minute, sinon il dit
+                // dans combien de temps ce sera possible. Fermer (/api/geler) reste immédiat.
+                ("POST", "/api/reprendre") => match (v["montant_sompi"].as_u64().filter(|m| (1_000_000..=100_000_000_000).contains(m)), &cible, cle_cible) {
+                    _ if v["confirmation"].as_str() != Some("REPRENDRE") => json_rep(400, json!({ "erreur": "confirmation requise" })),
+                    (None, _, _) => json_rep(400, json!({ "erreur": "montant invalide" })),
+                    (Some(m), Some(a), Some(Ok(k))) => {
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(crate::coffre092::reprendre(&owner, &k, m, 60)));
+                        journal(json!({ "reprendre": m, "agent": a.id, "resultat": r.as_ref().map_err(|e| e.to_string()) }));
+                        resultat(r)
+                    }
+                    _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
+                },
+                // Verser dans le coffre les dépôts en attente à son adresse de dépôt (sans clé).
+                ("POST", "/api/depot/verser") => match (&cible, cle_cible) {
+                    (Some(a), Some(Ok(k))) => {
+                        let r = avec_coffre(&a.etat, a.regles, agents::xonly_pub(a, &agent_principal), || handle.block_on(crate::coffre092::verser_depots(&xonly(&owner), &crate::agent_pk(&k))));
+                        journal(json!({ "verser_depots": a.id, "resultat": r.as_ref().map(|t| t.len()).map_err(|e| e.to_string()) }));
+                        match r {
+                            Ok(txs) => json_rep(200, json!({ "ok": true, "verses": txs.len(), "explorateur": txs.last().map(|t| explorer(t)) })),
+                            Err(e) => json_rep(400, json!({ "erreur": e.to_string() })),
+                        }
                     }
                     _ => json_rep(404, json!({ "erreur": "agent inconnu" })),
                 },

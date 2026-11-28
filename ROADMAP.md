@@ -41,9 +41,13 @@ open an issue, or report vulnerabilities privately as described in [SECURITY.md]
    number of coins). Tried on testnet-10 on 28 Nov 2026
    from creation to closing, with real attacks (dust coin, diverted deposit, marked return coin), all refused by the
    network ([report](spec/essai-testnet-2026-11-28-v0.9.2.md)); the keyless refill is relayed like any transaction and
-   the airlock fee cap is set from the measured fees (0.01 KAS). Next: wiring into the tool (creation by genesis,
-   lineage filter everywhere, automatic top-up, add / take back / close, close that also returns pending deposits,
-   deposit address the payer can verify). The tool keeps deploying core v0.7 until then.
+   the airlock fee cap is set from the measured fees (0.01 KAS). Wired into the tool: new vaults are created
+   by genesis with core v0.9.2 (one coin by default, up to four on explicit request with the consequence spelled
+   out), the vault is identified by address and lineage everywhere, the owner has three actions (add, take back,
+   close; closing also returns pending deposits), and the deposit address is never a bare string: it is recomputed
+   from the vault's public settings and its creation, signed by the owner key, and checked by the payer with
+   `vault-cli sas-verifier`. Vaults already created with core v0.7 remain manageable. Not done yet: race tests and
+   keyless recovery (survival mode) for lineage vaults.
 3. **External testers.** Run the demo on other machines and agents; fix what breaks. English messages in the demo script.
 4. **Faster console refresh** (it currently re-reads the chain for each older agent).
 5. **Human security audit** of the contracts before any mainnet use.

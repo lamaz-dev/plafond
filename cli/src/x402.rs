@@ -111,6 +111,8 @@ struct Prepare {
     pub spk: kaspa_consensus_core::tx::ScriptPublicKey,
     pub vault_addr: Address,
     pub outpoint: TransactionOutpoint,
+    /// Lignée annoncée du coffre (v0.9.2) : la pièce dépensée doit la porter (L1).
+    pub lignee: Option<kaspa_consensus_core::Hash>,
 }
 
 /// Étapes a à c bis (forme, prix, plafond, autorisation de l'agent) puis recompilation du script :
@@ -154,6 +156,12 @@ fn preparer(url: &str, offer: &Offer, pay_to: &Address, payload_b64: &str) -> Re
     if tx.outputs[0].script_public_key != pay_to_address_script(pay_to) || tx.outputs[0].value != offer.price {
         return Err("la sortie 0 ne paie pas exactement le prix au vendeur".into());
     }
+    // F2 (note Red Team du 28 nov. 2026) : le contrat ne l'interdit pas, c'est au vendeur de le
+    // voir. La pièce reçue doit être une pièce ordinaire : une pièce marquée d'un identifiant de
+    // lignée pourrait ne pas apparaître dans son portefeuille.
+    if tx.outputs[0].covenant.is_some() {
+        return Err("la sortie payée au vendeur porte un identifiant de lignée : paiement refusé".into());
+    }
 
     // c. Plafond par paiement : la capacité du coffre (frais compris).
     let price = offer.price as i64;
@@ -185,12 +193,17 @@ fn preparer(url: &str, offer: &Offer, pay_to: &Address, payload_b64: &str) -> Re
     // d. Coffre authentique : script recompilé (mis en cache) à partir des quatre paramètres. Le
     // script ne change jamais : l'adresse EST l'identité du coffre, sans lignée à suivre.
     let coeur = publics.coeur().map_err(|e| format!("paramètres du coffre refusés : {e}"))?;
+    let lignee = publics.lignee().map_err(|e| format!("paramètres du coffre refusés : {e}"))?;
     let spk = cached_spk(&publics)?;
     if tx.outputs[1].script_public_key != spk {
         return Err("la sortie 1 ne revient pas au coffre".into());
     }
+    // Coffre à lignée : le reste doit rester dans la lignée annoncée (le réseau le refuserait sinon).
+    if tx.outputs[1].covenant.map(|b| (b.covenant_id, b.authorizing_input)) != lignee.map(|x| (x, 0)) {
+        return Err("la sortie 1 ne reste pas dans la lignée du coffre".into());
+    }
     let vault_addr = extract_script_pub_key_address(&spk, Prefix::Testnet).map_err(|_| "adresse de coffre invalide")?;
-    Ok(Prepare { tx, txid, price, coeur, spk, vault_addr, outpoint: expected_in })
+    Ok(Prepare { tx, txid, price, coeur, spk, vault_addr, outpoint: expected_in, lignee })
 }
 
 /// La pièce du coffre telle que le nœud la voit.
@@ -199,6 +212,8 @@ struct PieceVue {
     pub spk: kaspa_consensus_core::tx::ScriptPublicKey,
     /// `u64::MAX` : pas encore confirmée.
     pub block_daa: u64,
+    /// Lignée portée par la pièce, lue sur le nœud.
+    pub lignee: Option<kaspa_consensus_core::Hash>,
 }
 
 /// Étapes d et e sur ce que le nœud a renvoyé : la pièce existe à l'adresse du coffre, confirmée,
@@ -207,6 +222,11 @@ fn controler(p: &Prepare, piece: Option<&PieceVue>, now: u64) -> Result<(), Stri
     let Some(v) = piece.filter(|v| v.spk == p.spk) else {
         return Err("coffre non authentique : aucune pièce de coffre Plafond avec ces paramètres n'existe sur la chaîne".into());
     };
+    // L1 : un coffre à lignée s'identifie par son adresse ET sa lignée. Une pièce d'une autre
+    // lignée à la même adresse (ou sans lignée) n'est pas ce coffre.
+    if p.lignee.is_some() && v.lignee != p.lignee {
+        return Err("coffre non authentique : cette pièce ne porte pas la lignée annoncée du coffre".into());
+    }
     if v.block_daa == u64::MAX {
         return Err("pièce du coffre pas encore confirmée".into());
     }
@@ -231,7 +251,7 @@ async fn verify_and_settle(rpc: &KaspaRpcClient, url: &str, offer: &Offer, pay_t
     let p = preparer(url, offer, pay_to, payload_b64)?;
     let utxos = relance!(rpc.get_utxos_by_addresses(vec![p.vault_addr.clone()]))?;
     let vault_utxo = utxos.iter().find(|u| TransactionOutpoint::from(u.outpoint.clone()) == p.outpoint);
-    let vue = vault_utxo.map(|u| PieceVue { valeur: u.utxo_entry.amount, spk: u.utxo_entry.script_public_key.clone(), block_daa: u.utxo_entry.block_daa_score });
+    let vue = vault_utxo.map(|u| PieceVue { valeur: u.utxo_entry.amount, spk: u.utxo_entry.script_public_key.clone(), block_daa: u.utxo_entry.block_daa_score, lignee: u.utxo_entry.covenant_id });
     let now = relance!(rpc.get_block_dag_info())?.virtual_daa_score;
     controler(&p, vue.as_ref(), now)?;
     println!("[VENDEUR] coffre authentique et solvable : script Plafond recompilé = pièce on-chain");
@@ -268,7 +288,7 @@ fn cached_spk(params: &crate::coeur::Publics) -> Result<kaspa_consensus_core::tx
     if let Some(spk) = cache.lock().unwrap().get(&key) {
         return Ok(spk.clone());
     }
-    let artifact = params.coeur().and_then(|c| c.artifact()).map_err(|e| format!("recompilation impossible : {e}"))?;
+    let artifact = params.artifact().map_err(|e| format!("recompilation impossible : {e}"))?;
     let spk = vault_spk(&artifact);
     let mut c = cache.lock().unwrap();
     if c.len() > 10_000 {
@@ -432,13 +452,13 @@ fn agent_buy(handle: &Handle, owner_pk: &[u8], agent: &Keypair, url: &str, mode:
         println!("[AGENT] je refuse moi-même : prix au-delà du plafond par paiement");
         return Ok(Achat::refus(amount, "hors du budget du coffre : plafond par paiement dépassé"));
     }
-    let art = vue.coeur.artifact()?;
-    let tx = crate::coeur::build_pay(&vue.coeur, &art, piece.outpoint, piece.valeur, pay_to_address_script(&pay_to), amount as u64, FEE, agent, None)
+    let art = vue.art()?;
+    let tx = coffre::tx_payer(&vue.coeur, &art, vue.lignee, &piece, pay_to_address_script(&pay_to), amount as u64, FEE, agent, None)
         .or_else(|_| {
             // Agent tricheur (tests) : la transaction est construite quand même, le vendeur et le réseau tranchent.
-            crate::coeur::build_pay(&crate::coeur::Coeur { capacite: i64::MAX / vue.coeur.periode, ..vue.coeur.clone() }, &art, piece.outpoint, piece.valeur, pay_to_address_script(&pay_to), amount as u64, FEE, agent, Some(vue.now.saturating_sub(piece.creation.unwrap_or(vue.now)).min(u32::MAX as u64)))
+            coffre::tx_payer(&crate::coeur::Coeur { capacite: i64::MAX / vue.coeur.periode, ..vue.coeur.clone() }, &art, vue.lignee, &piece, pay_to_address_script(&pay_to), amount as u64, FEE, agent, Some(vue.now.saturating_sub(piece.creation.unwrap_or(vue.now)).min(u32::MAX as u64)))
         })?;
-    let mut params = vue.coeur.publics();
+    let mut params = vue.publics();
     if mode == Mode::FakeVault {
         params.capacite *= 100; // l'agent ment sur son budget
         println!("[AGENT] (test) j'annonce un faux coffre avec un budget 100 fois plus grand");
@@ -661,21 +681,39 @@ mod vendeur_attaque_hors_ligne {
         prix_paye: Option<u64>,
         sortie1: Option<ScriptPublicKey>,
         dest0: Option<ScriptPublicKey>,
+        /// Coffre à lignée (cœur v0.9.2) : lignée portée par la pièce et annoncée au vendeur.
+        lignee: Option<kaspa_consensus_core::Hash>,
+        /// La lignée annoncée dans les paramètres, si elle diffère de celle de la transaction.
+        lignee_annoncee: Option<Option<kaspa_consensus_core::Hash>>,
+        /// La sortie du vendeur marquée d'une lignée neuve (F2).
+        vendeur_marque: bool,
+    }
+
+    /// Le même coffre avec une adresse de retour (exigée par le cœur v0.7 et suivants).
+    fn coeur_retour() -> crate::coeur::Coeur {
+        crate::coeur::Coeur { retour: Some(crate::sequestre::spk_hash(&pay_to_address_script(&crate::address(&k(11)))).to_vec()), ..coeur() }
     }
 
     fn paiement(f: Forge) -> String {
-        let c = coeur();
+        let c = if f.lignee.is_some() || f.lignee_annoncee.is_some() || f.vendeur_marque { coeur_retour() } else { coeur() };
         let art = c.artifact().unwrap();
         let op = TransactionOutpoint::new(TransactionId::from_bytes([5; 32]), 1);
         let prix = f.prix_paye.unwrap_or(OFFERS[0].price);
         let dest = f.dest0.unwrap_or_else(|| pay_to_address_script(&vendeur()));
-        let mut tx = crate::coeur::build_pay(&c, &art, op, PIECE, dest, prix, FEE, &k(2), f.sequence).unwrap();
+        let mut tx = match f.lignee {
+            Some(x) => crate::lignee::build_pay(&c, (op, PIECE), x, dest, prix, FEE, &k(2), f.sequence).unwrap(),
+            None => crate::coeur::build_pay(&c, &art, op, PIECE, dest, prix, FEE, &k(2), f.sequence).unwrap(),
+        };
         if let Some(spk) = f.sortie1 {
             tx.outputs[1].script_public_key = spk;
+        }
+        if f.vendeur_marque {
+            tx.outputs[0].covenant = Some(kaspa_consensus_core::tx::CovenantBinding { authorizing_input: 0, covenant_id: kaspa_consensus_core::Hash::from_bytes([9; 32]) });
         }
         tx.finalize();
         let txid = tx.id().to_string();
         let mut params = c.publics();
+        params.lignee = f.lignee_annoncee.unwrap_or(f.lignee).map(|x| x.to_string());
         if let Some(cap) = f.capacite_annoncee {
             params.capacite = cap;
         }
@@ -698,7 +736,7 @@ mod vendeur_attaque_hors_ligne {
     }
 
     fn piece(block_daa: u64) -> PieceVue {
-        PieceVue { valeur: PIECE, spk: vault_spk(&coeur().artifact().unwrap()), block_daa }
+        PieceVue { valeur: PIECE, spk: vault_spk(&coeur().artifact().unwrap()), block_daa, lignee: None }
     }
     /// Âge exigé pour le paiement standard (prix + frais).
     fn exige() -> u64 {
@@ -726,6 +764,36 @@ mod vendeur_attaque_hors_ligne {
             let e = preparer(URL, &OFFERS[0], &vendeur(), &paiement(f)).err().unwrap_or_else(|| panic!("{nom} : accepté"));
             assert!(e.contains(attendu), "{nom} : « {e} » ne contient pas « {attendu} »");
         }
+    }
+
+    /// Coffre à lignée (cœur v0.9.2) : le vendeur reconnaît le coffre par son adresse ET sa lignée
+    /// (L1), et refuse d'être payé par une pièce marquée (F2).
+    #[test]
+    fn coffre_a_lignee_reconnu_par_adresse_et_lignee() {
+        let (x, y) = (kaspa_consensus_core::Hash::from_bytes([0xA1; 32]), kaspa_consensus_core::Hash::from_bytes([0xB2; 32]));
+        let spk092 = vault_spk(&coeur_retour().artifact_v092().unwrap());
+        let p = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge { lignee: Some(x), ..Default::default() })).unwrap();
+        assert_eq!((p.lignee, &p.spk), (Some(x), &spk092), "script v0.9.2 recompilé, lignée retenue");
+        assert_ne!(spk092, piece(0).spk, "autre script que le coffre v0.7");
+        let t = 1_000 + exige();
+        let piece_de = |l: Option<kaspa_consensus_core::Hash>| PieceVue { valeur: PIECE, spk: spk092.clone(), block_daa: 1_000, lignee: l };
+        controler(&p, Some(&piece_de(Some(x))), t).unwrap();
+        // L1 : même adresse, autre lignée (genèse d'un tiers) ou aucune (poussière) : ce n'est pas ce coffre.
+        assert!(controler(&p, Some(&piece_de(Some(y))), t).unwrap_err().contains("lignée annoncée"));
+        assert!(controler(&p, Some(&piece_de(None)), t).unwrap_err().contains("lignée annoncée"));
+        // L'agent annonce une autre lignée que celle de sa transaction, ou aucune.
+        for annoncee in [Some(y), None] {
+            let e = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge { lignee: Some(x), lignee_annoncee: Some(annoncee), ..Default::default() })).err().expect("devait être refusé");
+            assert!(e.contains("sortie 1"), "{e}");
+        }
+        // F2 : la sortie du vendeur marquée d'une lignée, coffre à lignée ou coffre v0.7.
+        for l in [Some(x), None] {
+            let e = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge { lignee: l, vendeur_marque: true, ..Default::default() })).err().expect("devait être refusé");
+            assert!(e.contains("identifiant de lignée"), "{e}");
+        }
+        // Un coffre v0.7 annoncé avec une lignée n'est pas reconnu (autre script).
+        let e = preparer(URL, &OFFERS[0], &vendeur(), &paiement(Forge { lignee_annoncee: Some(Some(x)), ..Default::default() })).err().expect("devait être refusé");
+        assert!(e.contains("sortie 1"), "{e}");
     }
 
     #[test]
@@ -787,7 +855,7 @@ mod vendeur_attaque_hors_ligne {
     fn prix_exactement_a_la_capacite() {
         let c = coeur();
         let cap = c.capacite as u64;
-        let p_de = |v: u64| PieceVue { valeur: v, spk: vault_spk(&c.artifact().unwrap()), block_daa: 1_000 };
+        let p_de = |v: u64| PieceVue { valeur: v, spk: vault_spk(&c.artifact().unwrap()), block_daa: 1_000, lignee: None };
         // Dépense = capacité pile (prix = capacité − frais) : accepté après une période entière, pas avant.
         let pile = Offer { path: "/pile", price: cap - FEE, content: "" };
         let p = preparer(URL, &pile, &vendeur(), &paiement_pour(&c, &pile, FEE)).unwrap();
