@@ -2473,6 +2473,16 @@ mod tests {
         assert_eq!(retour_du_mandat(&json!({ "retour_profil": "nouveau", "retour": a }), &tresorerie).unwrap(), Some(a));
         *RETOUR_CONFIRME.lock().unwrap() = None;
         assert!(retour_du_mandat(&json!({ "retour_profil": "inconnu", "retour": adr(11) }), &tresorerie).is_err());
+        // Ordre de l'écran de création : téléphone (recommandé) d'abord, plateforme, puis la
+        // création locale présentée comme solution de secours, chacune avec sa raison.
+        let pos = |motif: &str| PAGE.find(motif).unwrap_or_else(|| panic!("absent de la page : {motif}"));
+        let (a, b, c) = (pos(r#"name="a-profil" value="portefeuille""#), pos(r#"name="a-profil" value="plateforme""#), pos(r#"name="a-profil" value="nouveau""#));
+        assert!(a < b && b < c, "ordre des situations : portefeuille, plateforme, nouveau");
+        assert_eq!(crate::retour::ORDRE, [crate::retour::Profil::Portefeuille, crate::retour::Profil::Plateforme, crate::retour::Profil::Nouveau]);
+        let premier = &PAGE[a..b];
+        assert!(premier.contains("Recommandé") && premier.contains("téléphone") && premier.contains("Kaspium") && premier.contains(crate::retour::POURQUOI_TELEPHONE), "le téléphone est recommandé en premier, avec sa raison");
+        assert!(PAGE[c..c + 600].contains("Solution de secours") && PAGE[c..c + 600].contains("Moins sûr"), "la création locale est présentée comme un secours");
+        assert!(crate::retour::Profil::Portefeuille.titre().starts_with("Recommandé") && crate::retour::Profil::Nouveau.titre().starts_with("Solution de secours"));
         // La phrase de secours n'est jamais écrite : ni la page ni le serveur ne la mettent dans un stockage.
         assert!(!PAGE.contains("localStorage") || !PAGE.contains("rt-phrase\",localStorage"), "la page ne range pas la phrase");
         let source = include_str!("console.rs");

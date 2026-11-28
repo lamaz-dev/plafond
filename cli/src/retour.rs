@@ -50,12 +50,18 @@ impl Profil {
     }
     pub fn titre(&self) -> &'static str {
         match self {
-            Profil::Portefeuille => "J'ai un Ledger ou un portefeuille Kaspa",
+            Profil::Portefeuille => "Recommandé : créez votre portefeuille sur votre téléphone (ex. Kaspium), ou utilisez votre Ledger, puis collez son adresse",
             Profil::Plateforme => "J'ai un compte sur une plateforme (Finst, Kraken…)",
-            Profil::Nouveau => "Je n'ai rien : créer un portefeuille de retour",
+            Profil::Nouveau => "Solution de secours : je n'ai rien, créer un portefeuille de retour ici",
         }
     }
 }
+
+/// Ordre de présentation (décision du 28 nov. 2026) : le portefeuille sur le téléphone d'abord,
+/// parce que sa phrase de secours ne passe jamais par l'ordinateur ; la création locale en dernier,
+/// comme solution de secours.
+pub const ORDRE: [Profil; 3] = [Profil::Portefeuille, Profil::Plateforme, Profil::Nouveau];
+pub const POURQUOI_TELEPHONE: &str = "Le plus sûr : la phrase de secours est créée sur le téléphone et ne passe jamais par cet ordinateur.";
 
 /// Avertissement du parcours « plateforme », à afficher en entier avant la double saisie.
 pub const AVERTISSEMENT_PLATEFORME: &str = "Cette adresse sera FIGÉE dans le coffre : personne ne pourra la changer, pas même vous. \

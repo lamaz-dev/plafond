@@ -1715,6 +1715,64 @@ async fn main() -> Res<()> {
             println!("Dépôts en attente : {} ({} TKAS)", attente.len(), attente.iter().map(|d| d.1).sum::<u64>() as f64 / 1e8);
             println!("Fiche de dépôt à transmettre au payeur (il la vérifie avec `sas-verifier`) :\n{}", serde_json::to_string(&f)?);
         }
+        "fermer-anciens" => {
+            // Ferme les coffres v0.7 et v0.6 encore ouverts pour ces clés de test, sans fichier d'état :
+            // essaie les réglages de test d'hier (4 pièces, recharge en une heure) et ceux d'aujourd'hui.
+            // Tout revient à l'adresse de retour par défaut de ces coffres : celle du propriétaire.
+            if coffre::charger().is_some() {
+                return Err("un coffre est suivi par le fichier d'état : le fermer d'abord avec `recuperer`".into());
+            }
+            let ancien = Regles { depot: FUND, ..Regles::calculer_k(2 * CAPACITY, 36_000, MAX_PER_PAYMENT, Some(4))? };
+            let mut fermes = 0;
+            for (nom, r) in [("réglages de test jusqu'au 27 nov. (4 pièces)", ancien), ("réglages de test actuels", Regles::standard())] {
+                for version in [coffre::VERSION, coffre::VERSION_V06] {
+                    let coeur = coeur::Coeur {
+                        owner: xonly(&owner),
+                        agent: agent_pk(&agent),
+                        capacite: r.capacite,
+                        periode: r.recharge_daa,
+                        retour: (version == coffre::VERSION).then(|| coffre::empreinte_retour(&address(&owner))),
+                    };
+                    let art = coeur.artifact()?;
+                    let c = connect().await?;
+                    let ps = coffre::pieces(&c, &art).await;
+                    liberer(&c).await?;
+                    let ps = ps?;
+                    let total: u64 = ps.iter().map(|p| p.valeur).sum();
+                    println!("{version}, {nom} : {} pièce(s), {} TKAS à l'adresse {}", ps.len(), total as f64 / 1e8, coffre::adresse(&art)?);
+                    if ps.iter().all(|p| p.valeur < coeur_plancher()) {
+                        continue;
+                    }
+                    coffre::enregistrer(&coffre::EtatCoeur {
+                        version: version.into(),
+                        retour: None,
+                        capacite: coeur.capacite,
+                        periode: coeur.periode,
+                        agent: hex::encode(&coeur.agent),
+                        cree_daa: 0,
+                        apports: vec![],
+                        vues: vec![],
+                        achats: vec![],
+                        lignee: None,
+                        genese: None,
+                        sas_max_frais: None,
+                        attestation: None,
+                        retraits: vec![],
+                    })?;
+                    match coffre::geler(&owner, &agent).await {
+                        Ok(ids) => {
+                            fermes += 1;
+                            println!("  fermé : {}", ids.split(',').map(explorer).collect::<Vec<_>>().join(" "));
+                        }
+                        Err(e) => {
+                            let _ = fs::remove_file(state_path());
+                            println!("  non fermé : {e}");
+                        }
+                    }
+                }
+            }
+            println!("{fermes} ancien(s) coffre(s) fermé(s).");
+        }
         "sas-deposer" => {
             // Essais : le propriétaire de test envoie un dépôt ordinaire à l'adresse de dépôt, comme
             // le ferait un payeur. L'adresse vient de la fiche vérifiée, jamais d'une saisie.
